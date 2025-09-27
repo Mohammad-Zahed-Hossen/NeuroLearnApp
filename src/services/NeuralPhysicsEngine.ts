@@ -3,7 +3,7 @@ import {
   forceLink,
   forceManyBody,
   forceCenter,
-  forceCollide
+  forceCollide,
 } from 'd3-force';
 import { NeuralNode, NeuralLink, NeuralGraph } from './MindMapGeneratorService';
 
@@ -171,20 +171,26 @@ export class NeuralPhysicsEngine {
    */
   private initializeSimulation(): void {
     this.simulation = forceSimulation()
-      .force('link', forceLink<NeuralNode, NeuralLink>()
-        .id(d => d.id)
-        .distance(this.calculateLinkDistance.bind(this))
-        .strength(this.calculateLinkStrength.bind(this))
+      .force(
+        'link',
+        forceLink<NeuralNode, NeuralLink>()
+          .id((d) => d.id)
+          .distance(this.calculateLinkDistance.bind(this))
+          .strength(this.calculateLinkStrength.bind(this)),
       )
-      .force('charge', forceManyBody<NeuralNode>()
-        .strength(this.calculateNodeCharge.bind(this))
-        .distanceMin(25)
-        .distanceMax(400)
+      .force(
+        'charge',
+        forceManyBody<NeuralNode>()
+          .strength(this.calculateNodeCharge.bind(this))
+          .distanceMin(25)
+          .distanceMax(400),
       )
       .force('center', forceCenter(this.width / 2, this.height / 2))
-      .force('collision', forceCollide<NeuralNode>()
-        .radius(d => d.radius + 8)
-        .strength(0.9)
+      .force(
+        'collision',
+        forceCollide<NeuralNode>()
+          .radius((d) => d.radius + 8)
+          .strength(0.9),
       )
       .alphaDecay(0.0228) // Slower cooling for natural movement
       .velocityDecay(0.3); // Optimized damping
@@ -212,7 +218,11 @@ export class NeuralPhysicsEngine {
       spatial: 1.1, // Spatial moderate distance
     };
 
-    return baseDistance + strengthDistance * typeMultipliers[link.type] + cognitiveLoadAdjustment;
+    return (
+      baseDistance +
+      strengthDistance * typeMultipliers[link.type] +
+      cognitiveLoadAdjustment
+    );
   }
 
   /**
@@ -295,11 +305,16 @@ export class NeuralPhysicsEngine {
 
     // Dynamic opacity based on strength, confidence, and cognitive load
     const baseOpacity = link.strength * link.confidence;
-    const cognitiveAdjustment = Math.max(0.3, 1 - this.currentCognitiveLoad * 0.5);
+    const cognitiveAdjustment = Math.max(
+      0.3,
+      1 - this.currentCognitiveLoad * 0.5,
+    );
     const finalOpacity = Math.min(0.9, baseOpacity * cognitiveAdjustment);
 
     // Parse and adjust RGBA opacity
-    const rgbaMatch = baseColor.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+    const rgbaMatch = baseColor.match(
+      /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/,
+    );
     if (rgbaMatch) {
       const [, r, g, b] = rgbaMatch;
       return `rgba(${r}, ${g}, ${b}, ${finalOpacity})`;
@@ -311,7 +326,11 @@ export class NeuralPhysicsEngine {
   /**
    * Neural firing effect with cognitive load adaptation
    */
-  public getNeuralFireEffect(node: NeuralNode): { opacity: number; scale: number; glow: number } {
+  public getNeuralFireEffect(node: NeuralNode): {
+    opacity: number;
+    scale: number;
+    glow: number;
+  } {
     if (!node.isActive) {
       return { opacity: 0.8, scale: 1.0, glow: 0 };
     }
@@ -321,14 +340,15 @@ export class NeuralPhysicsEngine {
     const urgencyFactor = node.cognitiveLoad * node.activationLevel;
     const pulseSpeed = 1 + urgencyFactor * 2;
 
-    const pulse = (Math.sin(time * pulseSpeed + this.hashCode(node.id)) + 1) / 2;
+    const pulse =
+      (Math.sin(time * pulseSpeed + this.hashCode(node.id)) + 1) / 2;
 
     // Cognitive load reduces visual complexity
     const loadReduction = Math.max(0.5, 1 - this.currentCognitiveLoad * 0.5);
 
     return {
-      opacity: 0.6 + (pulse * 0.4 * loadReduction),
-      scale: 1.0 + (pulse * 0.3 * loadReduction),
+      opacity: 0.6 + pulse * 0.4 * loadReduction,
+      scale: 1.0 + pulse * 0.3 * loadReduction,
       glow: pulse * urgencyFactor * loadReduction,
     };
   }
@@ -341,8 +361,10 @@ export class NeuralPhysicsEngine {
     this.links = [...graph.links];
 
     // Performance: only restart if significant changes
-    const hasSignificantChanges = this.nodes.length !== this.simulation.nodes()?.length ||
-                                  this.links.length !== (this.simulation.force('link')?.links()?.length || 0);
+    const hasSignificantChanges =
+      this.nodes.length !== this.simulation.nodes()?.length ||
+      this.links.length !==
+        (this.simulation.force('link')?.links()?.length || 0);
 
     this.simulation.nodes(this.nodes);
     this.simulation.force('link')?.links(this.links);
@@ -356,7 +378,9 @@ export class NeuralPhysicsEngine {
   /**
    * Optimized tick callback with throttling
    */
-  public onTick(callback: (nodes: NeuralNode[], links: NeuralLink[]) => void): void {
+  public onTick(
+    callback: (nodes: NeuralNode[], links: NeuralLink[]) => void,
+  ): void {
     let lastUpdateTime = 0;
 
     this.simulation.on('tick', () => {
@@ -382,7 +406,7 @@ export class NeuralPhysicsEngine {
     node: NeuralNode,
     onStart?: () => void,
     onDrag?: () => void,
-    onEnd?: () => void
+    onEnd?: () => void,
   ): void {
     if (onStart) {
       this.simulation.alphaTarget(0.2).restart();
@@ -440,16 +464,16 @@ export class NeuralPhysicsEngine {
 
     // Centrality scores
     const centralityScores = new Map<string, number>();
-    this.nodes.forEach(node => {
-      const connections = this.links.filter(link =>
-        link.source === node.id || link.target === node.id
+    this.nodes.forEach((node) => {
+      const connections = this.links.filter(
+        (link) => link.source === node.id || link.target === node.id,
       ).length;
       centralityScores.set(node.id, connections / Math.max(1, nodeCount - 1));
     });
 
     // Clustering coefficient
     let totalClusterCoeff = 0;
-    this.nodes.forEach(node => {
+    this.nodes.forEach((node) => {
       const neighbors = this.getNeighbors(node);
       if (neighbors.length < 2) return;
 
@@ -462,25 +486,34 @@ export class NeuralPhysicsEngine {
         }
       }
 
-      const maxNeighborConnections = (neighbors.length * (neighbors.length - 1)) / 2;
-      const clusterCoeff = maxNeighborConnections > 0 ? neighborConnections / maxNeighborConnections : 0;
+      const maxNeighborConnections =
+        (neighbors.length * (neighbors.length - 1)) / 2;
+      const clusterCoeff =
+        maxNeighborConnections > 0
+          ? neighborConnections / maxNeighborConnections
+          : 0;
       totalClusterCoeff += clusterCoeff;
     });
 
     const averageClusterCoefficient = totalClusterCoeff / nodeCount;
 
     // Cognitive complexity (based on activation and load)
-    const cognitiveComplexity = this.nodes.reduce((sum, node) =>
-      sum + (node.activationLevel * node.cognitiveLoad), 0
-    ) / nodeCount;
+    const cognitiveComplexity =
+      this.nodes.reduce(
+        (sum, node) => sum + node.activationLevel * node.cognitiveLoad,
+        0,
+      ) / nodeCount;
 
     // Activation distribution
-    const activationDistribution = this.nodes.reduce((dist, node) => {
-      if (node.activationLevel < 0.3) dist.low++;
-      else if (node.activationLevel < 0.7) dist.medium++;
-      else dist.high++;
-      return dist;
-    }, { low: 0, medium: 0, high: 0 });
+    const activationDistribution = this.nodes.reduce(
+      (dist, node) => {
+        if (node.activationLevel < 0.3) dist.low++;
+        else if (node.activationLevel < 0.7) dist.medium++;
+        else dist.high++;
+        return dist;
+      },
+      { low: 0, medium: 0, high: 0 },
+    );
 
     return {
       density,
@@ -495,18 +528,30 @@ export class NeuralPhysicsEngine {
   private getNeighbors(node: NeuralNode): NeuralNode[] {
     const neighborIds = new Set<string>();
 
-this.links.forEach((link) => {
-  if (link.source === node.id) neighborIds.add(link.target.toString());
-  else if (link.target === node.id) neighborIds.add(link.source.toString());
-});
+    this.links.forEach((link) => {
+      if (link.source === node.id) {
+        if (typeof link.target === 'string') {
+          neighborIds.add(link.target);
+        } else {
+          neighborIds.add(link.target.id);
+        }
+      } else if (link.target === node.id) {
+        if (typeof link.source === 'string') {
+          neighborIds.add(link.source);
+        } else {
+          neighborIds.add(link.source.id);
+        }
+      }
+    });
 
-    return this.nodes.filter(n => neighborIds.has(n.id));
+    return this.nodes.filter((n) => neighborIds.has(n.id));
   }
 
   private areConnected(node1: NeuralNode, node2: NeuralNode): boolean {
-    return this.links.some(link =>
-      (link.source === node1.id && link.target === node2.id) ||
-      (link.source === node2.id && link.target === node1.id)
+    return this.links.some(
+      (link) =>
+        (link.source === node1.id && link.target === node2.id) ||
+        (link.source === node2.id && link.target === node1.id),
     );
   }
 
@@ -515,7 +560,7 @@ this.links.forEach((link) => {
     if (str.length === 0) return hash;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32-bit integer
     }
     return hash;

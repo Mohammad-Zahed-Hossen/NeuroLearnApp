@@ -12,6 +12,7 @@ import {
   Vibration,
   Platform,
 } from 'react-native';
+import { ViewStyle } from 'react-native';
 import {
   Canvas,
   Circle,
@@ -131,7 +132,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [lastUpdateTime, setLastUpdateTime] = useState(0);
 
-  // Performance tracking - Fixed: Added initial value
+  // Performance tracking
   const animationFrameRef = useRef<number>(0);
   const isRenderingRef = useRef(false);
 
@@ -317,18 +318,6 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   );
 
   // Render functions with performance optimizations
-  const renderLinks = useMemo(() => {
-    if (links.length > 100 && cognitiveLoad > 0.8) {
-      // Reduce visual complexity under high cognitive load
-      return links
-        .filter((link) => link.strength > 0.5)
-        .slice(0, 50)
-        .map(renderSingleLink);
-    }
-
-    return links.map(renderSingleLink);
-  }, [links, cognitiveLoad]);
-
   const renderSingleLink = useCallback(
     (link: NeuralLink) => {
       const sourceNode = nodes.find((n) => n.id === link.source);
@@ -367,15 +356,18 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
     [nodes, physicsEngine],
   );
 
-  const renderNodes = useMemo(() => {
-    // Adaptive node rendering based on cognitive load and zoom
-    const shouldShowLabels = scale.value > 0.8 && cognitiveLoad < 0.7;
-    const maxVisibleNodes = cognitiveLoad > 0.8 ? 50 : nodes.length;
+  const renderLinks = useMemo(() => {
+    if (!links || !Array.isArray(links)) return [];
+    if (links.length > 100 && cognitiveLoad > 0.8) {
+      // Reduce visual complexity under high cognitive load
+      return links
+        .filter((link) => link.strength > 0.5)
+        .slice(0, 50)
+        .map(renderSingleLink);
+    }
 
-    return nodes
-      .slice(0, maxVisibleNodes)
-      .map((node) => renderSingleNode(node, shouldShowLabels));
-  }, [nodes, scale.value, cognitiveLoad, selectedNode?.id]);
+    return links.map(renderSingleLink);
+  }, [links, cognitiveLoad, renderSingleLink]);
 
   const renderSingleNode = useCallback(
     (node: NeuralNode, showLabel: boolean) => {
@@ -387,12 +379,6 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       const dynamicRadius =
         baseRadius * Math.max(0.6, Math.min(1.4, scale.value));
       const isSelected = selectedNode?.id === node.id;
-
-      // Pulse animation for active nodes
-      const pulseScale = useDerivedValue(() => {
-        if (!node.isActive) return 1;
-        return 1 + pulseTime.value * 0.2 * fireEffect.glow;
-      }, [node.isActive, fireEffect.glow]);
 
       return (
         <Group key={node.id}>
@@ -441,15 +427,26 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
             <Shadow dx={2} dy={2} blur={4} color="rgba(0,0,0,0.2)" />
           </Circle>
 
-          {/* Mastery progress ring - Fixed: Removed strokeDasharray */}
+          {/* Mastery progress ring */}
           {node.masteryLevel > 0.1 && (
-            <Circle
-              cx={node.x || 0}
-              cy={node.y || 0}
-              r={dynamicRadius + 2}
+            <Path
+              path={`M${(node.x || 0) + dynamicRadius + 2},${node.y || 0} A${
+                dynamicRadius + 2
+              },${dynamicRadius + 2} 0 ${node.masteryLevel > 0.5 ? 1 : 0},1 ${
+                (node.x || 0) +
+                dynamicRadius +
+                2 +
+                Math.cos(node.masteryLevel * 2 * Math.PI - Math.PI / 2) *
+                  (dynamicRadius + 2)
+              },${
+                (node.y || 0) +
+                Math.sin(node.masteryLevel * 2 * Math.PI - Math.PI / 2) *
+                  (dynamicRadius + 2)
+              }`}
               color={themeColors.success}
               style="stroke"
               strokeWidth={3}
+              strokeCap="round"
               opacity={node.masteryLevel}
             />
           )}
@@ -478,8 +475,20 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
         </Group>
       );
     },
-    [selectedNode?.id, physicsEngine, themeColors, font, pulseTime.value],
+    [selectedNode?.id, physicsEngine, themeColors, font, scale.value],
   );
+
+  const renderNodes = useMemo(() => {
+    if (!nodes || !Array.isArray(nodes)) return [];
+    // Adaptive node rendering based on cognitive load and zoom
+    const shouldShowLabels = scale.value > 0.8 && cognitiveLoad < 0.7;
+    const maxVisibleNodes = cognitiveLoad > 0.8 ? 50 : nodes.length;
+
+    console.log('Nodes:', nodes, 'Links:', links);
+    return nodes
+      .slice(0, maxVisibleNodes)
+      .map((node) => renderSingleNode(node, shouldShowLabels));
+  }, [nodes, scale.value, cognitiveLoad, selectedNode?.id, renderSingleNode]);
 
   const renderBackgroundGrid = useMemo(() => {
     if (cognitiveLoad >= 0.7 || scale.value < 0.5) return null;
@@ -526,10 +535,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       <View
         style={[
           styles.nodeInfo,
-          {
-            backgroundColor: themeColors.surface,
-            borderColor: themeColors.border,
-          },
+          { backgroundColor: themeColors.surface + '95' },
         ]}
       >
         <Text style={[styles.nodeTitle, { color: themeColors.text }]}>
@@ -596,6 +602,14 @@ interface NeuralMindMapProps {
   viewMode?: 'network' | 'clusters' | 'paths' | 'health';
 }
 
+interface NodeInfoStyle extends ViewStyle {
+  backdropFilter?: string;
+}
+
+interface ControlsStyle extends ViewStyle {
+  backdropFilter?: string;
+}
+
 export const NeuralMindMap: React.FC<NeuralMindMapProps> = ({
   graph,
   theme,
@@ -633,10 +647,7 @@ export const NeuralMindMap: React.FC<NeuralMindMapProps> = ({
         <View
           style={[
             styles.controls,
-            {
-              backgroundColor: themeColors.surface,
-              borderColor: themeColors.border,
-            },
+            { backgroundColor: themeColors.surface + '95' },
           ]}
         >
           <Text style={[styles.healthScore, { color: healthColor }]}>
@@ -669,8 +680,10 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: borderRadius.md,
     borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     ...shadows.md,
-  },
+  } as NodeInfoStyle,
+
   nodeTitle: {
     ...typography.h4,
     marginBottom: spacing.xs,
@@ -691,11 +704,13 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: borderRadius.md,
     borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     ...shadows.md,
-  },
+  } as ControlsStyle,
+
   healthScore: {
     ...typography.body,
     fontWeight: '600',
@@ -704,4 +719,3 @@ const styles = StyleSheet.create({
     ...typography.caption,
   },
 });
-

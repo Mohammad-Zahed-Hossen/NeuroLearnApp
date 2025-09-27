@@ -124,7 +124,10 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
     const initialize = async () => {
       try {
-        await Promise.all([generateNeuralGraph(), calculateCognitiveLoad()]);
+        await Promise.all([
+          generateNeuralGraph(),
+          calculateCognitiveLoad(),
+        ]);
       } catch (error) {
         if (mounted) {
           console.error('Initialization error:', error);
@@ -134,63 +137,50 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     };
 
     initialize();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
   /**
    * Generate neural graph with enhanced error handling
    */
-  const generateNeuralGraph = useCallback(
-    async (forceRefresh = false) => {
-      try {
-        setLoadingState((prev) => ({ ...prev, isGenerating: true }));
-        setError(null);
+  const generateNeuralGraph = useCallback(async (forceRefresh = false) => {
+    try {
+      setLoadingState((prev) => ({ ...prev, isGenerating: true }));
+      setError(null);
 
-        const graph = await mindMapGenerator.generateNeuralGraph();
-        setNeuralGraph(graph);
+      const graph = await mindMapGenerator.generateNeuralGraph(forceRefresh);
+      setNeuralGraph(graph);
 
-        // Analytics event
-        console.log('Neural graph generated:', {
-          nodes: graph.nodes.length,
-          links: graph.links.length,
-          health: graph.knowledgeHealth,
-        });
-      } catch (error: unknown) {
-        if(error instanceof Error){
-        console.error('Error generating neural graph:', error);
-        setError(error.message || 'Failed to generate brain map');
-        } else {
-        console.error('An unexpected error occurred:', error);
-        setError('An unexpected error occurred');
-      }
+      // Analytics event
+      console.log('Neural graph generated:', {
+        nodes: graph.nodes.length,
+        links: graph.links.length,
+        health: graph.knowledgeHealth,
+      });
+    } catch (error: unknown) {
+      console.error('Error generating neural graph:', error);
+      setError((error as Error)?.message || 'Failed to generate brain map');
 
-        Alert.alert(
-          'Neural Map Error',
-          'Failed to generate your brain map. Make sure you have some learning data first.',
-          [
-            {
-              text: 'Go to Flashcards',
-              onPress: () => onNavigate('flashcards'),
-            },
-            { text: 'Try Again', onPress: () => generateNeuralGraph(true) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        );
-      } finally {
-        setLoadingState((prev) => ({ ...prev, isGenerating: false }));
-      }
-    },
-    [mindMapGenerator, onNavigate],
-  );
+      Alert.alert(
+        'Neural Map Error',
+        'Failed to generate your brain map. Make sure you have some learning data first.',
+        [
+          { text: 'Go to Flashcards', onPress: () => onNavigate('flashcards') },
+          { text: 'Try Again', onPress: () => generateNeuralGraph(true) },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    } finally {
+      setLoadingState((prev) => ({ ...prev, isGenerating: false }));
+    }
+  }, [mindMapGenerator, onNavigate]);
 
   /**
    * Calculate current cognitive load with enhanced metrics
    */
   const calculateCognitiveLoad = useCallback(async () => {
     try {
-      setLoadingState((prev) => ({ ...prev, isCalculating: true }));
+      setLoadingState(prev => ({ ...prev, isCalculating: true }));
 
       const [flashcards, tasks, sessions] = await Promise.all([
         storage.getFlashcards(),
@@ -199,221 +189,171 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       ]);
 
       // Enhanced cognitive load calculation
-      const dueFlashcards = flashcards.filter(
-        (card) => new Date(card.nextReview) <= new Date(),
+      const dueFlashcards = flashcards.filter(card =>
+        new Date(card.nextReview) <= new Date()
       ).length;
 
-      const urgentTasks = tasks.filter(
-        (task) => !task.isCompleted && task.priority >= 3,
+      const urgentTasks = tasks.filter(task =>
+        !task.isCompleted && task.priority >= 3
       ).length;
 
       const recentFailures = sessions
-        .filter((s) => s.type === 'flashcards' && !s.completed)
-        .filter(
-          (s) => Date.now() - s.startTime.getTime() < 24 * 60 * 60 * 1000,
-        ).length;
+        .filter(s => s.type === 'flashcards' && !s.completed)
+        .filter(s => Date.now() - s.startTime.getTime() < 24 * 60 * 60 * 1000)
+        .length;
 
       // Weighted cognitive load calculation
-      const baseLoad = Math.min(
-        1,
-        (dueFlashcards * 0.1 + urgentTasks * 0.2) / 10,
-      );
+      const baseLoad = Math.min(1, (dueFlashcards * 0.1 + urgentTasks * 0.2) / 10);
       const stressLoad = Math.min(0.3, recentFailures * 0.05);
       const totalLoad = Math.min(1, baseLoad + stressLoad);
 
       setCognitiveLoad(totalLoad);
+
     } catch (error) {
       console.error('Error calculating cognitive load:', error);
       setCognitiveLoad(0.5); // Default fallback
     } finally {
-      setLoadingState((prev) => ({ ...prev, isCalculating: false }));
+      setLoadingState(prev => ({ ...prev, isCalculating: false }));
     }
   }, [storage]);
 
   /**
    * Handle node press with analytics
    */
-  const handleNodePress = useCallback(
-    (node: NeuralNode) => {
-      setSelectedNode(node);
-      generateNodeDetail(node);
+  const handleNodePress = useCallback((node: NeuralNode) => {
+    setSelectedNode(node);
+    generateNodeDetail(node);
 
-      // Analytics
-      console.log('Node selected:', {
-        id: node.id,
-        type: node.type,
-        masteryLevel: node.masteryLevel,
-        isActive: node.isActive,
-      });
-    },
-    [neuralGraph],
-  );
+    // Analytics
+    console.log('Node selected:', {
+      id: node.id,
+      type: node.type,
+      masteryLevel: node.masteryLevel,
+      isActive: node.isActive,
+    });
+  }, [neuralGraph]);
 
   /**
    * Handle node long press for detailed analysis
    */
-  const handleNodeLongPress = useCallback(
-    (node: NeuralNode) => {
-      setSelectedNode(node);
-      generateNodeDetail(node);
-      setNodeDetailVisible(true);
-    },
-    [neuralGraph],
-  );
+  const handleNodeLongPress = useCallback((node: NeuralNode) => {
+    setSelectedNode(node);
+    generateNodeDetail(node);
+    setNodeDetailVisible(true);
+  }, [neuralGraph]);
 
   /**
    * Generate detailed node analysis with AI recommendations
    */
-  const generateNodeDetail = useCallback(
-    (node: NeuralNode) => {
-      if (!neuralGraph) return;
+  const generateNodeDetail = useCallback((node: NeuralNode) => {
+    if (!neuralGraph) return;
 
-      try {
-        // Calculate network metrics
-        const connections = neuralGraph.links.filter(
-          (link) => link.source === node.id || link.target === node.id,
-        ).length;
+    try {
+      // Calculate network metrics
+      const connections = neuralGraph.links.filter(link =>
+        link.source === node.id || link.target === node.id
+      ).length;
 
-        const centrality =
-          connections / Math.max(1, neuralGraph.nodes.length - 1);
+      const centrality = connections / Math.max(1, neuralGraph.nodes.length - 1);
 
-        // Determine network position
-        const networkPosition: NodeDetail['networkPosition'] =
-          centrality > 0.7
-            ? 'central'
-            : centrality > 0.3
-            ? 'bridge'
-            : 'peripheral';
+      // Determine network position
+      const networkPosition: NodeDetail['networkPosition'] =
+        centrality > 0.7 ? 'central' :
+        centrality > 0.3 ? 'bridge' : 'peripheral';
 
-        // Generate enhanced AI recommendations
-        const recommendations = generateEnhancedRecommendations(
-          node,
-          networkPosition,
-        );
+      // Generate enhanced AI recommendations
+      const recommendations = generateEnhancedRecommendations(node, networkPosition);
 
-        setNodeDetail({
-          node,
-          connections,
-          centrality,
-          recommendations,
-          networkPosition,
-        });
-      } catch (error) {
-        console.error('Error generating node detail:', error);
-      }
-    },
-    [neuralGraph],
-  );
+      setNodeDetail({
+        node,
+        connections,
+        centrality,
+        recommendations,
+        networkPosition,
+      });
+
+    } catch (error) {
+      console.error('Error generating node detail:', error);
+    }
+  }, [neuralGraph]);
 
   /**
    * Generate AI-powered learning recommendations
    */
-  const generateEnhancedRecommendations = useCallback(
-    (node: NeuralNode, position: NodeDetail['networkPosition']): string[] => {
-      const recommendations: string[] = [];
+  const generateEnhancedRecommendations = useCallback((
+    node: NeuralNode,
+    position: NodeDetail['networkPosition']
+  ): string[] => {
+    const recommendations: string[] = [];
 
-      // Mastery-based recommendations
-      if (node.masteryLevel < 0.25) {
-        recommendations.push(
-          '🎯 Focus: This concept needs immediate attention and foundational work',
-        );
-        recommendations.push(
-          '📚 Strategy: Use active recall and spaced repetition daily',
-        );
-      } else if (node.masteryLevel < 0.5) {
-        recommendations.push(
-          '🔄 Practice: Continue regular review to strengthen understanding',
-        );
-        recommendations.push(
-          '🔗 Connect: Link this concept to related topics you know well',
-        );
-      } else if (node.masteryLevel > 0.85) {
-        recommendations.push(
-          '🚀 Advanced: Use this as a foundation for learning advanced topics',
-        );
-        recommendations.push(
-          '👨‍🏫 Teach: Explain this concept to others to deepen mastery',
-        );
-      }
+    // Mastery-based recommendations
+    if (node.masteryLevel < 0.25) {
+      recommendations.push('🎯 Focus: This concept needs immediate attention and foundational work');
+      recommendations.push('📚 Strategy: Use active recall and spaced repetition daily');
+    } else if (node.masteryLevel < 0.5) {
+      recommendations.push('🔄 Practice: Continue regular review to strengthen understanding');
+      recommendations.push('🔗 Connect: Link this concept to related topics you know well');
+    } else if (node.masteryLevel > 0.85) {
+      recommendations.push('🚀 Advanced: Use this as a foundation for learning advanced topics');
+      recommendations.push('👨‍🏫 Teach: Explain this concept to others to deepen mastery');
+    }
 
-      // Activation-based recommendations
-      if (node.isActive && node.cognitiveLoad > 0.7) {
-        recommendations.push('⚡ Urgent: This concept is due for review today');
-        recommendations.push(
-          '🧘 Method: Break into smaller chunks to reduce cognitive load',
-        );
-      }
+    // Activation-based recommendations
+    if (node.isActive && node.cognitiveLoad > 0.7) {
+      recommendations.push('⚡ Urgent: This concept is due for review today');
+      recommendations.push('🧘 Method: Break into smaller chunks to reduce cognitive load');
+    }
 
-      // Network position recommendations
-      switch (position) {
-        case 'central':
-          recommendations.push(
-            '🌟 Strategic: This is a key concept - mastering it unlocks many others',
-          );
-          break;
-        case 'bridge':
-          recommendations.push(
-            '🌉 Connector: This concept bridges different knowledge domains',
-          );
-          break;
-        case 'peripheral':
-          recommendations.push(
-            '🔍 Isolated: Create more connections to integrate this knowledge',
-          );
-          break;
-      }
+    // Network position recommendations
+    switch (position) {
+      case 'central':
+        recommendations.push('🌟 Strategic: This is a key concept - mastering it unlocks many others');
+        break;
+      case 'bridge':
+        recommendations.push('🌉 Connector: This concept bridges different knowledge domains');
+        break;
+      case 'peripheral':
+        recommendations.push('🔍 Isolated: Create more connections to integrate this knowledge');
+        break;
+    }
 
-      // Cognitive load recommendations
-      if (node.cognitiveLoad > 0.8) {
-        recommendations.push(
-          '🎨 Visual: Use diagrams, mind maps, or memory techniques',
-        );
-        recommendations.push(
-          '⏱️ Timing: Study this when your mental energy is highest',
-        );
-      }
+    // Cognitive load recommendations
+    if (node.cognitiveLoad > 0.8) {
+      recommendations.push('🎨 Visual: Use diagrams, mind maps, or memory techniques');
+      recommendations.push('⏱️ Timing: Study this when your mental energy is highest');
+    }
 
-      // Source-specific recommendations
-      if (node.sourceType === 'flashcard') {
-        recommendations.push(
-          '💡 Enhance: Add visual cues or mnemonics to your flashcard',
-        );
-      } else if (node.sourceType === 'task') {
-        recommendations.push(
-          '✅ Action: Break this task into smaller, manageable steps',
-        );
-      }
+    // Source-specific recommendations
+    if (node.sourceType === 'flashcard') {
+      recommendations.push('💡 Enhance: Add visual cues or mnemonics to your flashcard');
+    } else if (node.sourceType === 'task') {
+      recommendations.push('✅ Action: Break this task into smaller, manageable steps');
+    }
 
-      // Default encouragement
-      if (recommendations.length === 0) {
-        recommendations.push(
-          '✅ Excellent: This concept is well-integrated in your knowledge network',
-        );
-        recommendations.push(
-          '🎓 Next: Consider exploring advanced applications or related fields',
-        );
-      }
+    // Default encouragement
+    if (recommendations.length === 0) {
+      recommendations.push('✅ Excellent: This concept is well-integrated in your knowledge network');
+      recommendations.push('🎓 Next: Consider exploring advanced applications or related fields');
+    }
 
-      return recommendations.slice(0, 5); // Limit to 5 recommendations for focus
-    },
-    [],
-  );
+    return recommendations.slice(0, 5); // Limit to 5 recommendations for focus
+  }, []);
 
   /**
    * Handle refresh with pull-to-refresh
    */
   const handleRefresh = useCallback(async () => {
-    setLoadingState((prev) => ({ ...prev, isRefreshing: true }));
+    setLoadingState(prev => ({ ...prev, isRefreshing: true }));
     try {
-      await Promise.all([generateNeuralGraph(true), calculateCognitiveLoad()]);
-      Alert.alert(
-        'Updated',
-        'Your neural map has been refreshed with the latest data.',
-      );
+      await Promise.all([
+        generateNeuralGraph(true),
+        calculateCognitiveLoad(),
+      ]);
+      Alert.alert('Updated', 'Your neural map has been refreshed with the latest data.');
     } catch (error) {
       Alert.alert('Error', 'Failed to refresh neural map.');
     } finally {
-      setLoadingState((prev) => ({ ...prev, isRefreshing: false }));
+      setLoadingState(prev => ({ ...prev, isRefreshing: false }));
     }
   }, [generateNeuralGraph, calculateCognitiveLoad]);
 
@@ -445,8 +385,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     };
 
     if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.LOW) return configs.low;
-    if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.MODERATE)
-      return configs.moderate;
+    if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.MODERATE) return configs.moderate;
     if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.HIGH) return configs.high;
     return configs.critical;
   }, [cognitiveLoad, themeColors]);
@@ -499,86 +438,75 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   /**
    * Render empty state
    */
-  const renderEmptyState = useCallback(
-    () => (
-      <ScreenContainer theme={theme}>
-        <AppHeader
-          title="Neural Mind Map"
-          theme={theme}
-          onMenuPress={() => setMenuVisible(true)}
-          cognitiveLoad={cognitiveLoad}
-        />
-        <View style={styles.emptyContainer}>
-          <GlassCard theme={theme} style={styles.emptyCard}>
-            <Text style={[styles.emptyTitle, { color: themeColors.text }]}>
-              🧠 Build Your Neural Map
-            </Text>
-            <Text
-              style={[styles.emptyText, { color: themeColors.textSecondary }]}
-            >
-              Start learning with flashcards, tasks, or memory palaces to see
-              your knowledge network come alive. Your brain map will show
-              connections between concepts and highlight areas that need
-              attention.
-            </Text>
-            <View style={styles.emptyActions}>
-              <Button
-                title="Create Flashcards"
-                onPress={() => onNavigate('flashcards')}
-                variant="primary"
-                theme={theme}
-                style={styles.emptyButton}
-              />
-              <Button
-                title="Add Tasks"
-                onPress={() => onNavigate('tasks')}
-                variant="outline"
-                theme={theme}
-                style={styles.emptyButton}
-              />
-            </View>
-          </GlassCard>
-        </View>
-      </ScreenContainer>
-    ),
-    [theme, themeColors, cognitiveLoad, onNavigate],
-  );
+  const renderEmptyState = useCallback(() => (
+    <ScreenContainer theme={theme}>
+      <AppHeader
+        title="Neural Mind Map"
+        theme={theme}
+        onMenuPress={() => setMenuVisible(true)}
+        cognitiveLoad={cognitiveLoad}
+      />
+      <View style={styles.emptyContainer}>
+        <GlassCard theme={theme} style={styles.emptyCard}>
+          <Text style={[styles.emptyTitle, { color: themeColors.text }]}>
+            🧠 Build Your Neural Map
+          </Text>
+          <Text style={[styles.emptyText, { color: themeColors.textSecondary }]}>
+            Start learning with flashcards, tasks, or memory palaces to see your knowledge
+            network come alive. Your brain map will show connections between concepts and
+            highlight areas that need attention.
+          </Text>
+          <View style={styles.emptyActions}>
+            <Button
+              title="Create Flashcards"
+              onPress={() => onNavigate('flashcards')}
+              variant="primary"
+              theme={theme}
+              style={styles.emptyButton}
+            />
+            <Button
+              title="Add Tasks"
+              onPress={() => onNavigate('tasks')}
+              variant="outline"
+              theme={theme}
+              style={styles.emptyButton}
+            />
+          </View>
+        </GlassCard>
+      </View>
+    </ScreenContainer>
+  ), [theme, themeColors, cognitiveLoad, onNavigate]);
 
   /**
    * Render error state
    */
-  const renderErrorState = useCallback(
-    () => (
-      <ScreenContainer theme={theme}>
-        <AppHeader
-          title="Neural Mind Map"
-          theme={theme}
-          onMenuPress={() => setMenuVisible(true)}
-          cognitiveLoad={cognitiveLoad}
-        />
-        <View style={styles.errorContainer}>
-          <GlassCard theme={theme} style={styles.errorCard}>
-            <Text style={[styles.errorTitle, { color: themeColors.error }]}>
-              ⚠️ Neural Map Error
-            </Text>
-            <Text
-              style={[styles.errorText, { color: themeColors.textSecondary }]}
-            >
-              {error || 'Failed to generate your brain map'}
-            </Text>
-            <Button
-              title="Try Again"
-              onPress={() => generateNeuralGraph(true)}
-              variant="primary"
-              theme={theme}
-              style={styles.errorButton}
-            />
-          </GlassCard>
-        </View>
-      </ScreenContainer>
-    ),
-    [theme, themeColors, cognitiveLoad, error, generateNeuralGraph],
-  );
+  const renderErrorState = useCallback(() => (
+    <ScreenContainer theme={theme}>
+      <AppHeader
+        title="Neural Mind Map"
+        theme={theme}
+        onMenuPress={() => setMenuVisible(true)}
+        cognitiveLoad={cognitiveLoad}
+      />
+      <View style={styles.errorContainer}>
+        <GlassCard theme={theme} style={styles.errorCard}>
+          <Text style={[styles.errorTitle, { color: themeColors.error }]}>
+            ⚠️ Neural Map Error
+          </Text>
+          <Text style={[styles.errorText, { color: themeColors.textSecondary }]}>
+            {error || 'Failed to generate your brain map'}
+          </Text>
+          <Button
+            title="Try Again"
+            onPress={() => generateNeuralGraph(true)}
+            variant="primary"
+            theme={theme}
+            style={styles.errorButton}
+          />
+        </GlassCard>
+      </View>
+    </ScreenContainer>
+  ), [theme, themeColors, cognitiveLoad, error, generateNeuralGraph]);
 
   // Loading state
   if (loadingState.isGenerating && !neuralGraph) {
@@ -647,10 +575,8 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                 <View
                   style={[
                     styles.loadBar,
-                    {
-                      backgroundColor: cognitiveLoadConfig.color,
-                      width: `${cognitiveLoad * 100}%`,
-                    },
+                    { backgroundColor: cognitiveLoadConfig.color },
+                    { width: `${cognitiveLoad * 100}%` },
                   ]}
                 />
               </View>
@@ -729,6 +655,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           style={styles.viewModeScroll}
           contentContainerStyle={styles.viewModeContainer}
         >
+          console.log('Nodes:', nodes, 'Links:', links);
           {VIEW_MODES.map((mode) => (
             <TouchableOpacity
               key={mode.id}
@@ -1006,6 +933,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                   </Text>
 
                   <View style={styles.recommendationsList}>
+                    console.log('Nodes:', nodes, 'Links:', links);
                     {nodeDetail.recommendations.map((rec, index) => (
                       <View key={index} style={styles.recommendationItem}>
                         <Text
@@ -1068,7 +996,6 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 const styles = StyleSheet.create({
   scrollContainer: {
     flex: 0,
-    paddingTop: 110,
   },
 
   // Loading states
@@ -1231,7 +1158,6 @@ const styles = StyleSheet.create({
   // Canvas
   canvasContainer: {
     flex: 1,
-    paddingTop: 110,
   },
 
   // Node panel
@@ -1388,4 +1314,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-
