@@ -1,0 +1,30 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="200" height="200" rx="40" fill="url(#paint0_linear_287_31)"/>
+<path d="M100 20C60 20 20 40 20 80C20 120 60 140 100 140C140 140 180 120 180 80C180 40 140 20 100 20Z" fill="url(#paint1_linear_287_31)"/>
+<path d="M100 30C65 30 30 45 30 80C30 115 65 130 100 130C135 130 170 115 170 80C170 45 135 30 100 30Z" fill="url(#paint2_linear_287_31)"/>
+<path d="M100 40C70 40 40 55 40 80C40 105 70 120 100 120C130 120 160 105 160 80C160 55 130 40 100 40Z" fill="url(#paint3_linear_287_31)"/>
+<path d="M100 50C75 50 50 65 50 80C50 95 75 110 100 110C125 110 150 95 150 80C150 65 125 50 100 50Z" fill="url(#paint4_linear_287_31)"/>
+<text x="100" y="180" font-family="Inter" font-size="20" font-weight="bold" text-anchor="middle" fill="#FFFFFF">NeuroLEARN</text>
+<defs>
+<linearGradient id="paint0_linear_287_31" x1="100" y1="0" x2="100" y2="200" gradientUnits="userSpaceOnUse">
+<stop stop-color="#4f46e5"/>
+<stop offset="1" stop-color="#8b5cf6"/>
+</linearGradient>
+<linearGradient id="paint1_linear_287_31" x1="100" y1="20" x2="100" y2="140" gradientUnits="userSpaceOnUse">
+<stop stop-color="#06b6d4"/>
+<stop offset="1" stop-color="#10b981"/>
+</linearGradient>
+<linearGradient id="paint2_linear_287_31" x1="100" y1="30" x2="100" y2="130" gradientUnits="userSpaceOnUse">
+<stop stop-color="#f59e0b"/>
+<stop offset="1" stop-color="#ef4444"/>
+</linearGradient>
+<linearGradient id="paint3_linear_287_31" x1="100" y1="40" x2="100" y2="120" gradientUnits="userSpaceOnUse">
+<stop stop-color="#4f46e5"/>
+<stop offset="1" stop-color="#8b5cf6"/>
+</linearGradient>
+<linearGradient id="paint4_linear_287_31" x1="100" y1="50" x2="100" y2="110" gradientUnits="userSpaceOnUse">
+<stop stop-color="#06b6d4"/>
+<stop offset="1" stop-color="#10b981"/>
+</linearGradient>
+</defs>
+</svg>

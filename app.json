@@ -1,24 +1,24 @@
 {
   "expo": {
-    "name": "NeuroLearnApp",
-    "slug": "NeuroLearnApp",
+    "name": "NeuroLearn",
+    "slug": "NeuroLearn",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/NeuroLearn.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/NeuroLearn.svg",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#8B5CF6"
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/NeuroLearn.png",
+        "backgroundColor": "#8B5CF6"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
