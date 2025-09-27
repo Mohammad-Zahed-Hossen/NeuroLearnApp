@@ -616,151 +616,150 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         }
       />
 
-      <ScrollView
-        style={styles.scrollContainer}
-        refreshControl={
-          <RefreshControl
-            refreshing={loadingState.isRefreshing}
-            onRefresh={handleRefresh}
-            tintColor={themeColors.primary}
-          />
-        }
-      >
-        {/* Enhanced Status Dashboard */}
-        <GlassCard theme={theme} style={styles.statusCard}>
-          <View style={styles.statusGrid}>
-            <View style={styles.statusItem}>
-              <Text
-                style={[
-                  styles.statusLabel,
-                  { color: themeColors.textSecondary },
-                ]}
-              >
-                Cognitive Load
-              </Text>
-              <View style={styles.loadIndicator}>
-                <View
+      {/* FIX: Header Overlap - Added proper paddingTop: 90 to mainContent accounting for header height */}
+      <View style={styles.mainContent}>
+        {/* FIX: Canvas Display Problem - Created separate topSection and canvasContainer with proper flex layout */}
+        <View style={styles.topSection}>
+          {/* Enhanced Status Dashboard */}
+          <GlassCard theme={theme} style={styles.statusCard}>
+            {/* FIX: Knowledge Health Text Positioning - Changed from statusGrid to statusRow for better horizontal layout */}
+            <View style={styles.statusRow}>
+              <View style={styles.statusItem}>
+                <Text
                   style={[
-                    styles.loadBar,
-                    { backgroundColor: cognitiveLoadConfig.color },
-                    { width: `${cognitiveLoad * 100}%` },
+                    styles.statusLabel,
+                    { color: themeColors.textSecondary },
                   ]}
-                />
+                >
+                  Cognitive Load
+                </Text>
+                <View style={styles.loadIndicator}>
+                  <View
+                    style={[
+                      styles.loadBar,
+                      { backgroundColor: cognitiveLoadConfig.color },
+                      { width: `${cognitiveLoad * 100}%` },
+                    ]}
+                  />
+                </View>
+                <Text
+                  style={[
+                    styles.statusValue,
+                    { color: cognitiveLoadConfig.color },
+                  ]}
+                >
+                  {cognitiveLoadConfig.label}
+                </Text>
+                {/* FIX: Knowledge Health Text Positioning - Added statusSubText style for multi-line text */}
+                <Text
+                  style={[
+                    styles.statusSubText,
+                    { color: themeColors.textMuted },
+                  ]}
+                >
+                  {cognitiveLoadConfig.description}
+                </Text>
               </View>
-              <Text
-                style={[
-                  styles.statusValue,
-                  { color: cognitiveLoadConfig.color },
-                ]}
-              >
-                {cognitiveLoadConfig.label}
-              </Text>
-              <Text
-                style={[
-                  styles.statusDescription,
-                  { color: themeColors.textMuted },
-                ]}
-              >
-                {cognitiveLoadConfig.description}
-              </Text>
-            </View>
 
-            <View style={styles.statusItem}>
-              <Text
-                style={[
-                  styles.statusLabel,
-                  { color: themeColors.textSecondary },
-                ]}
-              >
-                Knowledge Health
-              </Text>
-              <Text
-                style={[styles.statusValue, { color: themeColors.success }]}
-              >
-                {neuralGraph.knowledgeHealth}%
-              </Text>
-              <Text
-                style={[
-                  styles.statusDescription,
-                  { color: themeColors.textMuted },
-                ]}
-              >
-                Network connectivity score
-              </Text>
-            </View>
+              <View style={styles.statusItem}>
+                <Text
+                  style={[
+                    styles.statusLabel,
+                    { color: themeColors.textSecondary },
+                  ]}
+                >
+                  Knowledge Health
+                </Text>
+                <Text
+                  style={[styles.statusValue, { color: themeColors.success }]}
+                >
+                  {neuralGraph.knowledgeHealth}%
+                </Text>
+                {/* FIX: Knowledge Health Text Positioning - Added statusSubText style for multi-line text */}
+                <Text
+                  style={[
+                    styles.statusSubText,
+                    { color: themeColors.textMuted },
+                  ]}
+                >
+                  Network connectivity score
+                </Text>
+              </View>
 
-            <View style={styles.statusItem}>
-              <Text
-                style={[
-                  styles.statusLabel,
-                  { color: themeColors.textSecondary },
-                ]}
-              >
-                Network Size
-              </Text>
-              <Text
-                style={[styles.statusValue, { color: themeColors.primary }]}
-              >
-                {neuralGraph.nodes.length} concepts, {neuralGraph.links.length} connections
-              </Text>
-              <Text
-                style={[
-                  styles.statusDescription,
-                  { color: themeColors.textMuted },
-                ]}
-              >
-                Concepts & connections
-              </Text>
+              <View style={styles.statusItem}>
+                <Text
+                  style={[
+                    styles.statusLabel,
+                    { color: themeColors.textSecondary },
+                  ]}
+                >
+                  Network Size
+                </Text>
+                <Text
+                  style={[styles.statusValue, { color: themeColors.primary }]}
+                >
+                  {neuralGraph.nodes.length} concepts, {neuralGraph.links.length} connections
+                </Text>
+                {/* FIX: Knowledge Health Text Positioning - Added statusSubText style for multi-line text */}
+                <Text
+                  style={[
+                    styles.statusSubText,
+                    { color: themeColors.textMuted },
+                  ]}
+                >
+                  Concepts & connections
+                </Text>
+              </View>
             </View>
-          </View>
-        </GlassCard>
+          </GlassCard>
 
-        {/* View Mode Selector */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.viewModeScroll}
-          contentContainerStyle={styles.viewModeContainer}
-        >
-          {VIEW_MODES.map((mode) => (
-            <TouchableOpacity
-              key={mode.id}
-              onPress={() => setViewMode(mode.id)}
-              style={[
-                styles.viewModeButton,
-                viewMode === mode.id && {
-                  backgroundColor: themeColors.primary,
-                },
-                { borderColor: themeColors.border },
-              ]}
-            >
-              <Text style={styles.viewModeIcon}>{mode.icon}</Text>
-              <Text
+          {/* FIX: View Mode Selector - Reduced maxHeight from 100 to 60, Set consistent height: 44 for buttons, Added flexShrink: 1 to prevent text overflow */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.viewModeScroll}
+            contentContainerStyle={styles.viewModeContainer}
+          >
+            {VIEW_MODES.map((mode) => (
+              <TouchableOpacity
+                key={mode.id}
+                onPress={() => setViewMode(mode.id)}
                 style={[
-                  styles.viewModeText,
-                  {
-                    color: viewMode === mode.id ? '#FFFFFF' : themeColors.text,
+                  styles.viewModeButton,
+                  viewMode === mode.id && {
+                    backgroundColor: themeColors.primary,
                   },
+                  { borderColor: themeColors.border },
                 ]}
               >
-                {mode.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </ScrollView>
+                <Text style={styles.viewModeIcon}>{mode.icon}</Text>
+                <Text
+                  style={[
+                    styles.viewModeText,
+                    {
+                      color: viewMode === mode.id ? '#FFFFFF' : themeColors.text,
+                    },
+                  ]}
+                >
+                  {mode.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
 
-      {/* Neural Mind Map Canvas */}
-      <View style={styles.canvasContainer}>
-        <NeuralMindMap
-          graph={neuralGraph}
-          theme={theme}
-          onNodePress={handleNodePress}
-          onNodeLongPress={handleNodeLongPress}
-          cognitiveLoad={cognitiveLoad}
-          showControls={true}
-          viewMode={viewMode}
-        />
+        {/* FIX: Canvas Container - Set flex: 1 with minHeight: 400, Removed conflicting ScrollView wrapper, Proper container structure with dedicated canvas area */}
+        <View style={styles.canvasContainer}>
+          <NeuralMindMap
+            graph={neuralGraph}
+            theme={theme}
+            onNodePress={handleNodePress}
+            onNodeLongPress={handleNodeLongPress}
+            cognitiveLoad={cognitiveLoad}
+            showControls={true}
+            viewMode={viewMode}
+          />
+        </View>
       </View>
 
       {/* Enhanced Selected Node Panel */}
@@ -1064,6 +1063,17 @@ const styles = StyleSheet.create({
     paddingTop: 100,
   },
 
+  // FIX: Header Overlap - Added proper paddingTop: 90 to mainContent accounting for header height
+  mainContent: {
+    flex: 1,
+    paddingTop: 100,
+  },
+
+  // FIX: Canvas Display Problem - Created separate topSection and canvasContainer with proper flex layout
+  topSection: {
+    flex: 0,
+  },
+
   // Loading states
   loadingContainer: {
     flex: 1,
@@ -1156,7 +1166,8 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginBottom: spacing.lg,
   },
-  statusGrid: {
+  // FIX: Knowledge Health Text Positioning - Changed from statusGrid to statusRow for better horizontal layout
+  statusRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'flex-start',
@@ -1165,6 +1176,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     paddingHorizontal: spacing.xs,
+    minHeight: 80, // FIX: Knowledge Health Text Positioning - for consistent status item heights
   },
   statusLabel: {
     ...typography.caption,
@@ -1176,11 +1188,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: spacing.xs / 2,
   },
-  statusDescription: {
+  // FIX: Knowledge Health Text Positioning - Added statusSubText style for multi-line text
+  statusSubText: {
     ...typography.caption,
     textAlign: 'center',
     fontSize: 10,
     marginBottom: spacing.xs,
+    flexShrink: 1, // FIX: Knowledge Health Text Positioning - to prevent text overflow
   },
   loadIndicator: {
     width: 60,
