@@ -1,602 +1,595 @@
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-} from 'd3-force';
-import { NeuralNode, NeuralLink, NeuralGraph } from './MindMapGeneratorService';
-
 /**
- * Neural Color Mapping for Mind Map Visualization
- * Based on neuroscience research and cognitive psychology principles
+ * Phase 5 Enhancement: Neural Physics Engine with Focus Lock
+ *
+ * Adds intelligent focus mode that physically repels distracting nodes
+ * and emphasizes the selected focus target through force manipulation
  */
-export interface NeuralColors {
-  nodes: {
-    [K in NeuralNode['type']]: {
-      default: string;
-      active: string;
-      mastered: string;
-      weak: string;
-    };
-  };
-  links: {
-    [K in NeuralLink['type']]: string;
-  };
-  ui: {
-    background: string;
-    canvas: string;
-    text: string;
-    textSecondary: string;
-    glassHighlight: string;
-  };
+
+import * as d3 from 'd3-force';
+import { NeuralNode, NeuralLink } from './MindMapGeneratorService';
+import { ThemeType } from '../theme/colors';
+
+export interface PhysicsConfig {
+  // Basic forces
+  attraction: number;
+  repulsion: number;
+  linkDistance: number;
+  linkStrength: number;
+
+  // Cognitive load adaptations
+  highLoadSimplification: boolean;
+  lowLoadEnhancement: boolean;
+
+  // Phase 5: Focus mode forces
+  focusStrength: number; // How strongly to emphasize focus node
+  distractionRepulsion: number; // How strongly to repel non-focus nodes
+  focusAttraction: number; // How much to pull focus node to center
 }
 
-/**
- * Enhanced Neural Physics Engine
- * Implements brain-inspired force simulation with cognitive load adaptation
- */
 export class NeuralPhysicsEngine {
-  private simulation: any;
+  private simulation: d3.Simulation<NeuralNode, NeuralLink> | null = null;
   private nodes: NeuralNode[] = [];
   private links: NeuralLink[] = [];
-  private colors: NeuralColors;
   private width: number;
   private height: number;
-  private theme: 'light' | 'dark';
+  private theme: ThemeType;
+  private isRunning: boolean = false;
+  private tickCallback?: (nodes: NeuralNode[], links: NeuralLink[]) => void;
 
-  // Performance optimization
-  private animationFrame?: number;
-  private isSimulationRunning = false;
+  // Cognitive load state
+  private currentCognitiveLoad: number = 0.5;
 
-  // Cognitive load adaptation
-  private currentCognitiveLoad = 0.5;
+  // Phase 5: Focus mode state
+  private focusNodeId: string | null = null;
+  private focusConnectedNodes: Set<string> = new Set();
 
-  constructor(width: number, height: number, theme: 'light' | 'dark' = 'dark') {
+  // Configuration
+  private config: PhysicsConfig = {
+    attraction: 0.3,
+    repulsion: -100,
+    linkDistance: 80,
+    linkStrength: 0.8,
+    highLoadSimplification: true,
+    lowLoadEnhancement: true,
+    // Phase 5: Focus forces
+    focusStrength: 2.5,
+    distractionRepulsion: -300,
+    focusAttraction: 0.15,
+  };
+
+  constructor(width: number, height: number, theme: ThemeType) {
     this.width = width;
     this.height = height;
     this.theme = theme;
-    this.colors = this.initializeColorScheme(theme);
-    this.initializeSimulation();
+
+    console.log('🔬 Neural Physics Engine initialized with focus capabilities');
   }
 
   /**
-   * Initialize scientifically-based color scheme
+   * Phase 5, Step 2: Set Focus Node for Neural Lock
+   *
+   * This is the KEY method that enables "neural tunnel vision"
+   * Physically reorganizes the network around the selected focus target
    */
-  private initializeColorScheme(theme: 'light' | 'dark'): NeuralColors {
-    const colorSchemes = {
-      dark: {
-        nodes: {
-          concept: {
-            default: '#0EA5E9', // Cognitive clarity blue
-            active: '#EF4444', // Alert red for immediate attention
-            mastered: '#10B981', // Success green for mastery
-            weak: '#F59E0B', // Warning amber for weak areas
-          },
-          skill: {
-            default: '#8B5CF6', // Creative purple for skills
-            active: '#EF4444',
-            mastered: '#10B981',
-            weak: '#F59E0B',
-          },
-          goal: {
-            default: '#06B6D4', // Motivational cyan for goals
-            active: '#EF4444',
-            mastered: '#10B981',
-            weak: '#F59E0B',
-          },
-          memory: {
-            default: '#32808D', // Stable teal for memory
-            active: '#EF4444',
-            mastered: '#10B981',
-            weak: '#F59E0B',
-          },
-          habit: {
-            default: '#10B981', // Reinforcement green
-            active: '#EF4444',
-            mastered: '#32808D',
-            weak: '#F59E0B',
-          },
-        },
-        links: {
-          association: 'rgba(14, 165, 233, 0.6)',
-          prerequisite: 'rgba(139, 92, 246, 0.8)',
-          similarity: 'rgba(245, 158, 11, 0.6)',
-          temporal: 'rgba(16, 185, 129, 0.5)',
-          spatial: 'rgba(6, 182, 212, 0.7)',
-        },
-        ui: {
-          background: '#0A0F1A',
-          canvas: '#111827',
-          text: '#F0F9FF',
-          textSecondary: '#E0F2FE',
-          glassHighlight: 'rgba(255, 255, 255, 0.1)',
-        },
-      },
-      light: {
-        nodes: {
-          concept: {
-            default: '#0284C7',
-            active: '#DC2626',
-            mastered: '#059669',
-            weak: '#D97706',
-          },
-          skill: {
-            default: '#7C3AED',
-            active: '#DC2626',
-            mastered: '#059669',
-            weak: '#D97706',
-          },
-          goal: {
-            default: '#0891B2',
-            active: '#DC2626',
-            mastered: '#059669',
-            weak: '#D97706',
-          },
-          memory: {
-            default: '#0F766E',
-            active: '#DC2626',
-            mastered: '#059669',
-            weak: '#D97706',
-          },
-          habit: {
-            default: '#059669',
-            active: '#DC2626',
-            mastered: '#0F766E',
-            weak: '#D97706',
-          },
-        },
-        links: {
-          association: 'rgba(2, 132, 199, 0.6)',
-          prerequisite: 'rgba(124, 58, 237, 0.8)',
-          similarity: 'rgba(217, 119, 6, 0.6)',
-          temporal: 'rgba(5, 150, 105, 0.5)',
-          spatial: 'rgba(8, 145, 178, 0.7)',
-        },
-        ui: {
-          background: '#FAFBFC',
-          canvas: '#FFFFFF',
-          text: '#1E293B',
-          textSecondary: '#64748B',
-          glassHighlight: 'rgba(0, 0, 0, 0.05)',
-        },
-      },
-    };
+  public setFocusNode(focusNodeId: string | null): void {
+    console.log('🎯 Setting focus node:', focusNodeId);
 
-    return colorSchemes[theme];
+    this.focusNodeId = focusNodeId;
+    this.updateFocusConnectedNodes();
+    this.updateFocusForces();
+
+    // If simulation is running, apply forces immediately
+    if (this.simulation) {
+      this.simulation.alpha(0.3).restart();
+    }
   }
 
   /**
-   * Initialize D3 force simulation with neuroplasticity-inspired physics
+   * Get current focus node
    */
-  private initializeSimulation(): void {
-    this.simulation = forceSimulation()
-      .force(
-        'link',
-        forceLink<NeuralNode, NeuralLink>()
-          .id((d) => d.id)
-          .distance(this.calculateLinkDistance.bind(this))
-          .strength(this.calculateLinkStrength.bind(this)),
-      )
-      .force(
-        'charge',
-        forceManyBody<NeuralNode>()
-          .strength(this.calculateNodeCharge.bind(this))
-          .distanceMin(25)
-          .distanceMax(400),
-      )
-      .force('center', forceCenter(this.width / 2, this.height / 2))
-      .force(
-        'collision',
-        forceCollide<NeuralNode>()
-          .radius((d) => d.radius + 8)
-          .strength(0.9),
-      )
-      .alphaDecay(0.0228) // Slower cooling for natural movement
-      .velocityDecay(0.3); // Optimized damping
-
-    // Performance optimization: limit simulation ticks
-    this.simulation.alpha(0.3);
+  public getFocusNode(): string | null {
+    return this.focusNodeId;
   }
 
   /**
-   * Calculate synaptic distance based on connection strength and cognitive load
+   * Check if focus mode is active
    */
-  private calculateLinkDistance(link: NeuralLink): number {
-    const baseDistance = 60;
-    const cognitiveLoadAdjustment = this.currentCognitiveLoad * 20; // Spread out under load
+  public isFocusModeActive(): boolean {
+    return this.focusNodeId !== null;
+  }
 
-    // Stronger connections = shorter distance (synaptic efficiency)
-    const strengthDistance = (1 - link.strength) * 80;
+  /**
+   * Update cognitive load and adapt physics accordingly
+   */
+  public updateCognitiveLoad(cognitiveLoad: number): void {
+    this.currentCognitiveLoad = Math.max(0, Math.min(1, cognitiveLoad));
+    this.adaptConfigToCognitiveLoad();
 
-    // Type-based distance modifiers (based on neuroscience)
-    const typeMultipliers: Record<NeuralLink['type'], number> = {
-      prerequisite: 0.7, // Prerequisites stay close
-      association: 1.0, // Normal associative distance
-      temporal: 1.3, // Temporal links can be farther
-      similarity: 0.8, // Similar concepts cluster
-      spatial: 1.1, // Spatial moderate distance
-    };
+    if (this.simulation) {
+      this.updateAllForces();
+      this.simulation.alpha(0.2).restart();
+    }
 
-    return (
-      baseDistance +
-      strengthDistance * typeMultipliers[link.type] +
-      cognitiveLoadAdjustment
+    console.log(
+      `🧠 Cognitive load updated: ${Math.round(cognitiveLoad * 100)}%`,
     );
   }
 
   /**
-   * Calculate synaptic strength with neuroplasticity principles
+   * Update the graph data and restart simulation
    */
-  private calculateLinkStrength(link: NeuralLink): number {
-    let strength = link.strength;
+  public updateGraph(graphData: {
+    nodes: NeuralNode[];
+    links: NeuralLink[];
+    totalActivationLevel?: number;
+    knowledgeHealth?: number;
+    cognitiveComplexity?: number;
+    dueNodesCount?: number;
+    criticalLogicCount?: number;
+    lastUpdated?: Date;
+  }): void {
+    try {
+      if (!Array.isArray(graphData.nodes) || !Array.isArray(graphData.links)) {
+        console.error('Invalid graph data provided to physics engine');
+        return;
+      }
 
-    // Hebbian learning: connections that fire together wire together
-    const hebbianBoost = Math.min(0.4, link.activationCount * 0.03);
-    strength += hebbianBoost;
+      this.nodes = graphData.nodes.map((node) => ({
+        ...node,
+        // Ensure required physics properties
+        x: node.x || Math.random() * this.width,
+        y: node.y || Math.random() * this.height,
+        vx: node.vx || 0,
+        vy: node.vy || 0,
+        fx: node.fx,
+        fy: node.fy,
+      }));
 
-    // Confidence multiplier (certainty strengthens connections)
-    strength *= link.confidence;
+      this.links = graphData.links.map((link) => ({
+        ...link,
+        source: typeof link.source === 'string' ? link.source : link.source.id,
+        target: typeof link.target === 'string' ? link.target : link.target.id,
+      }));
 
-    // Cognitive load adaptation: weaken under high load
-    strength *= Math.max(0.6, 1 - this.currentCognitiveLoad * 0.4);
+      this.initializeSimulation();
+      this.updateFocusConnectedNodes();
+      this.updateAllForces();
 
-    // Type-specific strength modifiers
-    const typeStrengths: Record<NeuralLink['type'], number> = {
-      prerequisite: 1.4, // Strong prerequisite connections
-      association: 1.0, // Normal associative strength
-      temporal: 0.7, // Weaker temporal connections
-      similarity: 0.9, // Medium similarity strength
-      spatial: 0.8, // Moderate spatial connections
-    };
-
-    return Math.min(1.0, strength * typeStrengths[link.type]);
-  }
-
-  /**
-   * Calculate neural charge with attention and importance factors
-   */
-  private calculateNodeCharge(node: NeuralNode): number {
-    let charge = -150; // Base repulsion
-
-    // Importance scaling (larger nodes need more space)
-    const importanceMultiplier = Math.sqrt(node.radius / 15);
-    charge *= importanceMultiplier;
-
-    // Active nodes need attention space (increased repulsion)
-    if (node.isActive) {
-      charge *= 1.6;
-    }
-
-    // Well-mastered nodes are stable (reduced repulsion)
-    if (node.masteryLevel > 0.8) {
-      charge *= 0.6;
-    }
-
-    // Cognitive load adaptation
-    charge *= Math.max(0.7, 1 - this.currentCognitiveLoad * 0.3);
-
-    return charge;
-  }
-
-  /**
-   * Get node color with cognitive state awareness
-   */
-  public getNodeColor(node: NeuralNode): string {
-    const nodeColors = this.colors.nodes[node.type];
-
-    // Priority hierarchy based on cognitive urgency
-    if (node.isActive && node.cognitiveLoad > 0.7) {
-      return nodeColors.active; // Immediate attention needed
-    } else if (node.masteryLevel > 0.85) {
-      return nodeColors.mastered; // Well learned
-    } else if (node.masteryLevel < 0.25 || node.cognitiveLoad > 0.8) {
-      return nodeColors.weak; // Needs work
-    } else {
-      return nodeColors.default; // Normal state
+      console.log(
+        `🔬 Graph updated: ${this.nodes.length} nodes, ${this.links.length} links`,
+      );
+    } catch (error) {
+      console.error('Error updating graph in physics engine:', error);
     }
   }
 
   /**
-   * Get link color with dynamic opacity based on strength
-   */
-  public getLinkColor(link: NeuralLink): string {
-    const baseColor = this.colors.links[link.type];
-
-    // Dynamic opacity based on strength, confidence, and cognitive load
-    const baseOpacity = link.strength * link.confidence;
-    const cognitiveAdjustment = Math.max(
-      0.3,
-      1 - this.currentCognitiveLoad * 0.5,
-    );
-    const finalOpacity = Math.min(0.9, baseOpacity * cognitiveAdjustment);
-
-    // Parse and adjust RGBA opacity
-    const rgbaMatch = baseColor.match(
-      /rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/,
-    );
-    if (rgbaMatch) {
-      const [, r, g, b] = rgbaMatch;
-      return `rgba(${r}, ${g}, ${b}, ${finalOpacity})`;
-    }
-
-    return baseColor;
-  }
-
-  /**
-   * Neural firing effect with cognitive load adaptation
-   */
-  public getNeuralFireEffect(node: NeuralNode): {
-    opacity: number;
-    scale: number;
-    glow: number;
-  } {
-    if (!node.isActive) {
-      return { opacity: 0.8, scale: 1.0, glow: 0 };
-    }
-
-    // Create pulsing based on urgency and cognitive load
-    const time = Date.now() * 0.002;
-    const urgencyFactor = node.cognitiveLoad * node.activationLevel;
-    const pulseSpeed = 1 + urgencyFactor * 2;
-
-    const pulse =
-      (Math.sin(time * pulseSpeed + this.hashCode(node.id)) + 1) / 2;
-
-    // Cognitive load reduces visual complexity
-    const loadReduction = Math.max(0.5, 1 - this.currentCognitiveLoad * 0.5);
-
-    return {
-      opacity: 0.6 + pulse * 0.4 * loadReduction,
-      scale: 1.0 + pulse * 0.3 * loadReduction,
-      glow: pulse * urgencyFactor * loadReduction,
-    };
-  }
-
-  /**
-   * Update simulation with performance optimization
-   */
-  public updateGraph(graph: NeuralGraph): void {
-    this.nodes = [...graph.nodes];
-    this.links = [...graph.links];
-
-    // Performance: only restart if significant changes
-    const hasSignificantChanges =
-      this.nodes.length !== this.simulation.nodes()?.length ||
-      this.links.length !==
-        (this.simulation.force('link')?.links()?.length || 0);
-
-    this.simulation.nodes(this.nodes);
-    this.simulation.force('link')?.links(this.links);
-
-    if (hasSignificantChanges) {
-      this.simulation.alpha(0.5).restart();
-      this.isSimulationRunning = true;
-    }
-  }
-
-  /**
-   * Optimized tick callback with throttling
+   * Set callback for simulation tick updates
    */
   public onTick(
     callback: (nodes: NeuralNode[], links: NeuralLink[]) => void,
   ): void {
-    let lastUpdateTime = 0;
+    this.tickCallback = callback;
+  }
 
-    this.simulation.on('tick', () => {
-      const now = Date.now();
+  /**
+   * Start the simulation
+   */
+  public start(): void {
+    if (!this.simulation) {
+      this.initializeSimulation();
+    }
 
-      // Throttle to 60fps maximum
-      if (now - lastUpdateTime > 16) {
-        callback(this.nodes, this.links);
-        lastUpdateTime = now;
+    this.isRunning = true;
+    this.simulation?.restart();
+    console.log('🚀 Physics simulation started');
+  }
+
+  /**
+   * Stop the simulation
+   */
+  public stop(): void {
+    this.isRunning = false;
+    this.simulation?.stop();
+    console.log('⏸️ Physics simulation stopped');
+  }
+
+  /**
+   * Initialize D3 force simulation
+   */
+  private initializeSimulation(): void {
+    if (!this.nodes || this.nodes.length === 0) {
+      console.warn('Cannot initialize simulation with empty nodes');
+      return;
+    }
+
+    try {
+      // Create simulation with nodes
+      this.simulation = d3.forceSimulation(this.nodes);
+
+      // Set up basic forces
+      this.updateAllForces();
+
+      // Set up tick callback
+      this.simulation.on('tick', () => {
+        if (this.tickCallback && this.isRunning) {
+          this.tickCallback([...this.nodes], [...this.links]);
+        }
+      });
+
+      // Set up end callback
+      this.simulation.on('end', () => {
+        console.log('🏁 Physics simulation ended');
+      });
+
+      console.log('🔬 D3 force simulation initialized');
+    } catch (error) {
+      console.error('Error initializing D3 simulation:', error);
+    }
+  }
+
+  /**
+   * Phase 5: Update all forces based on current state
+   */
+  private updateAllForces(): void {
+    if (!this.simulation) return;
+
+    try {
+      // Center force (adjusted for focus mode)
+      const centerForce = d3.forceCenter(this.width / 2, this.height / 2);
+      if (this.focusNodeId) {
+        // Stronger centering in focus mode
+        centerForce.strength(0.05);
+      } else {
+        centerForce.strength(0.02);
       }
+      this.simulation.force('center', centerForce);
 
-      // Auto-stop simulation when stable
-      if (this.simulation.alpha() < 0.005) {
-        this.isSimulationRunning = false;
+      // Collision force (prevent overlapping)
+      const collisionForce = d3
+        .forceCollide<NeuralNode>()
+        .radius((node) => {
+          const baseRadius = node.radius || 15;
+
+          // Adjust radius based on cognitive load
+          let adjustedRadius = baseRadius;
+          if (this.currentCognitiveLoad > 0.7) {
+            adjustedRadius *= 1.5; // More spacing when overwhelmed
+          } else if (this.currentCognitiveLoad < 0.3) {
+            adjustedRadius *= 0.8; // Tighter when focused
+          }
+
+          return adjustedRadius + 5; // Add padding
+        })
+        .strength(0.9);
+
+      this.simulation.force('collision', collisionForce);
+
+      // Link force
+      this.updateLinkForces();
+
+      // Many-body force (repulsion/attraction)
+      this.updateManyBodyForces();
+
+      // Phase 5: Focus-specific forces
+      if (this.focusNodeId) {
+        this.updateFocusForces();
+      } else {
+        // Remove focus forces when not in focus mode
+        this.simulation.force('focusAttraction', null);
+        this.simulation.force('distractionRepulsion', null);
       }
-    });
-  }
-
-  /**
-   * Enhanced drag behavior with cognitive feedback
-   */
-  public setupNodeDrag(
-    node: NeuralNode,
-    onStart?: () => void,
-    onDrag?: () => void,
-    onEnd?: () => void,
-  ): void {
-    if (onStart) {
-      this.simulation.alphaTarget(0.2).restart();
-      this.isSimulationRunning = true;
-    }
-
-    if (onDrag) {
-      // Fix node position during drag
-      node.fx = node.x;
-      node.fy = node.y;
-    }
-
-    if (onEnd) {
-      // Release node with gentle settling
-      this.simulation.alphaTarget(0);
-      setTimeout(() => {
-        node.fx = null;
-        node.fy = null;
-      }, 100);
+    } catch (error) {
+      console.error('Error updating forces:', error);
     }
   }
 
   /**
-   * Update cognitive load and adapt simulation
+   * Update link forces with focus consideration
    */
-  public updateCognitiveLoad(load: number): void {
-    this.currentCognitiveLoad = Math.max(0, Math.min(1, load));
+  private updateLinkForces(): void {
+    if (!this.simulation || !this.links) return;
 
-    // Restart simulation with new cognitive parameters
-    if (this.nodes.length > 0) {
-      this.simulation.alpha(0.1).restart();
-    }
-  }
+    const linkForce = d3
+      .forceLink<NeuralNode, NeuralLink>(this.links)
+      .id((node) => node.id)
+      .distance((link) => {
+        let distance = this.config.linkDistance;
 
-  /**
-   * Advanced network analysis with cognitive metrics
-   */
-  public calculateNetworkMetrics() {
-    const nodeCount = this.nodes.length;
-    const linkCount = this.links.length;
+        // Adjust distance based on cognitive load
+        if (this.currentCognitiveLoad > 0.7) {
+          distance *= 1.4; // More spacing when overwhelmed
+        } else if (this.currentCognitiveLoad < 0.3) {
+          distance *= 0.7; // Tighter when sharp
+        }
 
-    if (nodeCount === 0) {
-      return {
-        density: 0,
-        averageClusterCoefficient: 0,
-        centralityScores: new Map<string, number>(),
-        cognitiveComplexity: 0,
-        activationDistribution: { low: 0, medium: 0, high: 0 },
-      };
-    }
+        // Phase 5: Focus adjustments
+        if (this.focusNodeId) {
+          const sourceId =
+            typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId =
+            typeof link.target === 'object' ? link.target.id : link.target;
 
-    // Network density
-    const maxPossibleLinks = (nodeCount * (nodeCount - 1)) / 2;
-    const density = maxPossibleLinks > 0 ? linkCount / maxPossibleLinks : 0;
-
-    // Centrality scores
-    const centralityScores = new Map<string, number>();
-    this.nodes.forEach((node) => {
-      const connections = this.links.filter(
-        (link) => link.source === node.id || link.target === node.id,
-      ).length;
-      centralityScores.set(node.id, connections / Math.max(1, nodeCount - 1));
-    });
-
-    // Clustering coefficient
-    let totalClusterCoeff = 0;
-    this.nodes.forEach((node) => {
-      const neighbors = this.getNeighbors(node);
-      if (neighbors.length < 2) return;
-
-      let neighborConnections = 0;
-      for (let i = 0; i < neighbors.length; i++) {
-        for (let j = i + 1; j < neighbors.length; j++) {
-          if (this.areConnected(neighbors[i], neighbors[j])) {
-            neighborConnections++;
+          // Shorter links for focus node connections
+          if (sourceId === this.focusNodeId || targetId === this.focusNodeId) {
+            distance *= 0.6;
+          } else if (
+            this.focusConnectedNodes.has(sourceId) ||
+            this.focusConnectedNodes.has(targetId)
+          ) {
+            distance *= 0.8;
+          } else {
+            // Longer links for distracting connections
+            distance *= 1.5;
           }
         }
-      }
 
-      const maxNeighborConnections =
-        (neighbors.length * (neighbors.length - 1)) / 2;
-      const clusterCoeff =
-        maxNeighborConnections > 0
-          ? neighborConnections / maxNeighborConnections
-          : 0;
-      totalClusterCoeff += clusterCoeff;
+        return distance;
+      })
+      .strength((link) => {
+        let strength = this.config.linkStrength * (link.strength || 0.5);
+
+        // Phase 5: Focus strength adjustments
+        if (this.focusNodeId) {
+          const sourceId =
+            typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId =
+            typeof link.target === 'object' ? link.target.id : link.target;
+
+          // Stronger links for focus connections
+          if (sourceId === this.focusNodeId || targetId === this.focusNodeId) {
+            strength *= this.config.focusStrength;
+          } else if (
+            this.focusConnectedNodes.has(sourceId) ||
+            this.focusConnectedNodes.has(targetId)
+          ) {
+            strength *= 1.5;
+          } else {
+            // Weaker links for distracting connections
+            strength *= 0.3;
+          }
+        }
+
+        return strength;
+      });
+
+    this.simulation.force('link', linkForce);
+  }
+
+  /**
+   * Phase 5: Update many-body forces with focus repulsion
+   */
+  private updateManyBodyForces(): void {
+    if (!this.simulation) return;
+
+    const manyBodyForce = d3
+      .forceManyBody<NeuralNode>()
+      .strength((node) => {
+        let baseStrength = this.config.repulsion;
+
+        // Adjust for cognitive load
+        if (this.currentCognitiveLoad > 0.7) {
+          baseStrength *= 1.5; // Stronger repulsion when overwhelmed
+        } else if (this.currentCognitiveLoad < 0.3) {
+          baseStrength *= 0.7; // Weaker repulsion when sharp
+        }
+
+        // Phase 5: Focus-based repulsion
+        if (this.focusNodeId) {
+          if (node.id === this.focusNodeId) {
+            // Focus node has moderate repulsion
+            return baseStrength * 0.5;
+          } else if (this.focusConnectedNodes.has(node.id)) {
+            // Connected nodes have normal repulsion
+            return baseStrength;
+          } else {
+            // Distraction nodes have strong repulsion (pushes them away)
+            return this.config.distractionRepulsion;
+          }
+        }
+
+        return baseStrength;
+      })
+      .distanceMin(10)
+      .distanceMax(200);
+
+    this.simulation.force('charge', manyBodyForce);
+  }
+
+  /**
+   * Phase 5: Apply focus-specific forces
+   *
+   * Creates the "neural tunnel vision" effect by adding custom forces
+   */
+  private updateFocusForces(): void {
+    if (!this.simulation || !this.focusNodeId) return;
+
+    // Focus attraction force - pulls focus node toward center
+    const focusAttractionForce = (alpha: number) => {
+      const focusNode = this.nodes.find((node) => node.id === this.focusNodeId);
+      if (!focusNode) return;
+
+      const centerX = this.width / 2;
+      const centerY = this.height / 2;
+
+      const dx = centerX - (focusNode.x || 0);
+      const dy = centerY - (focusNode.y || 0);
+
+      const strength = this.config.focusAttraction * alpha;
+
+      focusNode.vx = (focusNode.vx || 0) + dx * strength;
+      focusNode.vy = (focusNode.vy || 0) + dy * strength;
+    };
+
+    // Distraction repulsion force - pushes non-focus nodes to periphery
+    const distractionRepulsionForce = (alpha: number) => {
+      const focusNode = this.nodes.find((node) => node.id === this.focusNodeId);
+      if (!focusNode) return;
+
+      const focusX = focusNode.x || this.width / 2;
+      const focusY = focusNode.y || this.height / 2;
+
+      this.nodes.forEach((node) => {
+        if (
+          node.id === this.focusNodeId ||
+          this.focusConnectedNodes.has(node.id)
+        ) {
+          return; // Skip focus node and connected nodes
+        }
+
+        const dx = (node.x || 0) - focusX;
+        const dy = (node.y || 0) - focusY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance === 0) return;
+
+        const strength = (this.config.distractionRepulsion / 100) * alpha;
+        const force = strength / distance;
+
+        node.vx = (node.vx || 0) + (dx / distance) * force;
+        node.vy = (node.vy || 0) + (dy / distance) * force;
+      });
+    };
+
+    // Apply custom forces
+    this.simulation.force('focusAttraction', focusAttractionForce);
+    this.simulation.force('distractionRepulsion', distractionRepulsionForce);
+  }
+
+  /**
+   * Phase 5: Update connected nodes set for focus mode
+   */
+  private updateFocusConnectedNodes(): void {
+    this.focusConnectedNodes.clear();
+
+    if (!this.focusNodeId || !this.links) return;
+
+    // Find all nodes directly connected to focus node
+    this.links.forEach((link) => {
+      const sourceId =
+        typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId =
+        typeof link.target === 'object' ? link.target.id : link.target;
+
+      if (sourceId === this.focusNodeId) {
+        this.focusConnectedNodes.add(targetId);
+      } else if (targetId === this.focusNodeId) {
+        this.focusConnectedNodes.add(sourceId);
+      }
     });
 
-    const averageClusterCoefficient = totalClusterCoeff / nodeCount;
-
-    // Cognitive complexity (based on activation and load)
-    const cognitiveComplexity =
-      this.nodes.reduce(
-        (sum, node) => sum + node.activationLevel * node.cognitiveLoad,
-        0,
-      ) / nodeCount;
-
-    // Activation distribution
-    const activationDistribution = this.nodes.reduce(
-      (dist, node) => {
-        if (node.activationLevel < 0.3) dist.low++;
-        else if (node.activationLevel < 0.7) dist.medium++;
-        else dist.high++;
-        return dist;
-      },
-      { low: 0, medium: 0, high: 0 },
+    console.log(
+      `🎯 Focus connections updated: ${this.focusConnectedNodes.size} connected nodes`,
     );
+  }
+
+  /**
+   * Adapt configuration based on cognitive load
+   */
+  private adaptConfigToCognitiveLoad(): void {
+    const load = this.currentCognitiveLoad;
+
+    if (load > 0.7) {
+      // High load: simplify and calm the visualization
+      this.config.attraction *= 0.8;
+      this.config.repulsion *= 1.2;
+      this.config.linkDistance *= 1.3;
+      this.config.distractionRepulsion *= 1.5; // Stronger focus lock when overwhelmed
+    } else if (load < 0.3) {
+      // Low load: enhance and energize the visualization
+      this.config.attraction *= 1.2;
+      this.config.repulsion *= 0.8;
+      this.config.linkDistance *= 0.8;
+      this.config.focusStrength *= 1.2; // Stronger focus when sharp
+    }
+    // Medium load: use default values
+  }
+
+  /**
+   * Get node color based on state and theme
+   */
+  public getNodeColor(node: NeuralNode): string {
+    // This method is called by the canvas for consistent coloring
+    const baseColors = {
+      light: {
+        default: '#6366F1',
+        active: '#EF4444',
+        mastered: '#10B981',
+        weak: '#F59E0B',
+      },
+      dark: {
+        default: '#8B5CF6',
+        active: '#F87171',
+        mastered: '#34D399',
+        weak: '#FBBF24',
+      },
+    };
+
+    const colors = baseColors[this.theme];
+
+    // Determine color based on node state
+    if (node.isActive) {
+      return colors.active;
+    } else if (node.masteryLevel > 0.8) {
+      return colors.mastered;
+    } else if (node.masteryLevel < 0.3) {
+      return colors.weak;
+    } else {
+      return colors.default;
+    }
+  }
+
+  /**
+   * Phase 5: Check if node is in focus context
+   */
+  public isNodeInFocusContext(nodeId: string): boolean {
+    if (!this.focusNodeId) return false;
+
+    return nodeId === this.focusNodeId || this.focusConnectedNodes.has(nodeId);
+  }
+
+  /**
+   * Get physics performance metrics
+   */
+  public getPerformanceMetrics(): {
+    nodeCount: number;
+    linkCount: number;
+    isRunning: boolean;
+    focusMode: boolean;
+    cognitiveLoad: number;
+    averageNodeSpeed: number;
+  } {
+    const avgSpeed =
+      this.nodes.length > 0
+        ? this.nodes.reduce((sum, node) => {
+            const vx = node.vx || 0;
+            const vy = node.vy || 0;
+            return sum + Math.sqrt(vx * vx + vy * vy);
+          }, 0) / this.nodes.length
+        : 0;
 
     return {
-      density,
-      averageClusterCoefficient,
-      centralityScores,
-      cognitiveComplexity,
-      activationDistribution,
+      nodeCount: this.nodes.length,
+      linkCount: this.links.length,
+      isRunning: this.isRunning,
+      focusMode: this.focusNodeId !== null,
+      cognitiveLoad: this.currentCognitiveLoad,
+      averageNodeSpeed: avgSpeed,
     };
   }
 
-  // Helper methods
-  private getNeighbors(node: NeuralNode): NeuralNode[] {
-    const neighborIds = new Set<string>();
-
-    this.links.forEach((link) => {
-      if (link.source === node.id) {
-        if (typeof link.target === 'string') {
-          neighborIds.add(link.target);
-        } else {
-          neighborIds.add(link.target.id);
-        }
-      } else if (link.target === node.id) {
-        if (typeof link.source === 'string') {
-          neighborIds.add(link.source);
-        } else {
-          neighborIds.add(link.source.id);
-        }
-      }
-    });
-
-    return this.nodes.filter((n) => neighborIds.has(n.id));
-  }
-
-  private areConnected(node1: NeuralNode, node2: NeuralNode): boolean {
-    return this.links.some(
-      (link) =>
-        (link.source === node1.id && link.target === node2.id) ||
-        (link.source === node2.id && link.target === node1.id),
-    );
-  }
-
-  private hashCode(str: string): number {
-    let hash = 0;
-    if (str.length === 0) return hash;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return hash;
-  }
-
-  // Public API methods
-  public updateTheme(theme: 'light' | 'dark'): void {
-    this.theme = theme;
-    this.colors = this.initializeColorScheme(theme);
-  }
-
-  public resize(width: number, height: number): void {
-    this.width = width;
-    this.height = height;
-    this.simulation.force('center', forceCenter(width / 2, height / 2));
-    this.simulation.alpha(0.2).restart();
-  }
-
-  public stop(): void {
-    this.simulation.stop();
-    this.isSimulationRunning = false;
-    if (this.animationFrame) {
-      cancelAnimationFrame(this.animationFrame);
-    }
-  }
-
-  public restart(): void {
-    this.simulation.alpha(0.3).restart();
-    this.isSimulationRunning = true;
-  }
-
-  public getColors(): NeuralColors {
-    return this.colors;
-  }
-
-  public isRunning(): boolean {
-    return this.isSimulationRunning;
+  /**
+   * Cleanup and dispose of resources
+   */
+  public dispose(): void {
+    this.stop();
+    this.simulation = null;
+    this.nodes = [];
+    this.links = [];
+    this.focusConnectedNodes.clear();
+    this.tickCallback = undefined;
+    console.log('🗑️ Neural Physics Engine disposed');
   }
 }
+
+export default NeuralPhysicsEngine;

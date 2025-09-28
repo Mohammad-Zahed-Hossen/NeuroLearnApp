@@ -230,6 +230,7 @@ export const TimerDisplay: React.FC<TimerDisplayProps> = ({
 interface ScreenContainerProps {
   children: React.ReactNode;
   theme: ThemeType;
+  style?: any;
   gradient?: boolean;
 }
 

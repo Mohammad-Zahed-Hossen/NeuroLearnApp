@@ -10,22 +10,27 @@ import { TasksScreen } from './src/screens/TasksScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { MemoryPalaceScreen } from './src/screens/MemoryPalaceScreen';
 import { NeuralMindMapScreen } from './src/screens/NeuralMindMapScreen';
+import { LogicTrainerScreen } from './src/screens/LogicTrainerScreen';
+import { AdaptiveFocusScreen } from './src/screens/AdaptiveFocusScreen';
 import { ThemeType } from './src/theme/colors';
+import { TodoistService } from './src/services/TodoistService';
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeType>('dark');
-  const [navigationStack, setNavigationStack] = useState<string[]>(['dashboard']);
+  const [navigationStack, setNavigationStack] = useState<string[]>([
+    'dashboard',
+  ]);
 
   const currentScreen = navigationStack[navigationStack.length - 1];
 
   const handleNavigate = (screen: string) => {
-    setNavigationStack(prev => [...prev, screen]);
+    setNavigationStack((prev) => [...prev, screen]);
   };
 
   useEffect(() => {
     const backAction = () => {
       if (navigationStack.length > 1) {
-        setNavigationStack(prev => prev.slice(0, -1));
+        setNavigationStack((prev) => prev.slice(0, -1));
         return true;
       }
       return false;
@@ -33,7 +38,7 @@ export default function App() {
 
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
-      backAction
+      backAction,
     );
 
     return () => backHandler.remove();
@@ -48,7 +53,7 @@ export default function App() {
       case 'dashboard':
         return <DashboardScreen theme={theme} onNavigate={handleNavigate} />;
       case 'focus':
-        return <FocusTimerScreen theme={theme} onNavigate={handleNavigate}/>;
+        return <FocusTimerScreen theme={theme} onNavigate={handleNavigate} />;
       case 'flashcards':
         return <FlashcardsScreen theme={theme} onNavigate={handleNavigate} />;
       case 'speed-reading':
@@ -58,7 +63,15 @@ export default function App() {
       case 'memory-palace':
         return <MemoryPalaceScreen theme={theme} onNavigate={handleNavigate} />;
       case 'neural-mind-map':
-        return <NeuralMindMapScreen theme={theme} onNavigate={handleNavigate} />;
+        return (
+          <NeuralMindMapScreen theme={theme} onNavigate={handleNavigate} />
+        );
+      case 'logic-trainer':
+        return <LogicTrainerScreen theme={theme} onNavigate={handleNavigate} />;
+      case 'adaptive-focus':
+        return (
+          <AdaptiveFocusScreen theme={theme} onNavigate={handleNavigate} />
+        );
       case 'settings':
         return (
           <SettingsScreen

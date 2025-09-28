@@ -205,14 +205,22 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         }
 
         todoistService.setApiToken(settings.todoistToken);
-        const newTask = await todoistService.createTask({
+        const taskId = await todoistService.createTask({
           content: formData.content,
           description: formData.description || undefined,
           priority: formData.priority,
-          dueDate: formData.dueDate || undefined,
+          due: formData.dueDate ? { date: formData.dueDate } : undefined,
+          projectName: formData.projectName,
+          isCompleted: false,
+          source: 'todoist',
+          labels: [],
         });
 
-        setTodoistTasks((prev) => [newTask, ...prev]);
+        if (taskId) {
+          await syncTodoistTasks();
+        } else {
+          Alert.alert('Error', 'Failed to create task in Todoist');
+        }
       } else {
         // Create locally
         const newTask: Task = {
@@ -317,16 +325,18 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
 
     try {
       if (editingTask.source === 'todoist') {
-        const updatedTask = await todoistService.updateTask(editingTask.id, {
+        const success = await todoistService.updateTask(editingTask.id, {
           content: formData.content,
           description: formData.description || undefined,
           priority: formData.priority,
-          dueDate: formData.dueDate || undefined,
+          due: formData.dueDate ? { date: formData.dueDate } : undefined,
         });
 
-        setTodoistTasks((prev) =>
-          prev.map((t) => (t.id === editingTask.id ? updatedTask : t)),
-        );
+        if (success) {
+          await syncTodoistTasks();
+        } else {
+          Alert.alert('Error', 'Failed to update task in Todoist');
+        }
       } else {
         const updatedTask: Task = {
           ...editingTask,

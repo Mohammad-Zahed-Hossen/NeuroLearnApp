@@ -22,6 +22,16 @@ import { StorageService } from '../services/StorageService';
 import { SpacedRepetitionService } from '../services/SpacedRepetitionService';
 import { Flashcard, StudySession } from '../types';
 
+
+// Add this helper function after imports
+const ensureDate = (dateValue: any): Date => {
+  if (dateValue instanceof Date) return dateValue;
+  if (typeof dateValue === 'string' || typeof dateValue === 'number') {
+    return new Date(dateValue);
+  }
+  return new Date();
+};
+
 interface FlashcardsScreenProps {
   theme: ThemeType;
   onNavigate: (screen: string) => void;
@@ -111,8 +121,8 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
         front: formData.front.trim(),
         back: formData.back.trim(),
         category: formData.category,
-        created: new Date(),
-        nextReview: new Date(),
+        nextReview: ensureDate(new Date()),
+        created: ensureDate(new Date()),
         interval: 1,
         easeFactor: 2.5,
         repetitions: 0,
@@ -244,62 +254,78 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
     setStudyState((prev) => ({ ...prev, showAnswer: true }));
   };
 
-  const rateCard = async (rating: 1 | 2 | 3 | 4 | 5) => {
-    if (
-      !studyState.active ||
-      studyState.currentIndex >= studyState.cards.length
-    )
-      return;
+const rateCard = async (rating: 1 | 2 | 3 | 4 | 5) => {
+  if (!studyState.active || studyState.currentIndex >= studyState.cards.length)
+    return;
 
-    const currentCard = studyState.cards[studyState.currentIndex];
+  const currentCard = studyState.cards[studyState.currentIndex];
 
-    // Update card using FSRS algorithm with cognitive load consideration
-    const updatedCard = srs.scheduleNextReview(
-      currentCard,
-      rating,
-      studyState.cognitiveLoad,
-);
-
-    // Update flashcards array
-    const updatedCards = flashcards.map((card) =>
-      card.id === currentCard.id ? updatedCard : card,
-    );
-
-    try {
-      await storage.saveFlashcards(updatedCards);
-      setFlashcards(updatedCards);
-
-      // Move to next card or finish session
-      const nextIndex = studyState.currentIndex + 1;
-      if (nextIndex >= studyState.cards.length) {
-        await finishStudySession();
-      } else {
-        setStudyState((prev) => ({
-          ...prev,
-          currentIndex: nextIndex,
-          showAnswer: false,
-          cardsStudied: prev.cardsStudied + 1,
-        }));
-
-        // Animate card transition
-        Animated.sequence([
-          Animated.timing(fadeAnim, {
-            toValue: 0,
-            duration: 150,
-            useNativeDriver: true,
-          }),
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 150,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }
-} catch (error) {
-      console.error('Error updating card:', error);
-      Alert.alert('Error', 'Failed to update card');
-    }
+  // Convert numeric rating to difficulty string
+  const difficultyMap: {
+    [key: number]: 'again' | 'hard' | 'good' | 'easy' | 'perfect';
+  } = {
+    1: 'again',
+    2: 'hard',
+    3: 'good',
+    4: 'easy',
+    5: 'perfect',
   };
+
+  const difficulty = difficultyMap[rating];
+
+  // Update card using spaced repetition algorithm
+  const nextReviewDate = srs.scheduleNextReview(difficulty, currentCard);
+
+  // Ensure nextReviewDate is a proper Date object
+  const safeNextReviewDate =
+    nextReviewDate instanceof Date ? nextReviewDate : new Date(nextReviewDate);
+
+  // Create updated card with new review date
+  const updatedCard = {
+    ...currentCard,
+    nextReview: ensureDate(nextReviewDate),
+  };
+
+  // Update flashcards array
+  const updatedCards = flashcards.map((card) =>
+    card.id === currentCard.id ? updatedCard : card,
+  );
+
+  try {
+    await storage.saveFlashcards(updatedCards);
+    setFlashcards(updatedCards);
+
+    // Move to next card or finish session
+    const nextIndex = studyState.currentIndex + 1;
+    if (nextIndex >= studyState.cards.length) {
+      await finishStudySession();
+    } else {
+      setStudyState((prev) => ({
+        ...prev,
+        currentIndex: nextIndex,
+        showAnswer: false,
+        cardsStudied: prev.cardsStudied + 1,
+      }));
+
+      // Animate card transition
+      Animated.sequence([
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  } catch (error) {
+    console.error('Error updating card:', error);
+    Alert.alert('Error', 'Failed to update card');
+  }
+};
 
   const finishStudySession = async () => {
     const sessionDuration =

@@ -647,7 +647,7 @@ const styles = StyleSheet.create({
   // Existing Dashboard Styles
   content: {
     flex: 1,
-    paddingTop: 100, // Space for floating nav bar
+    paddingTop: 80, // Space for floating nav bar
   },
   container: {
     padding: spacing.lg,

@@ -1,12 +1,72 @@
-import { Flashcard } from '../types';
+/**
+ *
+ * This replaces the simplified decay model with the advanced FSRS scheduling logic
+ * FSRS provides superior adaptivity with high accuracy based on four performance ratings
+ */
+
+export interface FSRSCard {
+  id: string;
+  due: Date;
+  stability: number;
+  difficulty: number;
+  elapsed_days: number;
+  scheduled_days: number;
+  reps: number;
+  lapses: number;
+  state: CardState;
+  last_review?: Date;
+}
+
+export interface FSRSReviewLog {
+  rating: Rating;
+  elapsed_days: number;
+  scheduled_days: number;
+  review: Date;
+  state: CardState;
+}
+
+export enum CardState {
+  New = 0,
+  Learning = 1,
+  Review = 2,
+  Relearning = 3,
+}
+
+export enum Rating {
+  Again = 1, // Complete failure, needs immediate re-study
+  Hard = 2, // Difficult recall, reduce interval
+  Good = 3, // Normal recall, standard interval
+  Easy = 4, // Perfect recall, increase interval significantly
+}
+
+interface FSRSParameters {
+  w: number[]; // 19 FSRS algorithm weights
+  requestRetention: number; // Target retention rate (0.9 = 90%)
+  maximumInterval: number; // Max days between reviews
+  easyBonus: number; // Multiplier for easy responses
+  hardInterval: number; // Interval multiplier for hard responses
+}
 
 /**
- * Advanced Spaced Repetition System (SRS) based on cognitive science research
- * Implements Free Spaced Repetition Scheduler (FSRS) algorithm principles
- * for optimal memory retention and forgetting curve management.
+ * Enhanced Spaced Repetition Service implementing the FSRS Algorithm
+ * Directly addresses weak memory/forgetting with optimal timing predictions
  */
 export class SpacedRepetitionService {
   private static instance: SpacedRepetitionService;
+
+  // FSRS Algorithm Parameters (optimized for cognitive learning)
+  private fsrsParams: FSRSParameters = {
+    // Optimal weights derived from extensive research data
+    w: [
+      0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0234, 1.616,
+      0.1544, 1.0824, 1.9813, 0.0953, 0.2975, 2.2042, 0.2407, 2.9466, 0.5034,
+      0.6567,
+    ],
+    requestRetention: 0.9, // 90% retention target for optimal learning
+    maximumInterval: 36500, // 100 years maximum
+    easyBonus: 1.3, // 30% bonus for easy recalls
+    hardInterval: 1.2, // 20% longer intervals for hard recalls
+  };
 
   public static getInstance(): SpacedRepetitionService {
     if (!SpacedRepetitionService.instance) {
@@ -16,253 +76,665 @@ export class SpacedRepetitionService {
   }
 
   /**
-   * Calculate next review date based on card performance and cognitive load
-   * @param card - The flashcard to schedule
-   * @param rating - Performance rating (1-5: Again, Hard, Good, Easy, Perfect)
-   * @param cognitiveLoad - Current cognitive load factor (0.5-2.0)
-   * @returns Updated card with new review schedule
+   * FSRS Core Algorithm: Schedule next review based on performance rating
+   * This is the heart of the intelligence engine that replaces scheduleNextReview
    */
-  scheduleNextReview(
-    card: Flashcard,
-    rating: 1 | 2 | 3 | 4 | 5,
-    cognitiveLoad: number = 1.0,
-  ): Flashcard {
-    const updatedCard = { ...card };
-    const now = new Date();
+  public scheduleNextReviewFSRS(
+    card: FSRSCard,
+    rating: Rating,
+    reviewDate: Date = new Date(),
+  ): { card: FSRSCard; logs: FSRSReviewLog[] } {
+    const elapsed_days = card.last_review
+      ? Math.max(
+          0,
+          Math.floor(
+            (reviewDate.getTime() - card.last_review.getTime()) /
+              (1000 * 60 * 60 * 24),
+          ),
+        )
+      : 0;
 
-    // FSRS-based algorithm with cognitive load adjustment
-    if (rating < 3) {
-      // Failed recall - restart with shorter interval
-      updatedCard.repetitions = 0;
-      updatedCard.interval = this.calculateFailureInterval(cognitiveLoad);
-      updatedCard.easeFactor = Math.max(1.3, card.easeFactor - 0.2);
-    } else {
-      // Successful recall - increase interval
-      updatedCard.repetitions += 1;
-      updatedCard.interval = this.calculateSuccessInterval(
-        card.interval,
-        card.easeFactor,
-        rating,
-        cognitiveLoad,
-        card.repetitions,
-      );
-      updatedCard.easeFactor = this.adjustEaseFactor(card.easeFactor, rating);
+    const scheduled_days = card.scheduled_days;
+
+    // Create review log entry
+    const reviewLog: FSRSReviewLog = {
+      rating,
+      elapsed_days,
+      scheduled_days,
+      review: reviewDate,
+      state: card.state,
+    };
+
+    let updatedCard = { ...card };
+    updatedCard.elapsed_days = elapsed_days;
+    updatedCard.last_review = reviewDate;
+    updatedCard.reps += 1;
+
+    // FSRS Algorithm Logic based on card state and rating
+    switch (card.state) {
+      case CardState.New:
+        updatedCard = this.handleNewCard(updatedCard, rating);
+        break;
+
+      case CardState.Learning:
+      case CardState.Relearning:
+        updatedCard = this.handleLearningCard(updatedCard, rating);
+        break;
+
+      case CardState.Review:
+        updatedCard = this.handleReviewCard(updatedCard, rating, elapsed_days);
+        break;
     }
 
-    // Set next review date
-    const nextReview = new Date(now);
-    nextReview.setDate(nextReview.getDate() + updatedCard.interval);
-    updatedCard.nextReview = nextReview;
+    // Calculate due date
+    const dueDate = new Date(
+      reviewDate.getTime() + updatedCard.scheduled_days * 24 * 60 * 60 * 1000,
+    );
+    updatedCard.due = dueDate;
 
-    // Store difficulty for future cognitive load calculations
-    updatedCard.difficulty = this.mapRatingToDifficulty(rating);
+    return {
+      card: updatedCard,
+      logs: [reviewLog],
+    };
+  }
+
+  /**
+   * Handle new card scheduling (first time seeing the card)
+   */
+  private handleNewCard(card: FSRSCard, rating: Rating): FSRSCard {
+    const updatedCard = { ...card };
+
+    // Initialize difficulty and stability for new cards
+    updatedCard.difficulty = this.initDifficulty(rating);
+    updatedCard.stability = this.initStability(rating);
+
+    switch (rating) {
+      case Rating.Again:
+        updatedCard.scheduled_days = 0;
+        updatedCard.state = CardState.Learning;
+        updatedCard.lapses += 1;
+        break;
+
+      case Rating.Hard:
+        updatedCard.scheduled_days = 1;
+        updatedCard.state = CardState.Learning;
+        break;
+
+      case Rating.Good:
+        updatedCard.scheduled_days = Math.round(updatedCard.stability);
+        updatedCard.state = CardState.Review;
+        break;
+
+      case Rating.Easy:
+        updatedCard.scheduled_days = Math.round(
+          updatedCard.stability * this.fsrsParams.easyBonus,
+        );
+        updatedCard.state = CardState.Review;
+        break;
+    }
 
     return updatedCard;
   }
 
   /**
-   * Calculate failure interval with cognitive load consideration
+   * Handle learning/relearning card scheduling
    */
-  private calculateFailureInterval(cognitiveLoad: number): number {
-    // Base interval: 1 day, adjusted for cognitive load
-    const baseInterval = 1;
-    const adjustedInterval = Math.max(0.1, baseInterval * (2 - cognitiveLoad));
-    return Math.round(adjustedInterval);
+  private handleLearningCard(card: FSRSCard, rating: Rating): FSRSCard {
+    const updatedCard = { ...card };
+
+    switch (rating) {
+      case Rating.Again:
+        updatedCard.scheduled_days = 0;
+        updatedCard.lapses += 1;
+        break;
+
+      case Rating.Hard:
+        updatedCard.scheduled_days = 1;
+        break;
+
+      case Rating.Good:
+        updatedCard.stability = this.calculateStability(
+          updatedCard,
+          rating,
+          card.elapsed_days,
+          true,
+        );
+        updatedCard.difficulty = this.nextDifficulty(
+          updatedCard.difficulty,
+          rating,
+        );
+        updatedCard.scheduled_days = Math.round(updatedCard.stability);
+        updatedCard.state = CardState.Review;
+        break;
+
+      case Rating.Easy:
+        updatedCard.stability = this.calculateStability(
+          updatedCard,
+          rating,
+          card.elapsed_days,
+          true,
+        );
+        updatedCard.difficulty = this.nextDifficulty(
+          updatedCard.difficulty,
+          rating,
+        );
+        updatedCard.scheduled_days = Math.round(
+          updatedCard.stability * this.fsrsParams.easyBonus,
+        );
+        updatedCard.state = CardState.Review;
+        break;
+    }
+
+    return updatedCard;
   }
 
   /**
-   * Calculate success interval using FSRS principles
+   * Handle review card scheduling (mature cards in long-term memory)
    */
-  private calculateSuccessInterval(
-    previousInterval: number,
-    easeFactor: number,
-    rating: number,
-    cognitiveLoad: number,
-    repetitions: number,
-  ): number {
-    let newInterval: number;
+  private handleReviewCard(
+    card: FSRSCard,
+    rating: Rating,
+    elapsed_days: number,
+  ): FSRSCard {
+    const updatedCard = { ...card };
 
-    if (repetitions === 1) {
-      // First successful review
-      newInterval = rating === 4 ? 4 : rating === 5 ? 6 : 1;
-    } else if (repetitions === 2) {
-      // Second successful review
-      newInterval = rating === 4 ? 6 : rating === 5 ? 10 : 3;
+    if (rating === Rating.Again) {
+      // Card failed review - back to relearning
+      updatedCard.state = CardState.Relearning;
+      updatedCard.scheduled_days = 0;
+      updatedCard.lapses += 1;
+
+      // Reduce stability significantly for failures
+      updatedCard.stability = Math.max(1, updatedCard.stability * 0.7);
+      updatedCard.difficulty = Math.min(10, updatedCard.difficulty + 0.2);
     } else {
-      // Subsequent reviews - use ease factor
-      const ratingMultiplier = this.getRatingMultiplier(rating);
-      newInterval = previousInterval * easeFactor * ratingMultiplier;
+      // Successful review - update stability and difficulty
+      updatedCard.stability = this.calculateStability(
+        updatedCard,
+        rating,
+        elapsed_days,
+        false,
+      );
+      updatedCard.difficulty = this.nextDifficulty(
+        updatedCard.difficulty,
+        rating,
+      );
+
+      // Calculate next interval based on updated stability
+      let interval = updatedCard.stability;
+
+      if (rating === Rating.Hard) {
+        interval *= this.fsrsParams.hardInterval;
+      } else if (rating === Rating.Easy) {
+        interval *= this.fsrsParams.easyBonus;
+      }
+
+      updatedCard.scheduled_days = Math.min(
+        Math.round(interval),
+        this.fsrsParams.maximumInterval,
+      );
     }
 
-    // Apply cognitive load adjustment
-    const cognitiveAdjustment = this.getCognitiveLoadAdjustment(cognitiveLoad);
-    newInterval *= cognitiveAdjustment;
-
-    // Ensure minimum interval of 1 day
-    return Math.max(1, Math.round(newInterval));
+    return updatedCard;
   }
 
   /**
-   * Adjust ease factor based on performance
+   * Initialize difficulty for new cards based on first rating
    */
-  private adjustEaseFactor(currentEase: number, rating: number): number {
-    const adjustment = 0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02);
-    return Math.max(1.3, currentEase + adjustment);
+  private initDifficulty(rating: Rating): number {
+    const w = this.fsrsParams.w;
+    return Math.max(1, Math.min(10, w[4] - Math.exp(w[5] * (rating - 1)) + 1));
   }
 
   /**
-   * Get rating multiplier for interval calculation
+   * Initialize stability for new cards based on first rating
    */
-  private getRatingMultiplier(rating: number): number {
-    switch (rating) {
-      case 3:
-        return 1.0; // Good
-      case 4:
-        return 1.3; // Easy
-      case 5:
-        return 1.5; // Perfect
-      default:
-        return 1.0;
+  private initStability(rating: Rating): number {
+    const w = this.fsrsParams.w;
+    return Math.max(0.1, w[rating - 1]);
+  }
+
+  /**
+   * Calculate next difficulty based on current difficulty and rating
+   */
+  private nextDifficulty(currentDifficulty: number, rating: Rating): number {
+    const w = this.fsrsParams.w;
+    const delta = -w[6] * (rating - 3);
+    const nextDifficulty = currentDifficulty + delta;
+
+    return Math.max(1, Math.min(10, nextDifficulty));
+  }
+
+  /**
+   * Calculate stability using the FSRS formula
+   * This is the most complex part of the algorithm - predicts optimal review timing
+   */
+  private calculateStability(
+    card: FSRSCard,
+    rating: Rating,
+    elapsed_days: number,
+    isNewGraduation: boolean,
+  ): number {
+    const w = this.fsrsParams.w;
+    const difficulty = card.difficulty;
+    const stability = card.stability;
+
+    if (isNewGraduation) {
+      // For cards graduating from learning to review
+      return Math.max(
+        0.1,
+        w[7] *
+          Math.pow(difficulty, -w[8]) *
+          (Math.pow(card.scheduled_days + 1, w[9]) - 1) *
+          Math.exp(w[10] * (1 - card.reps)),
+      );
+    } else {
+      // For cards already in review
+      const retention = this.calculateRetention(stability, elapsed_days);
+      const retrievability = Math.exp(
+        (Math.log(retention) * elapsed_days) / stability,
+      );
+
+      let newStability: number;
+
+      if (rating === Rating.Again) {
+        newStability =
+          w[11] *
+          Math.pow(difficulty, -w[12]) *
+          (Math.pow(stability + 1, w[13]) - 1) *
+          Math.exp(w[14] * (1 - retrievability));
+      } else {
+        newStability =
+          stability *
+          Math.exp(
+            w[15] *
+              (rating - 3 + w[16] * (rating === Rating.Easy ? 1 : 0)) *
+              Math.pow(retrievability - w[17], w[18]) *
+              (1 + Math.exp(w[17] - retrievability)),
+          );
+      }
+
+      return Math.max(0.1, newStability);
     }
   }
 
   /**
-   * Get cognitive load adjustment factor
+   * Calculate retention probability based on stability and elapsed time
    */
-  private getCognitiveLoadAdjustment(cognitiveLoad: number): number {
-    // High cognitive load = longer intervals (less frequent reviews)
-    // Low cognitive load = shorter intervals (more frequent reviews)
-    if (cognitiveLoad > 1.5) return 1.2; // High load - extend intervals
-    if (cognitiveLoad > 1.2) return 1.1; // Medium-high load
-    if (cognitiveLoad < 0.8) return 0.9; // Low load - shorten intervals
-    return 1.0; // Normal load
+  private calculateRetention(stability: number, elapsed_days: number): number {
+    if (stability <= 0 || elapsed_days <= 0) return 1.0;
+    return Math.exp(-elapsed_days / stability);
   }
 
   /**
-   * Map performance rating to difficulty level
+   * Enhanced card due checking with FSRS logic
+   * Replaces the simple isCardDue method
    */
-  private mapRatingToDifficulty(
-    rating: number,
-  ): 'again' | 'hard' | 'good' | 'easy' | 'perfect' {
-    switch (rating) {
-      case 1:
-        return 'again';
-      case 2:
-        return 'hard';
-      case 3:
-        return 'good';
-      case 4:
-        return 'easy';
-      case 5:
-        return 'perfect';
-      default:
-        return 'good';
-    }
+  public isCardDueFSRS(
+    card: FSRSCard,
+    currentDate: Date = new Date(),
+  ): boolean {
+    return card.due <= currentDate;
   }
 
   /**
-   * Check if a card is due for review
+   * Get cards due for review today (FSRS-enhanced)
+   * This powers the "Critical Logic Review: X Nodes Due" dashboard feature
    */
-  isCardDue(card: Flashcard): boolean {
-    const now = new Date();
-    return card.nextReview <= now;
+  public getCardsDueToday(
+    cards: FSRSCard[],
+    date: Date = new Date(),
+  ): FSRSCard[] {
+    return cards.filter((card) => this.isCardDueFSRS(card, date));
   }
 
   /**
-   * Get cards due for review, sorted by urgency
+   * Convert legacy flashcard to FSRS card format
+   * For backward compatibility with existing data
    */
-  getDueCards(cards: Flashcard[]): Flashcard[] {
-    const now = new Date();
-    return cards
-      .filter((card) => this.isCardDue(card))
-      .sort((a, b) => {
-        // Sort by urgency: overdue cards first, then by next review date
-        const aOverdue = now.getTime() - a.nextReview.getTime();
-        const bOverdue = now.getTime() - b.nextReview.getTime();
-        return bOverdue - aOverdue;
-      });
+  public convertLegacyCard(legacyCard: any): FSRSCard {
+    return {
+      id: legacyCard.id,
+      due: legacyCard.nextReview || new Date(),
+      stability: this.estimateStabilityFromLegacy(legacyCard),
+      difficulty: this.estimateDifficultyFromLegacy(legacyCard),
+      elapsed_days: 0,
+      scheduled_days: legacyCard.interval || 1,
+      reps: legacyCard.repetitions || 0,
+      lapses: 0, // Not tracked in legacy format
+      state: this.determineStateFromLegacy(legacyCard),
+      last_review: legacyCard.lastReviewed,
+    };
   }
 
   /**
-   * Calculate current cognitive load based on recent performance
-   * This is a simplified version - in practice, you'd consider more factors
+   * Estimate stability from legacy ease factor and interval
    */
-  calculateCognitiveLoad(recentSessions: any[]): number {
-    if (recentSessions.length === 0) return 1.0;
+  private estimateStabilityFromLegacy(legacyCard: any): number {
+    const easeFactor = legacyCard.easeFactor || 2.5;
+    const interval = legacyCard.interval || 1;
 
-    // Factors that increase cognitive load:
-    // - Recent difficult sessions
-    // - High frequency of study sessions
-    // - Poor recent performance
+    // Rough estimation: higher ease factor suggests higher stability
+    return Math.max(1, interval * (easeFactor / 2.5));
+  }
 
-    const recentPerformance =
-      recentSessions
-        .slice(-5) // Last 5 sessions
-        .reduce((acc, session) => acc + (session.successRate || 0.5), 0) / 5;
+  /**
+   * Estimate difficulty from legacy ease factor
+   */
+  private estimateDifficultyFromLegacy(legacyCard: any): number {
+    const easeFactor = legacyCard.easeFactor || 2.5;
 
-    const sessionFrequency = recentSessions.filter((session) => {
-      const sessionDate = new Date(session.startTime);
-      const daysDiff =
-        (Date.now() - sessionDate.getTime()) / (1000 * 60 * 60 * 24);
-      return daysDiff <= 1; // Sessions in last 24 hours
-    }).length;
+    // Lower ease factor suggests higher difficulty
+    return Math.max(
+      1,
+      Math.min(10, 10 - ((easeFactor - 1.3) / (4.0 - 1.3)) * 9),
+    );
+  }
 
-    // Calculate cognitive load (0.5 to 2.0 range)
-    let cognitiveLoad = 1.0;
+  /**
+   * Determine card state from legacy data
+   */
+  private determineStateFromLegacy(legacyCard: any): CardState {
+    const repetitions = legacyCard.repetitions || 0;
+    const interval = legacyCard.interval || 1;
 
-    // Adjust based on recent performance (poor performance increases load)
-    if (recentPerformance < 0.3) cognitiveLoad += 0.4;
-    else if (recentPerformance < 0.5) cognitiveLoad += 0.2;
-    else if (recentPerformance > 0.8) cognitiveLoad -= 0.2;
-
-    // Adjust based on session frequency (too many sessions increases load)
-    if (sessionFrequency > 4) cognitiveLoad += 0.3;
-    else if (sessionFrequency > 2) cognitiveLoad += 0.1;
-
-    return Math.max(0.5, Math.min(2.0, cognitiveLoad));
+    if (repetitions === 0) return CardState.New;
+    if (interval < 4) return CardState.Learning;
+    return CardState.Review;
   }
 
   /**
    * Get optimal study session size based on cognitive load
+   * Adaptive session sizing for better learning outcomes
    */
-  getOptimalSessionSize(cognitiveLoad: number, availableCards: number): number {
-    let baseSize = 10; // Default session size
+  public getOptimalSessionSize(
+    totalDueCards: number,
+    cognitiveLoad: number,
+    availableTimeMinutes: number = 30,
+  ): number {
+    // Base session size
+    let sessionSize = Math.min(20, totalDueCards);
 
-    if (cognitiveLoad > 1.5) baseSize = 5; // High load - smaller sessions
-    else if (cognitiveLoad > 1.2) baseSize = 7; // Medium-high load
-    else if (cognitiveLoad < 0.8) baseSize = 15; // Low load - larger sessions
+    // Reduce session size under high cognitive load
+    if (cognitiveLoad > 0.7) {
+      sessionSize = Math.floor(sessionSize * 0.6);
+    } else if (cognitiveLoad > 0.5) {
+      sessionSize = Math.floor(sessionSize * 0.8);
+    }
 
-    return Math.min(baseSize, availableCards);
+    // Adjust for available time (assuming 1.5 minutes per card)
+    const timeBasedLimit = Math.floor(availableTimeMinutes / 1.5);
+    sessionSize = Math.min(sessionSize, timeBasedLimit);
+
+    return Math.max(5, sessionSize); // Minimum 5 cards per session
   }
 
   /**
-   * Predict forgetting probability for a card
+   * Analyze learning patterns and suggest optimization
+   * Provides insights for the neural mind map analytics
    */
-  predictForgettingProbability(card: Flashcard): number {
-    const now = new Date();
-    const daysSinceReview =
-      (now.getTime() - card.nextReview.getTime()) / (1000 * 60 * 60 * 24);
+  public analyzeLearningPatterns(
+    cards: FSRSCard[],
+    reviewLogs: FSRSReviewLog[],
+  ): {
+    averageRetention: number;
+    difficultCardTypes: string[];
+    optimalStudyTimes: string[];
+    suggestionForImprovement: string;
+  } {
+    // Calculate average retention from review success rates
+    const totalReviews = reviewLogs.length;
+    const successfulReviews = reviewLogs.filter(
+      (log) => log.rating >= Rating.Good,
+    ).length;
+    const averageRetention =
+      totalReviews > 0 ? successfulReviews / totalReviews : 0;
 
-    // Simplified forgetting curve based on Ebbinghaus
-    const retentionRate = Math.exp(
-      -daysSinceReview / (card.interval * card.easeFactor),
-    );
-    return 1 - Math.max(0, Math.min(1, retentionRate));
+    // Identify difficult card patterns
+    const difficultCards = cards.filter((card) => card.difficulty > 7);
+    const difficultCardTypes = [
+      ...new Set(
+        difficultCards.map((card) => {
+          // Extract card type from ID or content (implementation specific)
+          return card.id.split('_')[0];
+        }),
+      ),
+    ];
+
+    // Suggest optimal study times (placeholder - could be enhanced with time-based analysis)
+    const optimalStudyTimes = ['Morning (8-10 AM)', 'Evening (6-8 PM)'];
+
+    // Generate improvement suggestion
+    let suggestionForImprovement = '';
+    if (averageRetention < 0.8) {
+      suggestionForImprovement =
+        'Focus on understanding concepts rather than memorization. Consider breaking complex topics into smaller pieces.';
+    } else if (averageRetention > 0.95) {
+      suggestionForImprovement =
+        'Excellent retention! Consider increasing difficulty or adding more challenging material.';
+    } else {
+      suggestionForImprovement =
+        'Good progress! Maintain consistent daily review sessions for optimal results.';
+    }
+
+    return {
+      averageRetention,
+      difficultCardTypes,
+      optimalStudyTimes,
+      suggestionForImprovement,
+    };
   }
 
   /**
-   * Get cards that are at risk of being forgotten soon
+   * Get due cards (backward compatibility with legacy interface)
+   * Converts legacy flashcards to FSRS format and filters due cards
    */
-  getAtRiskCards(cards: Flashcard[], riskThreshold: number = 0.3): Flashcard[] {
-    return cards
-      .filter((card) => {
-        const forgettingProbability = this.predictForgettingProbability(card);
-        return forgettingProbability > riskThreshold && !this.isCardDue(card);
-      })
-      .sort((a, b) => {
-        const aRisk = this.predictForgettingProbability(a);
-        const bRisk = this.predictForgettingProbability(b);
-        return bRisk - aRisk;
-      });
+  public getDueCards(flashcards: any[]): any[] {
+    const fsrsCards = flashcards.map((card) => this.convertLegacyCard(card));
+    const dueCards = this.getCardsDueToday(fsrsCards);
+
+    // Convert back to legacy format for dashboard compatibility
+    return dueCards.map((fsrsCard) => {
+      const originalCard = flashcards.find((card) => card.id === fsrsCard.id);
+      return (
+        originalCard || {
+          id: fsrsCard.id,
+          nextReview: fsrsCard.due,
+          difficulty: fsrsCard.difficulty,
+          stability: fsrsCard.stability,
+        }
+      );
+    });
+  }
+
+  /**
+   * Get cards at risk of being forgotten
+   * Uses FSRS stability and difficulty to predict forgetting risk
+   */
+  public getAtRiskCards(flashcards: any[], riskThreshold: number = 0.3): any[] {
+    const currentDate = new Date();
+
+    return flashcards.filter((card) => {
+      const fsrsCard = this.convertLegacyCard(card);
+
+      // Calculate days until due
+      const daysUntilDue = Math.floor(
+        (fsrsCard.due.getTime() - currentDate.getTime()) /
+          (1000 * 60 * 60 * 24),
+      );
+
+      // Cards are at risk if:
+      // 1. High difficulty (> 7)
+      // 2. Low stability (< 5 days)
+      // 3. Due soon with low predicted retention
+      const retention = this.calculateRetention(
+        fsrsCard.stability,
+        Math.abs(daysUntilDue),
+      );
+
+      return (
+        fsrsCard.difficulty > 7 ||
+        fsrsCard.stability < 5 ||
+        (daysUntilDue <= 2 && retention < 1 - riskThreshold)
+      );
+    });
+  }
+
+  /**
+   * Calculate cognitive load based on recent study sessions
+   * Higher values indicate mental fatigue and need for breaks
+   */
+  public calculateCognitiveLoad(recentSessions: any[]): number {
+    if (recentSessions.length === 0) return 1.0;
+
+    let totalLoad = 0;
+    let sessionCount = 0;
+
+    for (const session of recentSessions) {
+      if (!session.completed) continue;
+
+      const duration =
+        session.endTime && session.startTime
+          ? (session.endTime.getTime() - session.startTime.getTime()) /
+            (1000 * 60)
+          : 25; // Default 25 minutes
+
+      const cardsStudied = session.cardsStudied || 10;
+      const sessionLoad = this.calculateSessionLoad(
+        duration,
+        cardsStudied,
+        session.type,
+      );
+
+      totalLoad += sessionLoad;
+      sessionCount++;
+    }
+
+    if (sessionCount === 0) return 1.0;
+
+    const averageLoad = totalLoad / sessionCount;
+
+    // Normalize to 0.5-2.0 range
+    // 1.0 = optimal load
+    // > 1.5 = high fatigue
+    // < 0.8 = could handle more
+    return Math.max(0.5, Math.min(2.0, averageLoad));
+  }
+
+  /**
+   * Calculate load for individual study session
+   */
+  private calculateSessionLoad(
+    durationMinutes: number,
+    cardsStudied: number,
+    sessionType: string = 'flashcards',
+  ): number {
+    // Base load factors
+    let baseLoad = 1.0;
+
+    // Adjust for session intensity
+    const cardsPerMinute = cardsStudied / Math.max(1, durationMinutes);
+
+    if (cardsPerMinute > 1.5) {
+      baseLoad += 0.3; // High intensity
+    } else if (cardsPerMinute < 0.5) {
+      baseLoad -= 0.2; // Low intensity
+    }
+
+    // Adjust for session type
+    switch (sessionType) {
+      case 'flashcards':
+        baseLoad *= 1.0; // Standard
+        break;
+      case 'logic-training':
+        baseLoad *= 1.4; // More cognitively demanding
+        break;
+      case 'speed-reading':
+        baseLoad *= 0.8; // Less cognitively demanding
+        break;
+      case 'focus':
+        baseLoad *= 1.2; // Moderate cognitive demand
+        break;
+    }
+
+    // Duration fatigue factor
+    if (durationMinutes > 45) {
+      baseLoad += 0.2; // Extended sessions increase fatigue
+    } else if (durationMinutes < 15) {
+      baseLoad -= 0.1; // Short sessions less fatiguing
+    }
+
+    return baseLoad;
+  }
+
+  /**
+   * Get optimal session size based on cognitive load and due cards
+   * Used by dashboard for smart recommendations
+   * Duplicate issue
+   */
+  // public getOptimalSessionSize(
+  //   cognitiveLoad: number,
+  //   dueCards: number,
+  // ): number {
+  //   let baseSize = Math.min(15, Math.max(5, dueCards));
+
+  //   // Adjust for cognitive load
+  //   if (cognitiveLoad > 1.5) {
+  //     baseSize = Math.floor(baseSize * 0.6); // High fatigue - reduce session
+  //   } else if (cognitiveLoad > 1.2) {
+  //     baseSize = Math.floor(baseSize * 0.8); // Moderate fatigue
+  //   } else if (cognitiveLoad < 0.8) {
+  //     baseSize = Math.floor(baseSize * 1.3); // Low fatigue - can handle more
+  //   }
+
+  //   return Math.max(5, Math.min(20, baseSize));
+  // }
+
+
+
+  // Backward compatibility methods (delegate to FSRS implementations)
+  public scheduleNextReview(
+    difficulty: 'again' | 'hard' | 'good' | 'easy' | 'perfect',
+    card: any,
+  ): any {
+    const fsrsCard = this.convertLegacyCard(card);
+    const rating = this.convertLegacyDifficultyToRating(difficulty);
+    const result = this.scheduleNextReviewFSRS(fsrsCard, rating);
+
+    // Convert back to legacy format with updated values
+    return {
+      ...card,
+      nextReview: result.card.due,
+      interval: result.card.scheduled_days,
+      easeFactor: Math.max(1.3, 2.5 - (result.card.difficulty - 1) * 0.2), // Convert FSRS difficulty back to ease factor
+      repetitions: result.card.reps,
+      lastReviewed: result.card.last_review,
+    };
+  }
+
+  public isCardDue(card: any): boolean {
+    const fsrsCard = this.convertLegacyCard(card);
+    return this.isCardDueFSRS(fsrsCard);
+  }
+
+  private convertLegacyDifficultyToRating(
+    difficulty: 'again' | 'hard' | 'good' | 'easy' | 'perfect',
+  ): Rating {
+    switch (difficulty) {
+      case 'again':
+        return Rating.Again;
+      case 'hard':
+        return Rating.Hard;
+      case 'good':
+        return Rating.Good;
+      case 'easy':
+      case 'perfect':
+        return Rating.Easy;
+      default:
+        return Rating.Good;
+    }
   }
 }
+
+export default SpacedRepetitionService;
+

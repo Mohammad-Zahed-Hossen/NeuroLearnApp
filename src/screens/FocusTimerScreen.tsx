@@ -347,13 +347,11 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
         onMenuPress={() => setMenuVisible(true)}
         rightComponent={
           <TouchableOpacity
-            onPress={() => setSettingsVisible(true)}
+            onPress={() => onNavigate('adaptive-focus')}
             style={{ padding: 8 }}
             hitSlop={8}
           >
-            <Text style={{ fontSize: 20, color: colors[theme].text }}>
-              ⚙️
-            </Text>
+            <Text style={{ fontSize: 20, color: colors[theme].text }}>🧠</Text>
           </TouchableOpacity>
         }
       />
@@ -473,8 +471,6 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
     </ScreenContainer>
   );
 };
-
-
 
 const styles = StyleSheet.create({
   container: {

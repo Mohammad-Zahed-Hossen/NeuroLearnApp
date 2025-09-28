@@ -299,6 +299,15 @@ const menuItems: MenuItem[] = [
     cognitiveWeight: 3,
     usageFrequency: 3,
   },
+  {
+    id: 'logic-trainer',
+    title: 'Logic Trainer',
+    icon: '🧩',
+    screen: 'logic-trainer',
+    description: 'Logical Reasoning & Problem Solving',
+    cognitiveWeight: 4,
+    usageFrequency: 3,
+  },
 ];
 
 export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
