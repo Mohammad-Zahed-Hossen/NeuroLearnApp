@@ -14,6 +14,7 @@ import { LogicTrainerScreen } from './src/screens/LogicTrainerScreen';
 import { AdaptiveFocusScreen } from './src/screens/AdaptiveFocusScreen';
 import { ThemeType } from './src/theme/colors';
 import { TodoistService } from './src/services/TodoistService';
+import { FocusProvider } from './src/contexts/FocusContext';
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeType>('dark');
@@ -87,8 +88,10 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      {renderCurrentScreen()}
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <FocusProvider>
+        {renderCurrentScreen()}
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      </FocusProvider>
     </SafeAreaProvider>
   );
 }

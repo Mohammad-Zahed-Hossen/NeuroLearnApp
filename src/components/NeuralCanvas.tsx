@@ -35,6 +35,7 @@ import Animated, {
   interpolate,
   useDerivedValue,
 } from 'react-native-reanimated';
+import { AnimatedPath } from './AnimatedPath';
 import { Text } from 'react-native';
 import {
   NeuralNode,
@@ -65,8 +66,10 @@ interface NeuralCanvasProps {
   onNodeLongPress?: (node: NeuralNode) => void;
   cognitiveLoad?: number;
   viewMode?: 'network' | 'clusters' | 'paths' | 'health';
-  // Phase 5: Focus lock prop
+  // Phase 5: Focus lock props
   focusNodeId?: string | null;
+  focusLock?: boolean;
+  focusLockSessionId?: string | null;
 }
 
 // Performance constants
@@ -130,6 +133,8 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   cognitiveLoad = 0.5,
   viewMode = 'network',
   focusNodeId = null, // Phase 5: Focus lock prop
+  focusLock = false, // New prop for focus lock state
+  focusLockSessionId = null, // Optional session ID for focus lock
 }) => {
   const themeColors = colors[theme];
 
@@ -143,12 +148,22 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   // Safe physics engine initialization
   const physicsEngine = useMemo(() => {
     try {
-      return new NeuralPhysicsEngine(width, height, theme);
+      const engine = new NeuralPhysicsEngine(width, height, theme);
+      // Set initial focus lock state
+      engine.setFocusLock(focusLock, focusLockSessionId ?? undefined);
+      return engine;
     } catch (error) {
       console.warn('Physics engine initialization failed:', error);
       return null;
     }
-  }, [width, height, theme]);
+  }, [width, height, theme, focusLock, focusLockSessionId]);
+  
+  // Update focus lock state in physics engine when props change
+  useEffect(() => {
+    if (physicsEngine) {
+      physicsEngine.setFocusLock(focusLock, focusLockSessionId ?? undefined);
+    }
+  }, [focusLock, focusLockSessionId, physicsEngine]);
 
   // Safe font configuration
   const font = useMemo(() => {
@@ -179,6 +194,47 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   const [links, setLinks] = useState<NeuralLink[]>(() => graph?.links || []);
   const [selectedNode, setSelectedNode] = useState<NeuralNode | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // Phase 5: Performance optimization - derived scale threshold
+  const scaleThreshold = useDerivedValue(() => scale.value > 1.2);
+
+  // Phase 5: Occlusion culling - viewport bounds calculation
+  const viewportBounds = useMemo(() => {
+    const padding = 100; // Extra padding to avoid pop-in
+    return {
+      minX: -translateX.value / scale.value - padding,
+      maxX: (-translateX.value + width) / scale.value + padding,
+      minY: -translateY.value / scale.value - padding,
+      maxY: (-translateY.value + height) / scale.value + padding,
+    };
+  }, [translateX.value, translateY.value, scale.value, width, height]);
+
+  // Phase 5: Visible nodes filtering for occlusion culling
+  const visibleNodes = useMemo(() => {
+    return nodes.filter(node =>
+      (node.x || 0) >= viewportBounds.minX && (node.x || 0) <= viewportBounds.maxX &&
+      (node.y || 0) >= viewportBounds.minY && (node.y || 0) <= viewportBounds.maxY
+    );
+  }, [nodes, viewportBounds]);
+
+  // Phase 5: Spatial hashing for hit testing performance
+  const spatialGrid = useMemo(() => {
+    const cellSize = 50; // Adjust based on average node size
+    const grid = new Map<string, NeuralNode[]>();
+
+    nodes.forEach(node => {
+      if (typeof node.x === 'number' && typeof node.y === 'number') {
+        const cellX = Math.floor(node.x / cellSize);
+        const cellY = Math.floor(node.y / cellSize);
+        const key = `${cellX},${cellY}`;
+
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key)!.push(node);
+      }
+    });
+
+    return { grid, cellSize };
+  }, [nodes]);
 
   // Phase 5: Focus state
   const [focusConnectedNodes, setFocusConnectedNodes] = useState<Set<string>>(new Set());
@@ -233,6 +289,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       console.log('🎯 Focus lock deactivated');
     }
   }, [focusNodeId, physicsEngine, focusTransition, focusGlow]);
+
 
   // Phase 5: Initialize path animation when in paths mode
   useEffect(() => {
@@ -328,12 +385,15 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
           }
         });
 
+        // Start the physics simulation
+        physicsEngine.start();
+
         setIsInitialized(true);
       }
     } catch (error) {
       console.error('Graph update failed:', error);
     }
-  }, [graph, physicsEngine, cognitiveLoad, focusNodeId, updateFocusConnectedNodes]);
+  }, [graph, physicsEngine, cognitiveLoad, focusNodeId]);
 
   // Safe pulse animation
   useEffect(() => {
@@ -384,7 +444,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
     }
   }, [onNodeLongPress]);
 
-  // Ultra-safe hit testing
+  // Ultra-safe hit testing with spatial hashing
   const findNodeAtPosition = useCallback((
     x: number,
     y: number,
@@ -398,10 +458,29 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       }
 
       const safeScale = Math.max(0.1, Math.min(5, currentScale));
-      const adjustedX = (x - currentTranslateX) / safeScale;
-      const adjustedY = (y - currentTranslateY) / safeScale;
+      const adjustedX = x;
+      const adjustedY = y;
 
-      for (const node of nodes) {
+      // Use spatial grid for efficient lookup
+      const cellX = Math.floor(adjustedX / spatialGrid.cellSize);
+      const cellY = Math.floor(adjustedY / spatialGrid.cellSize);
+      const key = `${cellX},${cellY}`;
+
+      const nearbyNodes = spatialGrid.grid.get(key) || [];
+
+      // Check nodes in the current cell and adjacent cells
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const adjacentKey = `${cellX + dx},${cellY + dy}`;
+          const adjacentNodes = spatialGrid.grid.get(adjacentKey) || [];
+          nearbyNodes.push(...adjacentNodes);
+        }
+      }
+
+      // Remove duplicates
+      const uniqueNodes = Array.from(new Set(nearbyNodes));
+
+      for (const node of uniqueNodes) {
         if (!node ||
             typeof node.x !== 'number' ||
             typeof node.y !== 'number' ||
@@ -415,7 +494,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
           Math.pow(adjustedY - node.y, 2)
         );
 
-        const touchRadius = Math.max(10, (node.radius || 15) + 10);
+        const touchRadius = Math.max(20, (node.radius || 15) + 20);
 
         if (distance <= touchRadius) {
           return node;
@@ -427,7 +506,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       console.warn('Hit testing failed:', error);
       return null;
     }
-  }, [nodes]);
+  }, [nodes, spatialGrid]);
 
   // Safe gesture handlers
   const tapGesture = useMemo(() => {
@@ -436,7 +515,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       .onEnd((event) => {
         if (!event || typeof event.x !== 'number' || typeof event.y !== 'number' || isNaN(event.x) || isNaN(event.y)) return;
         try {
-          if (!isMountedRef.current) return;
+          if (!isMountedRef.current || !findNodeAtPosition || typeof findNodeAtPosition !== 'function') return;
 
           const tappedNode = findNodeAtPosition(
             event.x,
@@ -450,7 +529,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
             runOnJS(handleNodePress)(tappedNode);
           }
         } catch (error) {
-          console.warn('Tap gesture failed:', error);
+          console.warn('Tap gesture failed:', error instanceof Error ? error.message : error || 'Unknown error');
         }
       });
   }, [findNodeAtPosition, handleNodePress, translateX, translateY, scale]);
@@ -475,20 +554,28 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
             runOnJS(handleNodeLongPress)(longPressedNode);
           }
         } catch (error) {
-          console.warn('Long press gesture failed:', error);
+          // Only log meaningful errors
+          if (error && typeof error === 'object' && Object.keys(error).length > 0) {
+            console.warn('Long press gesture failed:', error);
+          }
         }
       });
   }, [findNodeAtPosition, handleNodeLongPress, translateX, translateY, scale]);
 
   const panGesture = useMemo(() => {
     return Gesture.Pan()
+      .minDistance(25) // Require minimum movement to start pan, allowing taps to work
       .onStart(() => {
         try {
+          if (!isMountedRef.current) return;
           if (Platform.OS !== 'web') {
             Vibration.vibrate(1);
           }
         } catch (error) {
-          console.warn('Pan start failed:', error);
+          // Only log meaningful errors
+          if (error && typeof error === 'object' && Object.keys(error).length > 0) {
+            console.warn('Pan start failed:', error);
+          }
         }
       })
       .onUpdate((event) => {
@@ -549,64 +636,26 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
    * Phase 5: Get node opacity based on focus mode
    */
   const getNodeOpacity = useCallback((node: NeuralNode): number => {
-    if (!focusNodeId || focusTransition.value === 0) {
-      return 1.0; // Full opacity when not in focus mode
-    }
+    if (!physicsEngine) return 1.0;
+    return physicsEngine.getNodeOpacity(node.id);
+  }, [physicsEngine]);
 
-    if (node.id === focusNodeId) {
-      return FOCUS_CONFIG.FOCUS_OPACITY; // Full opacity for focus node
-    } else if (focusConnectedNodes.has(node.id)) {
-      return interpolate(
-        focusTransition.value,
-        [0, 1],
-        [1.0, FOCUS_CONFIG.CONNECTED_OPACITY]
-      ); // Semi-transparent for connected nodes
-    } else {
-      return interpolate(
-        focusTransition.value,
-        [0, 1],
-        [1.0, FOCUS_CONFIG.DIMMED_OPACITY]
-      ); // Very transparent for distraction nodes
-    }
-  }, [focusNodeId, focusTransition, focusConnectedNodes]);
+  /**
+   * Phase 5: Get node blur amount based on focus mode
+   */
+  const getNodeBlurAmount = useCallback((node: NeuralNode): number => {
+    if (!physicsEngine) return 0;
+    return physicsEngine.getNodeBlurAmount(node.id);
+  }, [physicsEngine]);
 
   /**
    * Phase 5: Get link opacity based on focus mode
    */
   const getLinkOpacity = useCallback((link: NeuralLink): number => {
-    if (!focusNodeId || focusTransition.value === 0) {
-      return Math.max(0.1, Math.min(0.8, (link.strength || 0.5) * 0.6));
-    }
-
-    const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-    const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-
-    // Check if link connects to focus node
-    const connectsToFocus = sourceId === focusNodeId || targetId === focusNodeId;
-
-    // Check if link connects to connected nodes
-    const connectsToConnected = focusConnectedNodes.has(sourceId) || focusConnectedNodes.has(targetId);
-
-    if (connectsToFocus) {
-      return interpolate(
-        focusTransition.value,
-        [0, 1],
-        [0.6, 0.9]
-      ); // High opacity for focus links
-    } else if (connectsToConnected) {
-      return interpolate(
-        focusTransition.value,
-        [0, 1],
-        [0.6, 0.5]
-      ); // Medium opacity for connected links
-    } else {
-      return interpolate(
-        focusTransition.value,
-        [0, 1],
-        [0.6, FOCUS_CONFIG.DIMMED_OPACITY * 0.5]
-      ); // Low opacity for distraction links
-    }
-  }, [focusNodeId, focusTransition, focusConnectedNodes]);
+    if (!physicsEngine) return 1.0;
+    // For now, fallback to default opacity based on strength
+    return Math.max(0.1, Math.min(0.8, (link.strength || 0.5) * 0.6));
+  }, [physicsEngine]);
 
   /**
    * Phase 3: Get node color based on view mode
@@ -797,7 +846,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   }, []);
 
   /**
-   * Phase 5: Render single link with focus dimming
+   * Phase 5: Render single link with focus dimming and curved Bezier paths
    */
   const renderSingleLink = useCallback((link: NeuralLink, index: number) => {
     try {
@@ -819,27 +868,65 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       const linkStyle = getLinkStyle(link);
       const linkOpacity = getLinkOpacity(link);
 
+      // Calculate control points for Bezier curve
+      const midX = (sourceNode.x + targetNode.x) / 2;
+      const midY = (sourceNode.y + targetNode.y) / 2;
+      const dx = targetNode.x - sourceNode.x;
+      const dy = targetNode.y - sourceNode.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const curveOffset = Math.min(30, distance / 4);
+
+      // Perpendicular vector for curve control points
+      const perpX = -dy;
+      const perpY = dx;
+      const norm = Math.sqrt(perpX * perpX + perpY * perpY);
+      const unitPerpX = perpX / norm;
+      const unitPerpY = perpY / norm;
+
+      // Control points for cubic Bezier curve
+      const controlPoint1 = {
+        x: midX + unitPerpX * curveOffset,
+        y: midY + unitPerpY * curveOffset,
+      };
+      const controlPoint2 = {
+        x: midX + unitPerpX * curveOffset,
+        y: midY + unitPerpY * curveOffset,
+      };
+
+      // Create Skia path for Bezier curve
+      const path = Skia.Path.Make();
+      path.moveTo(sourceNode.x, sourceNode.y);
+      path.cubicTo(
+        controlPoint1.x,
+        controlPoint1.y,
+        controlPoint2.x,
+        controlPoint2.y,
+        targetNode.x,
+        targetNode.y
+      );
+
       // Phase 3: Animated stroke for paths mode
       if (viewMode === 'paths' && linkStyle.isDashed) {
         return (
-          <AnimatedLine
+          <AnimatedPath
             key={`link_${link.id}_${index}`}
-            p1={{ x: sourceNode.x, y: sourceNode.y }}
-            p2={{ x: targetNode.x, y: targetNode.y }}
+            path={path}
             color={linkStyle.color}
             strokeWidth={linkStyle.strokeWidth}
             opacity={linkOpacity}
             animationTime={pathAnimationTime}
+            start={0}
+            end={1}
           />
         );
       }
 
       return (
-        <Line
+        <Path
           key={`link_${link.id}_${index}`}
-          p1={{ x: sourceNode.x, y: sourceNode.y }}
-          p2={{ x: targetNode.x, y: targetNode.y }}
+          path={path}
           color={linkStyle.color}
+          style="stroke"
           strokeWidth={linkStyle.strokeWidth}
           opacity={linkOpacity}
         />
@@ -879,6 +966,85 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   };
 
   /**
+   * Create shape path based on node type
+   */
+  const createNodeShape = useCallback((node: NeuralNode, centerX: number, centerY: number, radius: number) => {
+    const path = Skia.Path.Make();
+
+    switch (node.type) {
+      case 'skill':
+        // Rectangle/Square
+        const rectSize = radius * 1.2;
+        const halfRect = rectSize / 2;
+        path.moveTo(centerX - halfRect, centerY - halfRect);
+        path.lineTo(centerX + halfRect, centerY - halfRect);
+        path.lineTo(centerX + halfRect, centerY + halfRect);
+        path.lineTo(centerX - halfRect, centerY + halfRect);
+        path.close();
+        break;
+
+      case 'goal':
+        // Diamond
+        const diamondSize = radius * 1.4;
+        path.moveTo(centerX, centerY - diamondSize);
+        path.lineTo(centerX + diamondSize, centerY);
+        path.lineTo(centerX, centerY + diamondSize);
+        path.lineTo(centerX - diamondSize, centerY);
+        path.close();
+        break;
+
+      case 'memory':
+        // Star
+        const starSize = radius * 1.3;
+        const spikes = 5;
+        const outerRadius = starSize;
+        const innerRadius = starSize * 0.5;
+
+        for (let i = 0; i < spikes * 2; i++) {
+          const angle = (i * Math.PI) / spikes;
+          const r = i % 2 === 0 ? outerRadius : innerRadius;
+          const x = centerX + Math.cos(angle - Math.PI/2) * r;
+          const y = centerY + Math.sin(angle - Math.PI/2) * r;
+
+          if (i === 0) path.moveTo(x, y);
+          else path.lineTo(x, y);
+        }
+        path.close();
+        break;
+
+      case 'habit':
+        // Triangle
+        const triangleSize = radius * 1.5;
+        path.moveTo(centerX, centerY - triangleSize);
+        path.lineTo(centerX + triangleSize * 0.866, centerY + triangleSize * 0.5);
+        path.lineTo(centerX - triangleSize * 0.866, centerY + triangleSize * 0.5);
+        path.close();
+        break;
+
+      case 'logic':
+        // Hexagon
+        const hexSize = radius * 1.1;
+        for (let i = 0; i < 6; i++) {
+          const angle = (i * Math.PI) / 3;
+          const x = centerX + Math.cos(angle) * hexSize;
+          const y = centerY + Math.sin(angle) * hexSize;
+
+          if (i === 0) path.moveTo(x, y);
+          else path.lineTo(x, y);
+        }
+        path.close();
+        break;
+
+      case 'concept':
+      default:
+        // Circle (default) - return null to use Circle component instead
+        return null;
+    }
+
+    return path;
+  }, []);
+
+  /**
    * Phase 5: Render single node with focus dimming and glow effects
    */
   const renderSingleNode = useCallback((node: NeuralNode, index: number, showLabel: boolean) => {
@@ -895,10 +1061,15 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       const isSelected = selectedNode?.id === node.id;
       const nodeColor = getNodeColor(node);
       const nodeOpacity = getNodeOpacity(node);
+      const nodeBlur = getNodeBlurAmount(node);
 
       // Phase 5: Focus node enhancements
       const isFocusNode = node.id === focusNodeId;
       const enhancedRadius = isFocusNode ? radius * 1.2 : radius;
+
+      // Create node shape based on type
+      const nodeShape = createNodeShape(node, node.x, node.y, enhancedRadius);
+      const isCircle = nodeShape === null; // null means use Circle component
 
       return (
         <Group key={`node_${node.id}_${index}`}>
@@ -913,17 +1084,6 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
             />
           )}
 
-          {/* Phase 3: Health mode - add warning ring for critical nodes */}
-          {viewMode === 'health' && node.healthScore !== undefined && node.healthScore < 0.3 && (
-            <Circle
-              cx={node.x}
-              cy={node.y}
-              r={enhancedRadius + 6}
-              color={VIEW_MODE_COLORS.health.critical}
-              opacity={nodeOpacity * 0.3}
-            />
-          )}
-
           {/* Selection indicator */}
           {isSelected && (
             <Circle
@@ -935,47 +1095,137 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
             />
           )}
 
-          {/* Main node */}
-          <Circle
-            cx={node.x}
-            cy={node.y}
-            r={enhancedRadius}
-            color={nodeColor}
-            opacity={nodeOpacity}
-          />
+          {/* Phase 5: Apply blur effect to main node elements when focus lock is active */}
+          {nodeBlur > 0 ? (
+            <Blur blur={nodeBlur}>
+              {/* Phase 3: Health mode - add warning ring for critical nodes */}
+              {viewMode === 'health' && node.healthScore !== undefined && node.healthScore < 0.3 && (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius + 6}
+                  color={VIEW_MODE_COLORS.health.critical}
+                  opacity={nodeOpacity * 0.3}
+                />
+              )}
 
-          {/* Phase 3: Health mode - inner health indicator */}
-          {viewMode === 'health' && node.healthScore !== undefined && (
-            <Circle
-              cx={node.x}
-              cy={node.y}
-              r={enhancedRadius * 0.6}
-              color={nodeColor}
-              opacity={nodeOpacity * (node.healthScore || 0)}
-            />
-          )}
+              {/* Main node - use shape or circle */}
+              {isCircle ? (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius}
+                  color={nodeColor}
+                  opacity={nodeOpacity}
+                />
+              ) : (
+                <Path
+                  path={nodeShape}
+                  color={nodeColor}
+                  style="fill"
+                  opacity={nodeOpacity}
+                />
+              )}
 
-          {/* Phase 3: Paths mode - pulsing for active nodes */}
-          {viewMode === 'paths' && node.isActive && (
-            <Circle
-              cx={node.x}
-              cy={node.y}
-              r={enhancedRadius * 1.2}
-              color={VIEW_MODE_COLORS.paths.active}
-              opacity={nodeOpacity * 0.4}
-            />
-          )}
+              {/* Phase 3: Health mode - inner health indicator */}
+              {viewMode === 'health' && node.healthScore !== undefined && (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius * 0.6}
+                  color={nodeColor}
+                  opacity={nodeOpacity * (node.healthScore || 0)}
+                />
+              )}
 
-          {/* Node label */}
-          {showLabel && font && node.label && (
-            <SkiaText
-              x={node.x - ((node.label?.length || 0) * 3)}
-              y={node.y + enhancedRadius + 16}
-              text={String(node.label).substring(0, 15)}
-              font={font}
-              color={themeColors.text}
-              opacity={nodeOpacity}
-            />
+              {/* Phase 3: Paths mode - pulsing for active nodes */}
+              {viewMode === 'paths' && node.isActive && (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius * 1.2}
+                  color={VIEW_MODE_COLORS.paths.active}
+                  opacity={nodeOpacity * 0.4}
+                />
+              )}
+
+              {/* Node label */}
+              {showLabel && font && node.label && (
+                <SkiaText
+                  x={node.x - ((node.label?.length || 0) * 3)}
+                  y={node.y + enhancedRadius + 16}
+                  text={String(node.label).substring(0, 15)}
+                  font={font}
+                  color={themeColors.text}
+                  opacity={nodeOpacity}
+                />
+              )}
+            </Blur>
+          ) : (
+            <>
+              {/* Phase 3: Health mode - add warning ring for critical nodes */}
+              {viewMode === 'health' && node.healthScore !== undefined && node.healthScore < 0.3 && (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius + 6}
+                  color={VIEW_MODE_COLORS.health.critical}
+                  opacity={nodeOpacity * 0.3}
+                />
+              )}
+
+              {/* Main node - use shape or circle */}
+              {isCircle ? (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius}
+                  color={nodeColor}
+                  opacity={nodeOpacity}
+                />
+              ) : (
+                <Path
+                  path={nodeShape}
+                  color={nodeColor}
+                  style="fill"
+                  opacity={nodeOpacity}
+                />
+              )}
+
+              {/* Phase 3: Health mode - inner health indicator */}
+              {viewMode === 'health' && node.healthScore !== undefined && (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius * 0.6}
+                  color={nodeColor}
+                  opacity={nodeOpacity * (node.healthScore || 0)}
+                />
+              )}
+
+              {/* Phase 3: Paths mode - pulsing for active nodes */}
+              {viewMode === 'paths' && node.isActive && (
+                <Circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={enhancedRadius * 1.2}
+                  color={VIEW_MODE_COLORS.paths.active}
+                  opacity={nodeOpacity * 0.4}
+                />
+              )}
+
+              {/* Node label */}
+              {showLabel && font && node.label && (
+                <SkiaText
+                  x={node.x - ((node.label?.length || 0) * 3)}
+                  y={node.y + enhancedRadius + 16}
+                  text={String(node.label).substring(0, 15)}
+                  font={font}
+                  color={themeColors.text}
+                  opacity={nodeOpacity}
+                />
+              )}
+            </>
           )}
         </Group>
       );
@@ -983,7 +1233,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       console.warn(`Error rendering node ${index}:`, error);
       return null;
     }
-  }, [selectedNode?.id, getNodeColor, getNodeOpacity, themeColors, font, viewMode, focusNodeId, focusGlow]);
+  }, [selectedNode?.id, getNodeColor, getNodeOpacity, getNodeBlurAmount, themeColors, font, viewMode, focusNodeId, focusGlow, createNodeShape]);
 
   /**
    * Phase 5: Render links with cluster hulls first (so they appear behind nodes)
@@ -996,7 +1246,16 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
 
       // Limit links under high cognitive load
       const maxLinks = cognitiveLoad > 0.8 ? 50 : links.length;
-      const visibleLinks = links.slice(0, maxLinks);
+
+      // Use visibleNodes to filter links for occlusion culling
+      const visibleNodeIds = new Set(visibleNodes.map(node => node.id));
+      const filteredLinks = links.filter(link => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        return visibleNodeIds.has(sourceId) && visibleNodeIds.has(targetId);
+      });
+
+      const visibleLinks = filteredLinks.slice(0, maxLinks);
 
       return visibleLinks
         .map(renderSingleLink)
@@ -1005,7 +1264,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       console.warn('Error rendering links:', error);
       return [];
     }
-  }, [links, cognitiveLoad, renderSingleLink]);
+  }, [links, cognitiveLoad, renderSingleLink, visibleNodes]);
 
   /**
    * Phase 5: Render nodes with enhanced focus dimming
@@ -1018,16 +1277,18 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
 
       const shouldShowLabels = scale.value > 1 && cognitiveLoad < 0.7 && (!focusNodeId || focusTransition.value < 0.5);
       const maxNodes = cognitiveLoad > 0.8 ? 30 : nodes.length;
-      const visibleNodes = nodes.slice(0, maxNodes);
 
-      return visibleNodes
+      // Use visibleNodes for occlusion culling
+      const visibleNodesLimited = visibleNodes.slice(0, maxNodes);
+
+      return visibleNodesLimited
         .map((node, index) => renderSingleNode(node, index, shouldShowLabels))
         .filter(Boolean);
     } catch (error) {
       console.warn('Error rendering nodes:', error);
       return [];
     }
-  }, [nodes, scale.value, cognitiveLoad, focusNodeId, focusTransition, renderSingleNode]);
+  }, [nodes, scale.value, cognitiveLoad, focusNodeId, focusTransition, renderSingleNode, visibleNodes]);
 
   // Safe overlay UI
   const renderOverlayUI = useCallback(() => {
@@ -1137,6 +1398,7 @@ interface NeuralMindMapProps {
   viewMode?: 'network' | 'clusters' | 'paths' | 'health';
   // Phase 5: Focus lock prop
   focusNodeId?: string | null;
+  focusLock?: boolean;
 }
 
 export const NeuralMindMap: React.FC<NeuralMindMapProps> = ({

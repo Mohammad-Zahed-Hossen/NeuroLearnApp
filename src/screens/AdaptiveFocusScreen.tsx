@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -32,7 +33,9 @@ import {
   NeuralNode,
 } from '../services/MindMapGeneratorService';
 import { NeuralPhysicsEngine } from '../services/NeuralPhysicsEngine';
+import { FocusTimerService, DistractionLogOptions, ActiveSession } from '../services/FocusTimerService';
 import { Task } from '../types';
+import { useFocus } from '../contexts/FocusContext';
 
 /**
  * Phase 5, Step 3: Adaptive Focus Timer Screen
@@ -68,14 +71,6 @@ interface FocusTarget {
   taskId?: string; // If linked to a Todoist task
 }
 
-interface TimerState {
-  timeRemaining: number; // Seconds remaining
-  isPaused: boolean;
-  isRunning: boolean;
-  startTime: Date | null;
-  endTime: Date | null;
-}
-
 export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
   theme,
   onNavigate,
@@ -83,13 +78,34 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
   const themeColors = colors[theme];
   const { width, height } = Dimensions.get('window');
 
+  // Focus context for neural focus lock
+  const { startFocusSession: startGlobalFocus, endFocusSession: endGlobalFocus } = useFocus();
+
+  // Ref to track if a session was active to prevent alert on initial load
+  const wasSessionActive = useRef(false);
+
   // Services
   const todoistService = TodoistService.getInstance();
   const mindMapGenerator = MindMapGenerator.getInstance();
+  const focusTimerService = FocusTimerService.getInstance();
+
+  // Physics engine for focus lock
+  const physicsEngine = useRef(new NeuralPhysicsEngine(width, height, theme)).current;
+  useEffect(() => {
+    focusTimerService.setPhysicsEngine(physicsEngine);
+  }, [focusTimerService]);
 
   // Core state
   const [menuVisible, setMenuVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Distraction modal state
+  const [showDistractionModal, setShowDistractionModal] = useState<boolean>(false);
+  const [showReasonPicker, setShowReasonPicker] = useState<boolean>(false);
+  const [showTriggerTypePicker, setShowTriggerTypePicker] = useState<boolean>(false);
+  const [distractionReason, setDistractionReason] = useState<string>('Phone notification');
+  const [distractionSeverity, setDistractionSeverity] = useState<1 | 2 | 3 | 4 | 5>(3);
+  const [distractionTriggerType, setDistractionTriggerType] = useState<'internal' | 'external' | 'notification' | 'unknown'>('external');
 
   // Focus selection state
   const [focusTargets, setFocusTargets] = useState<FocusTarget[]>([]);
@@ -97,15 +113,6 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
     null,
   );
   const [targetSelectionVisible, setTargetSelectionVisible] = useState(false);
-
-  // Timer state
-  const [timerState, setTimerState] = useState<TimerState>({
-    timeRemaining: 0,
-    isPaused: false,
-    isRunning: false,
-    startTime: null,
-    endTime: null,
-  });
 
   // Adaptive configuration
   const [adaptiveConfig, setAdaptiveConfig] = useState<AdaptiveTimerConfig>({
@@ -116,54 +123,45 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
   });
 
   // Session management
-  const [currentSession, setCurrentSession] = useState<FocusSession | null>(
-    null,
-  );
+  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [sessionAnalytics, setSessionAnalytics] = useState<any>(null);
-
-  // Timer intervals
-  const timerIntervalRef = useRef<NodeJS.Timeout>(null);
-  const notificationTimeoutRef = useRef<NodeJS.Timeout>(null);
+  const [timeRemaining, setTimeRemaining] = useState(0);
 
   /**
-   * Initialize screen with focus targets and adaptive configuration
+   * Compute time remaining from active session
    */
+  const getTimeRemaining = useCallback((): number => {
+    if (!activeSession) return 0;
+    const now = new Date();
+    const elapsedMs = now.getTime() - activeSession.startTime.getTime();
+    const elapsedSeconds = elapsedMs / 1000;
+    const totalSeconds = activeSession.plannedDurationMinutes * 60;
+    const remaining = totalSeconds - elapsedSeconds;
+    return Math.max(0, remaining);
+  }, [activeSession]);
+
+  // Subscribe to session changes
   useEffect(() => {
-    const initializeScreen = async () => {
-      try {
-        setIsLoading(true);
+    const unsubscribe = focusTimerService.onSessionChange(setActiveSession);
+    return unsubscribe;
+  }, [focusTimerService]);
 
-        // Load cognitive load and adapt timer configuration
-        await calculateAdaptiveConfiguration();
+  // Update time remaining every second during active session
+  useEffect(() => {
+    if (!activeSession) {
+      setTimeRemaining(0);
+      return;
+    }
 
-        // Load available focus targets
-        await loadFocusTargets();
+    const interval = setInterval(() => {
+      setTimeRemaining(getTimeRemaining());
+    }, 1000);
 
-        // Load session analytics
-        const analytics = todoistService.getFocusSessionAnalytics();
-        setSessionAnalytics(analytics);
+    // Set initial value
+    setTimeRemaining(getTimeRemaining());
 
-        console.log('⏰ Adaptive Focus Timer initialized');
-      } catch (error) {
-        console.error('Error initializing focus timer:', error);
-        Alert.alert('Error', 'Failed to initialize focus timer');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initializeScreen();
-
-    // Cleanup on unmount
-    return () => {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-      }
-      if (notificationTimeoutRef.current) {
-        clearTimeout(notificationTimeoutRef.current);
-      }
-    };
-  }, []);
+    return () => clearInterval(interval);
+  }, [activeSession, getTimeRemaining]);
 
   /**
    * Phase 5: Calculate adaptive timer configuration based on cognitive load
@@ -250,6 +248,63 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
       });
     }
   }, [mindMapGenerator, todoistService]);
+
+  // Handle session completion
+  useEffect(() => {
+    // Show alert only if session ended and was previously active (to avoid alert on initial load)
+    if (activeSession === null && selectedTarget && wasSessionActive.current) {
+      // Session ended
+      Alert.alert(
+        'Focus Session Complete! 🎉',
+        'Great work! Your focused session is finished.',
+        [
+          {
+            text: 'View Neural Map',
+            onPress: () => onNavigate('neural-mind-map'),
+          },
+          {
+            text: 'Another Session',
+            onPress: () => calculateAdaptiveConfiguration(),
+          },
+          { text: 'Finish' },
+        ],
+      );
+      wasSessionActive.current = false; // Reset flag after alert
+    } else if (activeSession !== null) {
+      wasSessionActive.current = true; // Mark session as active
+    }
+  }, [activeSession, selectedTarget, onNavigate, calculateAdaptiveConfiguration]);
+
+
+  /**
+   * Initialize screen with focus targets and adaptive configuration
+   */
+  useEffect(() => {
+    const initializeScreen = async () => {
+      try {
+        setIsLoading(true);
+
+        // Load cognitive load and adapt timer configuration
+        await calculateAdaptiveConfiguration();
+
+        // Load available focus targets
+        await loadFocusTargets();
+
+        // Load session analytics
+        const analytics = todoistService.getFocusSessionAnalytics();
+        setSessionAnalytics(analytics);
+
+        console.log('⏰ Adaptive Focus Timer initialized');
+      } catch (error) {
+        console.error('Error initializing focus timer:', error);
+        Alert.alert('Error', 'Failed to initialize focus timer');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initializeScreen();
+  }, []);
 
   /**
    * Load available focus targets from multiple sources
@@ -397,35 +452,20 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         Vibration.vibrate([0, 100, 50, 100]);
       }
 
-      // Calculate session duration in seconds
-      const durationMinutes = adaptiveConfig.duration;
-      const durationSeconds = durationMinutes * 60;
-      const endTime = new Date(Date.now() + durationSeconds * 1000);
+      // Start session using FocusTimerService
+      await focusTimerService.startSession(
+        selectedTarget.taskId || selectedTarget.id,
+        selectedTarget.neuralNodeId,
+        adaptiveConfig.duration,
+        adaptiveConfig.cognitiveLoad,
+      );
 
-      // Start Todoist timer if applicable
-      let focusSession: FocusSession;
-      if (selectedTarget.taskId) {
-        focusSession = await todoistService.startTaskTimer(
-          selectedTarget.taskId,
-          selectedTarget.neuralNodeId,
-          durationMinutes,
-          adaptiveConfig.cognitiveLoad,
-        );
-      } else {
-        // Create a focus session for neural/logic targets
-        focusSession = {
-          id: `focus_${Date.now()}`,
-          taskId: selectedTarget.id,
-          nodeId: selectedTarget.neuralNodeId,
-          startTime: new Date(),
-          plannedDuration: durationMinutes,
-          cognitiveLoad: adaptiveConfig.cognitiveLoad,
-          completed: false,
-          outcome: 'completed',
-        };
-      }
-
-      setCurrentSession(focusSession);
+      // Start global focus session
+      startGlobalFocus(
+        selectedTarget.neuralNodeId || selectedTarget.id,
+        selectedTarget.title,
+        selectedTarget.type,
+      );
 
       // Phase 5: Enable Neural Focus Lock
       if (selectedTarget.neuralNodeId) {
@@ -436,95 +476,41 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         );
       }
 
-      // Start the countdown timer
-      setTimerState({
-        timeRemaining: durationSeconds,
-        isPaused: false,
-        isRunning: true,
-        startTime: new Date(),
-        endTime: endTime,
-      });
-
-      // Start the interval
-      timerIntervalRef.current = setInterval(() => {
-        setTimerState((prev) => {
-          const newTimeRemaining = prev.timeRemaining - 1;
-
-          if (newTimeRemaining <= 0) {
-            // Session completed
-            completeFocusSession('completed');
-            return {
-              ...prev,
-              timeRemaining: 0,
-              isRunning: false,
-            };
-          }
-
-          return {
-            ...prev,
-            timeRemaining: newTimeRemaining,
-          };
-        });
-      }, 1000);
-
-      // Set up completion notification
-      notificationTimeoutRef.current = setTimeout(() => {
-        handleSessionComplete();
-      }, durationSeconds * 1000);
-
       console.log(
-        `⏰ Focus session started: ${durationMinutes} minutes for "${selectedTarget.title}"`,
+        `⏰ Focus session started: ${adaptiveConfig.duration} minutes for "${selectedTarget.title}"`,
       );
 
       Alert.alert(
         'Focus Session Started',
-        `${durationMinutes}-minute session for:\n"${selectedTarget.title}"\n\n${adaptiveConfig.reasoning}`,
-        [{ text: 'Focus!', style: 'default' }],
+        `${adaptiveConfig.duration}-minute session for:\n"${selectedTarget.title}"\n\n${adaptiveConfig.reasoning}`,
+        [{ text: 'Focus!' }],
       );
     } catch (error) {
       console.error('Error starting focus session:', error);
       Alert.alert('Error', 'Failed to start focus session');
     }
-  }, [selectedTarget, adaptiveConfig, todoistService]);
+  }, [selectedTarget, adaptiveConfig, focusTimerService, startGlobalFocus]);
 
   /**
    * Complete the current focus session
    */
   const completeFocusSession = useCallback(
-    (outcome: FocusSession['outcome']) => {
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-      }
-      if (notificationTimeoutRef.current) {
-        clearTimeout(notificationTimeoutRef.current);
-      }
+    async (outcome: 'completed' | 'interrupted') => {
+      if (activeSession) {
+        // End session using FocusTimerService
+        const sessionEndOptions = {
+          selfReportFocus: outcome === 'completed' ? 4 as const : 2 as const,
+          distractionReason: outcome === 'completed' ? undefined : 'Session interrupted',
+          completionRate: outcome === 'completed' ? 1.0 : 0.5,
+          todoistTaskCompleted: outcome === 'completed' && selectedTarget?.taskId ? true : false,
+        };
 
-      if (currentSession) {
-        // Stop Todoist timer
-        if (currentSession.taskId.startsWith('task_')) {
-          const taskId = currentSession.taskId.replace('task_', '');
-          todoistService.stopTaskTimer(taskId, outcome);
-        }
-
-        // Complete task if session was successful
-        if (outcome === 'completed' && selectedTarget?.taskId) {
-          todoistService.completeTask(selectedTarget.taskId);
-        }
-
-        setCurrentSession(null);
+        await focusTimerService.endSession(sessionEndOptions);
       }
 
       // Clear neural focus lock
+      endGlobalFocus();
       console.log('🧠 Neural focus lock deactivated');
-
-      // Reset timer state
-      setTimerState({
-        timeRemaining: 0,
-        isPaused: false,
-        isRunning: false,
-        startTime: null,
-        endTime: null,
-      });
 
       // Vibration feedback
       if (Platform.OS !== 'web') {
@@ -535,71 +521,35 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         }
       }
     },
-    [currentSession, selectedTarget, todoistService],
+    [activeSession, selectedTarget, focusTimerService, endGlobalFocus],
   );
 
   /**
-   * Handle session completion
+   * Open distraction modal
    */
-  const handleSessionComplete = useCallback(() => {
-    completeFocusSession('completed');
-
-    Alert.alert(
-      'Focus Session Complete! 🎉',
-      'Great work! Your focused session is finished.',
-      [
-        {
-          text: 'View Neural Map',
-          onPress: () => onNavigate('neural-mind-map'),
-        },
-        {
-          text: 'Another Session',
-          onPress: () => calculateAdaptiveConfiguration(),
-        },
-        { text: 'Finish', style: 'default' },
-      ],
-    );
-  }, [completeFocusSession, onNavigate, calculateAdaptiveConfiguration]);
+  const logDistraction = useCallback(() => {
+    if (activeSession) {
+      setShowDistractionModal(true);
+    }
+  }, [activeSession]);
 
   /**
-   * Pause/Resume session
+   * Handle distraction logging with user inputs
    */
-  const togglePauseSession = useCallback(() => {
-    if (!timerState.isRunning) return;
-
-    if (timerState.isPaused) {
-      // Resume
-      timerIntervalRef.current = setInterval(() => {
-        setTimerState((prev) => {
-          const newTimeRemaining = prev.timeRemaining - 1;
-
-          if (newTimeRemaining <= 0) {
-            completeFocusSession('completed');
-            return {
-              ...prev,
-              timeRemaining: 0,
-              isRunning: false,
-            };
-          }
-
-          return {
-            ...prev,
-            timeRemaining: newTimeRemaining,
-          };
-        });
-      }, 1000);
-    } else {
-      // Pause
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-      }
+  const handleLogDistraction = useCallback(async () => {
+    try {
+      await focusTimerService.logDistraction({
+        reason: distractionReason,
+        severity: distractionSeverity,
+        triggerType: distractionTriggerType,
+      });
+      setShowDistractionModal(false);
+      Alert.alert('Distraction Logged', 'Distraction has been recorded and neural penalty applied.');
+    } catch (error) {
+      console.error('Error logging distraction:', error);
+      Alert.alert('Error', 'Failed to log distraction');
     }
-
-    setTimerState((prev) => ({
-      ...prev,
-      isPaused: !prev.isPaused,
-    }));
-  }, [timerState.isRunning, timerState.isPaused, completeFocusSession]);
+  }, [distractionReason, distractionSeverity, distractionTriggerType, focusTimerService]);
 
   /**
    * Stop session early
@@ -624,27 +574,27 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
    */
   const formatTime = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${minutes.toString().padStart(2, '0')}:${secs
-      .toString()
-      .padStart(2, '0')}`;
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
   /**
    * Get time color based on remaining time
    */
-  const getTimeColor = (timeRemaining: number, totalTime: number): string => {
+  const getTimeColor = useCallback((timeRemaining: number): string => {
+    if (!activeSession) return themeColors.warning;
+    const totalTime = activeSession.plannedDurationMinutes * 60;
     const percentage = timeRemaining / totalTime;
 
     if (percentage > 0.7) return themeColors.success;
     if (percentage > 0.3) return themeColors.warning;
     return themeColors.error;
-  };
+  }, [activeSession, themeColors]);
 
   // Loading state
   if (isLoading) {
     return (
-      <ScreenContainer theme={theme} style={styles.container}>
+      <ScreenContainer theme={theme} style={[styles.container, { paddingTop: 60 }]}>
         <AppHeader
           title="Adaptive Focus"
           theme={theme}
@@ -681,7 +631,7 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
 
       <View style={styles.mainContent}>
         {/* Session Status */}
-        {timerState.isRunning ? (
+        {activeSession ? (
           // Active Session View
           <View style={styles.activeSessionContainer}>
             <GlassCard theme={theme} style={styles.timerCard}>
@@ -707,14 +657,11 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
                   style={[
                     styles.timerText,
                     {
-                      color: getTimeColor(
-                        timerState.timeRemaining,
-                        adaptiveConfig.duration * 60,
-                      ),
+                      color: getTimeColor(getTimeRemaining()),
                     },
                   ]}
                 >
-                  {formatTime(timerState.timeRemaining)}
+                  {formatTime(getTimeRemaining())}
                 </Text>
                 <Text
                   style={[
@@ -722,32 +669,32 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
                     { color: themeColors.textSecondary },
                   ]}
                 >
-                  {timerState.isPaused ? 'PAUSED' : 'FOCUSING'}
+                  FOCUSING
                 </Text>
               </View>
 
               {/* Progress Ring Visual */}
               <View style={styles.progressContainer}>
-                <View
-                  style={[
-                    styles.progressRing,
-                    { borderColor: themeColors.primary + '20' },
-                  ]}
-                >
+                <View style={styles.progressRing}>
+                  {/* Background ring */}
                   <View
                     style={[
-                      styles.progressFill,
+                      styles.progressRingBackground,
+                      { borderColor: themeColors.primary + '30' },
+                    ]}
+                  />
+                  {/* Progress fill */}
+                  <View
+                    style={[
+                      styles.progressRingFill,
                       {
-                        borderColor: getTimeColor(
-                          timerState.timeRemaining,
-                          adaptiveConfig.duration * 60,
-                        ),
+                        borderColor: getTimeColor(getTimeRemaining()),
                         transform: [
                           {
                             rotate: `${
                               (1 -
-                                timerState.timeRemaining /
-                                  (adaptiveConfig.duration * 60)) *
+                                getTimeRemaining() /
+                                  (activeSession.plannedDurationMinutes * 60)) *
                               360
                             }deg`,
                           },
@@ -755,25 +702,41 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
                       },
                     ]}
                   />
+                  {/* Center content */}
+                  <View style={styles.progressRingCenter}>
+                    <Text
+                      style={[
+                        styles.progressPercentage,
+                        { color: themeColors.text },
+                      ]}
+                    >
+                      {Math.round(
+                        (getTimeRemaining() /
+                          (activeSession.plannedDurationMinutes * 60)) *
+                          100
+                      )}
+                      %
+                    </Text>
+                  </View>
                 </View>
               </View>
 
               {/* Session Controls */}
               <View style={styles.sessionControls}>
                 <TouchableOpacity
-                  onPress={togglePauseSession}
+                  onPress={logDistraction}
                   style={[
                     styles.controlButton,
-                    { borderColor: themeColors.primary },
+                    { borderColor: themeColors.warning },
                   ]}
                 >
                   <Text
                     style={[
                       styles.controlButtonText,
-                      { color: themeColors.primary },
+                      { color: themeColors.warning },
                     ]}
                   >
-                    {timerState.isPaused ? '▶️' : '⏸️'}
+                    😬
                   </Text>
                 </TouchableOpacity>
 
@@ -797,7 +760,7 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
             </GlassCard>
 
             {/* Focus Lock Status */}
-            {selectedTarget?.neuralNodeId && (
+            {activeSession.nodeId && (
               <GlassCard theme={theme} style={styles.focusLockCard}>
                 <Text
                   style={[
@@ -1201,6 +1164,271 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         </ScreenContainer>
       </Modal>
 
+      {/* Distraction Modal */}
+      <Modal
+        visible={showDistractionModal}
+        animationType="slide"
+        presentationStyle="overFullScreen"
+        onRequestClose={() => setShowDistractionModal(false)}
+      >
+        <ScreenContainer theme={theme}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+              😬 Log Distraction
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowDistractionModal(false)}
+              style={styles.closeButton}
+            >
+              <Text
+                style={[styles.closeButtonText, { color: themeColors.text }]}
+              >
+                ✕
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent} contentContainerStyle={styles.modalScrollContent}>
+            <GlassCard theme={theme} style={styles.distractionCard}>
+              <Text style={[styles.distractionTitle, { color: themeColors.text }]}>
+                What distracted you?
+              </Text>
+
+              {/* Reason Input */}
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
+                  Reason
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowReasonPicker(true)}
+                  style={[styles.inputButton, { borderColor: themeColors.primary }]}
+                >
+                  <Text style={[styles.inputButtonText, { color: themeColors.text }]}>
+                    {distractionReason}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Severity Input */}
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
+                  Severity (1-5)
+                </Text>
+                <View style={styles.severityContainer}>
+                  {[1, 2, 3, 4, 5].map(severity => (
+                    <TouchableOpacity
+                      key={severity}
+                      onPress={() => setDistractionSeverity(severity as 1 | 2 | 3 | 4 | 5)}
+                      style={[
+                        styles.severityButton,
+                        {
+                          backgroundColor: distractionSeverity === severity
+                            ? themeColors.primary
+                            : themeColors.surface + '40'
+                        }
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.severityText,
+                          {
+                            color: distractionSeverity === severity
+                              ? themeColors.surface
+                              : themeColors.text
+                          }
+                        ]}
+                      >
+                        {severity}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={[styles.severityDescription, { color: themeColors.textSecondary }]}>
+                  {distractionSeverity === 1 && 'Minor distraction - barely noticed'}
+                  {distractionSeverity === 2 && 'Light distraction - quick glance'}
+                  {distractionSeverity === 3 && 'Moderate distraction - brief engagement'}
+                  {distractionSeverity === 4 && 'Significant distraction - lost focus'}
+                  {distractionSeverity === 5 && 'Major distraction - completely derailed'}
+                </Text>
+              </View>
+
+              {/* Trigger Type Input */}
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
+                  Trigger Type
+                </Text>
+              <TouchableOpacity
+                onPress={() => setShowTriggerTypePicker(true)}
+                style={[styles.inputButton, { borderColor: themeColors.primary }]}
+              >
+                <Text style={[styles.inputButtonText, { color: themeColors.text }]}>
+                  {distractionTriggerType.charAt(0).toUpperCase() + distractionTriggerType.slice(1)}
+                </Text>
+              </TouchableOpacity>
+              </View>
+
+              {/* Action Buttons */}
+              <View style={styles.distractionActions}>
+                <Button
+                  title="Cancel"
+                  onPress={() => setShowDistractionModal(false)}
+                  variant="outline"
+                  theme={theme}
+                  style={styles.cancelButton}
+                />
+                <Button
+                  title="Log Distraction"
+                  onPress={handleLogDistraction}
+                  variant="primary"
+                  theme={theme}
+                  style={styles.logButton}
+                />
+              </View>
+            </GlassCard>
+          </ScrollView>
+        </ScreenContainer>
+      </Modal>
+
+      {/* Reason Picker Modal */}
+      <Modal
+        visible={showReasonPicker}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowReasonPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.pickerModalContent}>
+            <GlassCard theme={theme} style={styles.pickerModalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+                  Select Reason
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowReasonPicker(false)}
+                  style={styles.closeButton}
+                >
+                  <Text
+                    style={[styles.closeButtonText, { color: themeColors.text }]}
+                  >
+                    ✕
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.modalScrollContent}>
+                {[
+                  'Phone notification',
+                  'Social media',
+                  'Email',
+                  'Colleague interruption',
+                  'Personal thoughts',
+                  'Noise',
+                  'Hunger/Thirst',
+                  'Other'
+                ].map((reason) => (
+                  <TouchableOpacity
+                    key={reason}
+                    onPress={() => {
+                      setDistractionReason(reason);
+                      setShowReasonPicker(false);
+                    }}
+                    style={styles.pickerOption}
+                  >
+                    <GlassCard
+                      theme={theme}
+                      style={[
+                        styles.pickerOptionCard,
+                        distractionReason === reason && [
+                          styles.pickerOptionSelected,
+                          { borderColor: themeColors.primary },
+                        ],
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.pickerOptionText,
+                          { color: themeColors.text },
+                        ]}
+                      >
+                        {reason}
+                      </Text>
+                    </GlassCard>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </GlassCard>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Trigger Type Picker Modal */}
+      <Modal
+        visible={showTriggerTypePicker}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowTriggerTypePicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.pickerModalContent}>
+            <GlassCard theme={theme} style={styles.pickerModalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+                  Select Trigger Type
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowTriggerTypePicker(false)}
+                  style={styles.closeButton}
+                >
+                  <Text
+                    style={[styles.closeButtonText, { color: themeColors.text }]}
+                  >
+                    ✕
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.modalScrollContent}>
+                {[
+                  'internal',
+                  'external',
+                  'notification',
+                  'unknown'
+                ].map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    onPress={() => {
+                      setDistractionTriggerType(type as 'internal' | 'external' | 'notification' | 'unknown');
+                      setShowTriggerTypePicker(false);
+                    }}
+                    style={styles.pickerOption}
+                  >
+                    <GlassCard
+                      theme={theme}
+                      style={[
+                        styles.pickerOptionCard,
+                        distractionTriggerType === type && [
+                          styles.pickerOptionSelected,
+                          { borderColor: themeColors.primary },
+                        ],
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.pickerOptionText,
+                          { color: themeColors.text },
+                        ]}
+                      >
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </Text>
+                    </GlassCard>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </GlassCard>
+          </View>
+        </View>
+      </Modal>
+
       <HamburgerMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -1267,6 +1495,9 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     alignItems: 'center',
     marginBottom: spacing.lg,
+    width: '100%',
+    maxWidth: 360,
+    alignSelf: 'center',
   },
   targetHeader: {
     alignItems: 'center',
@@ -1302,19 +1533,39 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    borderWidth: 8,
     position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  progressFill: {
+  progressRingBackground: {
     position: 'absolute',
-    width: 104,
-    height: 104,
-    borderRadius: 52,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 8,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  progressRingFill: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     borderWidth: 8,
     borderColor: 'transparent',
     borderTopColor: '#4F46E5',
-    top: -8,
-    left: -8,
+  },
+  progressRingCenter: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressPercentage: {
+    ...typography.h4,
+    fontWeight: 'bold',
   },
   sessionControls: {
     flexDirection: 'row',
@@ -1551,5 +1802,102 @@ const styles = StyleSheet.create({
   targetOptionMetaText: {
     ...typography.caption,
     fontWeight: '500',
+  },
+
+  // Distraction Modal
+  distractionCard: {
+    padding: spacing.lg,
+  },
+  distractionTitle: {
+    ...typography.h3,
+    marginBottom: spacing.lg,
+    textAlign: 'center',
+  },
+  inputGroup: {
+    marginBottom: spacing.lg,
+  },
+  inputLabel: {
+    ...typography.body,
+    fontWeight: '600',
+    marginBottom: spacing.sm,
+  },
+  inputButton: {
+    borderWidth: 1,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  inputButtonText: {
+    ...typography.body,
+    flex: 1,
+  },
+  inputButtonArrow: {
+    ...typography.caption,
+    fontSize: 14,
+  },
+  severityContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  severityButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  severityText: {
+    ...typography.body,
+    fontWeight: '600',
+  },
+  severityDescription: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  distractionActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginTop: spacing.lg,
+  },
+  cancelButton: {
+    flex: 1,
+  },
+  logButton: {
+    flex: 1,
+  },
+
+  // Picker Modals
+  pickerOption: {
+    marginBottom: spacing.md,
+  },
+  pickerOptionCard: {
+    padding: spacing.md,
+  },
+  pickerOptionSelected: {
+    borderWidth: 2,
+  },
+  pickerOptionText: {
+    ...typography.body,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  pickerModalContent: {
+    width: '90%',
+    maxHeight: '70%',
+  },
+  pickerModalCard: {
+    maxHeight: '100%',
   },
 });

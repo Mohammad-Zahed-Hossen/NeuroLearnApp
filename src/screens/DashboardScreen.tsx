@@ -20,6 +20,7 @@ import { colors, spacing, typography } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
 import { StorageService } from '../services/StorageService';
 import { SpacedRepetitionService } from '../services/SpacedRepetitionService';
+import { FocusTimerService } from '../services/FocusTimerService';
 import { Flashcard, StudySession, ProgressData, Task } from '../types';
 
 interface DashboardScreenProps {
@@ -29,6 +30,8 @@ interface DashboardScreenProps {
 
 interface DashboardStats {
   dueCards: number;
+  logicNodesDue: number;
+  criticalLogicCount: number;
   atRiskCards: number;
   activeTasks: number;
   studyStreak: number;
@@ -37,6 +40,24 @@ interface DashboardStats {
   retentionRate: number;
   weeklyProgress: number;
   optimalSessionSize: number;
+  focusStreak: number;
+  averageFocusRating: number;
+  distractionsPerSession: number;
+}
+
+interface Metric {
+  icon: string;
+  value: string | number;
+  label: string;
+  color?: string;
+}
+
+interface MetricGroup {
+  id: string;
+  title: string;
+  icon: string;
+  subtitle: string;
+  metrics: Metric[];
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -45,8 +66,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 }) => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [stats, setStats] = useState<DashboardStats>({
     dueCards: 0,
+    logicNodesDue: 0,
+    criticalLogicCount: 0,
     atRiskCards: 0,
     activeTasks: 0,
     studyStreak: 0,
@@ -55,6 +79,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     retentionRate: 0,
     weeklyProgress: 0,
     optimalSessionSize: 10,
+    focusStreak: 0,
+    averageFocusRating: 0,
+    distractionsPerSession: 0,
   });
 
   const [loading, setLoading] = useState(true);
@@ -88,7 +115,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         ]);
 
       // Calculate science-based statistics
-      const calculatedStats = calculateCognitiveStats(
+      const calculatedStats = await calculateCognitiveStats(
         flashcardsData,
         sessionsData,
         progressData,
@@ -103,14 +130,23 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   };
 
-  const calculateCognitiveStats = (
+  const calculateCognitiveStats = async (
     flashcards: Flashcard[],
     sessions: StudySession[],
     progress: ProgressData,
     tasks: Task[],
-  ): DashboardStats => {
+  ): Promise<DashboardStats> => {
+    // Get due cards and logic nodes using StorageService
+    const dueData = await storage.getCardsDueToday();
+
     // Due cards using FSRS algorithm
-    const dueCards = srs.getDueCards(flashcards).length;
+    const dueCards = dueData.flashcards.length;
+
+    // Logic nodes due today
+    const logicNodesDue = dueData.logicNodes.length;
+
+    // Critical logic nodes count
+    const criticalLogicCount = dueData.criticalLogicCount;
 
     // Cards at risk of being forgotten (predictive)
     const atRiskCards = srs.getAtRiskCards(flashcards, 0.3).length;
@@ -121,33 +157,44 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     // Cognitive load based on recent performance
     const cognitiveLoad = srs.calculateCognitiveLoad(sessions.slice(-10));
 
-    // Optimal session size based on cognitive load
+    // Optimal session size based on cognitive load (include logic nodes)
     const optimalSessionSize = srs.getOptimalSessionSize(
       cognitiveLoad,
-      dueCards,
+      dueCards + logicNodesDue,
     );
 
     // Retention rate from actual study data
     const retentionRate = calculateRetentionRate(sessions, flashcards);
 
+    // Calculate current study streak based on actual study sessions
+    const studyStreak = await storage.calculateCurrentStudyStreak();
+
     // Weekly progress calculation
-    const weeklyGoal = 420; // 7 days * 60 minutes
+    const weeklyGoal = 2520; // 7 days * 360 minutes
     const weeklyFocusTime = progress.weeklyData.reduce(
       (acc, day) => acc + day.focusTime,
       0,
     );
     const weeklyProgress = Math.min(100, (weeklyFocusTime / weeklyGoal) * 100);
 
+    // Get focus health metrics from StorageService (correct source)
+    const focusHealthData = await storage.getFocusHealthMetrics();
+
     return {
       dueCards,
+      logicNodesDue,
+      criticalLogicCount,
       atRiskCards,
       activeTasks,
-      studyStreak: progress.studyStreak,
+      studyStreak,
       todayFocusTime: progress.todayFocusTime,
       cognitiveLoad,
       retentionRate: Math.round(retentionRate),
       weeklyProgress: Math.round(weeklyProgress),
       optimalSessionSize,
+      focusStreak: focusHealthData.streakCount,
+      averageFocusRating: focusHealthData.averageFocusRating,
+      distractionsPerSession: focusHealthData.distractionsPerSession,
     };
   };
 
@@ -159,7 +206,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       .filter((s) => s.type === 'flashcards' && s.completed)
       .slice(-5);
 
-    if (recentSessions.length === 0) return 75; // Default baseline
+    if (recentSessions.length === 0) return 0; // No data available
 
     // Calculate based on cards that were successfully recalled
     const successfulCards = recentSessions.reduce((acc, session) => {
@@ -180,34 +227,55 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     setRefreshing(false);
   };
 
-  // Enhanced Settings Functionality
-  const handleSettingChange = (setting: string, value: any) => {
-    Alert.alert('Setting Updated', `${setting} changed to ${value}`);
-  };
-
   const quickSettings = [
     {
       icon: '🌙',
       label: 'Dark Mode',
-      action: () => handleSettingChange('theme', 'dark'),
+      action: () => {
+        setSettingsVisible(false);
+        onNavigate('settings');
+      },
     },
     {
       icon: '🔔',
       label: 'Notifications',
-      action: () => handleSettingChange('notifications', 'toggle'),
+      action: () => {
+        setSettingsVisible(false);
+        onNavigate('settings');
+      },
     },
     {
       icon: '🎯',
       label: 'Daily Goal',
-      action: () => handleSettingChange('dailyGoal', '60min'),
+      action: () => {
+        setSettingsVisible(false);
+        onNavigate('settings');
+      },
     },
-    { icon: '📊', label: 'Analytics', action: () => onNavigate('progress') },
+    {
+      icon: '📊',
+      label: 'Analytics',
+      action: () => {
+        setSettingsVisible(false);
+        onNavigate('tasks');
+      }
+    },
     {
       icon: '🔄',
       label: 'Sync Data',
-      action: () => handleSettingChange('sync', 'now'),
+      action: () => {
+        setSettingsVisible(false);
+        onNavigate('settings');
+      },
     },
-    { icon: '🛠️', label: 'Advanced', action: () => onNavigate('settings') },
+    {
+      icon: '🛠️',
+      label: 'Advanced',
+      action: () => {
+        setSettingsVisible(false);
+        onNavigate('settings');
+      }
+    },
   ];
 
   const getCognitiveLoadColor = (load: number): string => {
@@ -240,6 +308,76 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
     return 'System optimized. Continue with current learning schedule.';
   };
+
+  // Dynamic metric groups configuration - always show all groups but with conditional content
+  const getLearningProgressGroup = (): MetricGroup => {
+    const hasData = stats.dueCards > 0 || stats.logicNodesDue > 0 || stats.atRiskCards > 0 || stats.retentionRate > 0;
+    return {
+      id: 'learning',
+      title: 'Learning Progress',
+      icon: '📚',
+      subtitle: hasData ? `${stats.dueCards + stats.logicNodesDue} items due` : 'No learning data yet',
+      metrics: hasData ? [
+        { icon: '📚', value: stats.dueCards, label: 'Due Cards' },
+        { icon: '🧠', value: stats.logicNodesDue, label: 'Logic Nodes' },
+        { icon: '⚠️', value: stats.atRiskCards, label: 'At Risk' },
+        { icon: '📊', value: `${stats.retentionRate}%`, label: 'Retention' },
+      ] : [
+        { icon: '📚', value: '-', label: 'Due Cards' },
+        { icon: '🧠', value: '-', label: 'Logic Nodes' },
+        { icon: '⚠️', value: '-', label: 'At Risk' },
+        { icon: '📊', value: '-', label: 'Retention' },
+      ],
+    };
+  };
+
+  const getCognitiveHealthGroup = (): MetricGroup => {
+    const hasData = stats.focusStreak > 0 || stats.averageFocusRating > 0 || stats.distractionsPerSession > 0 || stats.cognitiveLoad > 0;
+    return {
+      id: 'cognitive',
+      title: 'Cognitive Health',
+      icon: '🧠',
+      subtitle: hasData ? 'Focus & mental state' : 'No focus data yet',
+      metrics: hasData ? [
+        { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
+        { icon: '⭐', value: stats.averageFocusRating.toFixed(1), label: 'Focus Rating' },
+        { icon: '😬', value: stats.distractionsPerSession.toFixed(1), label: 'Distractions/Session' },
+        { icon: '🧠', value: stats.cognitiveLoad.toFixed(1), label: 'Cognitive Load' },
+      ] : [
+        { icon: '🔥', value: '-', label: 'Focus Streak' },
+        { icon: '⭐', value: '-', label: 'Focus Rating' },
+        { icon: '😬', value: '-', label: 'Distractions/Session' },
+        { icon: '🧠', value: '-', label: 'Cognitive Load' },
+      ],
+    };
+  };
+
+  const getPerformanceGroup = (): MetricGroup => {
+    const hasData = stats.studyStreak > 0 || stats.criticalLogicCount > 0 || stats.weeklyProgress > 0 || stats.todayFocusTime > 0;
+    return {
+      id: 'performance',
+      title: 'Performance',
+      icon: '📈',
+      subtitle: hasData ? 'Streaks & achievements' : 'No performance data yet',
+      metrics: hasData ? [
+        { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
+        { icon: '🎯', value: stats.criticalLogicCount, label: 'Critical Logic' },
+        { icon: '📈', value: `${stats.weeklyProgress}%`, label: 'Weekly Progress' },
+        { icon: '⏱️', value: stats.todayFocusTime, label: 'Today Focus (min)' },
+      ] : [
+        { icon: '🔥', value: '-', label: 'Day Streak' },
+        { icon: '🎯', value: '-', label: 'Critical Logic' },
+        { icon: '📈', value: '-', label: 'Weekly Progress' },
+        { icon: '⏱️', value: '-', label: 'Today Focus (min)' },
+      ],
+    };
+  };
+
+  const metricGroups: MetricGroup[] = [
+    getLearningProgressGroup(),
+    getCognitiveHealthGroup(),
+    getPerformanceGroup(),
+  ];
 
   if (loading) {
     return (
@@ -285,7 +423,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         {/* Cognitive Load Status */}
         <GlassCard theme={theme} style={styles.cognitiveCard}>
           <View style={styles.cognitiveHeader}>
-            <View>
+            <View style={styles.cognitiveTextContainer}>
               <Text style={[styles.cardTitle, { color: themeColors.text }]}>
                 🧠 Cognitive Load Analysis
               </Text>
@@ -319,47 +457,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
         </GlassCard>
 
-        {/* Core Metrics */}
-        <View style={styles.metricsGrid}>
-          <GlassCard theme={theme} style={styles.metricCard}>
-            <Text style={styles.metricIcon}>📚</Text>
-            <Text style={[styles.metricValue, { color: themeColors.primary }]}>
-              {stats.dueCards}
-            </Text>
-            <Text style={[styles.metricLabel, { color: themeColors.text }]}>
-              Due Cards
-            </Text>
-          </GlassCard>
-
-          <GlassCard theme={theme} style={styles.metricCard}>
-            <Text style={styles.metricIcon}>⚠️</Text>
-            <Text style={[styles.metricValue, { color: themeColors.warning }]}>
-              {stats.atRiskCards}
-            </Text>
-            <Text style={[styles.metricLabel, { color: themeColors.text }]}>
-              At Risk
-            </Text>
-          </GlassCard>
-
-          <GlassCard theme={theme} style={styles.metricCard}>
-            <Text style={styles.metricIcon}>🔥</Text>
-            <Text style={[styles.metricValue, { color: themeColors.success }]}>
-              {stats.studyStreak}
-            </Text>
-            <Text style={[styles.metricLabel, { color: themeColors.text }]}>
-              Day Streak
-            </Text>
-          </GlassCard>
-
-          <GlassCard theme={theme} style={styles.metricCard}>
-            <Text style={styles.metricIcon}>📊</Text>
-            <Text style={[styles.metricValue, { color: themeColors.primary }]}>
-              {stats.retentionRate}%
-            </Text>
-            <Text style={[styles.metricLabel, { color: themeColors.text }]}>
-              Retention
-            </Text>
-          </GlassCard>
+        {/* Metric Group Cards */}
+        <View style={styles.groupGrid}>
+          {metricGroups.map((group) => (
+            <TouchableOpacity
+              key={group.id}
+              onPress={() => setSelectedGroup(group.id)}
+              activeOpacity={0.8}
+              style={styles.groupCardTouchable}
+            >
+              <GlassCard theme={theme} style={styles.groupCard}>
+                <Text style={styles.groupIcon}>{group.icon}</Text>
+                <Text style={[styles.groupTitle, { color: themeColors.text }]}>
+                  {group.title}
+                </Text>
+                <Text style={[styles.groupSubtitle, { color: themeColors.textSecondary }]}>
+                  {group.subtitle}
+                </Text>
+              </GlassCard>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Smart Recommendations */}
@@ -426,7 +543,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               theme={theme}
               style={styles.actionButton}
             />
-
             <Button
               title="View Tasks"
               onPress={() => onNavigate('tasks')}
@@ -501,6 +617,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         quickSettings={quickSettings}
       />
 
+      {/* Metrics Modal */}
+      <MetricsModal
+        visible={selectedGroup !== null}
+        onClose={() => setSelectedGroup(null)}
+        theme={theme}
+        selectedGroup={selectedGroup}
+        stats={stats}
+      />
+
       <HamburgerMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -572,6 +697,115 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   {setting.label}
                 </Text>
               </TouchableOpacity>
+            ))}
+          </View>
+        </GlassCard>
+      </View>
+    </Modal>
+  );
+};
+
+// Metrics Modal Component
+interface MetricsModalProps {
+  visible: boolean;
+  onClose: () => void;
+  theme: ThemeType;
+  selectedGroup: string | null;
+  stats: DashboardStats;
+}
+
+const MetricsModal: React.FC<MetricsModalProps> = ({
+  visible,
+  onClose,
+  theme,
+  selectedGroup,
+  stats,
+}) => {
+  const themeColors = colors[theme];
+
+  // Dynamic metric groups configuration (same as in main component)
+  const metricGroups: MetricGroup[] = [
+    {
+      id: 'learning',
+      title: 'Learning Progress',
+      icon: '📚',
+      subtitle: `${stats.dueCards + stats.logicNodesDue} items due`,
+      metrics: [
+        { icon: '📚', value: stats.dueCards, label: 'Due Cards' },
+        { icon: '🧠', value: stats.logicNodesDue, label: 'Logic Nodes' },
+        { icon: '⚠️', value: stats.atRiskCards, label: 'At Risk' },
+        { icon: '📊', value: `${stats.retentionRate}%`, label: 'Retention' },
+      ],
+    },
+    {
+      id: 'cognitive',
+      title: 'Cognitive Health',
+      icon: '🧠',
+      subtitle: 'Focus & mental state',
+      metrics: [
+        { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
+        { icon: '⭐', value: stats.averageFocusRating.toFixed(1), label: 'Focus Rating' },
+        { icon: '😬', value: stats.distractionsPerSession.toFixed(1), label: 'Distractions/Session' },
+        { icon: '🧠', value: stats.cognitiveLoad.toFixed(1), label: 'Cognitive Load' },
+      ],
+    },
+    {
+      id: 'performance',
+      title: 'Performance',
+      icon: '📈',
+      subtitle: 'Streaks & achievements',
+      metrics: [
+        { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
+        { icon: '🎯', value: stats.criticalLogicCount, label: 'Critical Logic' },
+        { icon: '📈', value: `${stats.weeklyProgress}%`, label: 'Weekly Progress' },
+        { icon: '⏱️', value: stats.todayFocusTime, label: 'Today Focus (min)' },
+      ],
+    },
+  ];
+
+  const selectedGroupData = metricGroups.find(group => group.id === selectedGroup);
+
+  if (!selectedGroupData) {
+    return null;
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+
+        <GlassCard theme={theme} style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+              {selectedGroupData.title}
+            </Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeModal}>
+              <Text style={[styles.closeIcon, { color: themeColors.text }]}>
+                ×
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modalMetricsGrid}>
+            {selectedGroupData.metrics.map((metric, index) => (
+              <View key={index} style={styles.modalMetricCard}>
+                <Text style={styles.modalMetricIcon}>{metric.icon}</Text>
+                <Text style={[styles.modalMetricValue, { color: themeColors.primary }]}>
+                  {metric.value}
+                </Text>
+                <Text style={[styles.modalMetricLabel, { color: themeColors.text }]}>
+                  {metric.label}
+                </Text>
+              </View>
             ))}
           </View>
         </GlassCard>
@@ -672,6 +906,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  cognitiveTextContainer: {
+    flex: 1,
+    marginRight: spacing.md,
+  },
   cardTitle: {
     ...typography.h4,
     marginBottom: spacing.xs,
@@ -691,6 +929,12 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
+  },
+  sectionHeader: {
+    ...typography.h4,
+    fontWeight: '600',
+    marginBottom: spacing.md,
+    marginTop: spacing.sm,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -773,6 +1017,108 @@ const styles = StyleSheet.create({
   progressFill: {
     height: '100%',
     borderRadius: 4,
+  },
+
+  // Group Card Styles
+  groupGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  groupCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  groupCardTouchable: {
+    width: '31%',
+    height: 160, // Fixed height for uniform cards
+    marginBottom: spacing.md,
+  },
+  groupIcon: {
+    fontSize: 28,
+    marginBottom: spacing.sm,
+  },
+  groupTitle: {
+    ...typography.body,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  groupSubtitle: {
+    ...typography.caption,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
+
+  // Metrics Modal Styles
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  modalCard: {
+    width: '85%',
+    maxWidth: 480,
+    margin: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  modalTitle: {
+    ...typography.h3,
+    fontWeight: '600',
+  },
+  closeModal: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  modalMetricCard: {
+    width: '48%',
+    alignItems: 'center',
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  modalMetricIcon: {
+    fontSize: 24,
+    marginBottom: spacing.sm,
+  },
+  modalMetricValue: {
+    ...typography.h2,
+    fontWeight: 'bold',
+    marginBottom: spacing.xs,
+  },
+  modalMetricLabel: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });
 

@@ -32,10 +32,13 @@ import {
   NeuralNode,
 } from '../services/MindMapGeneratorService';
 import { StorageService } from '../services/StorageService';
+import { useFocus } from '../contexts/FocusContext';
 
 interface NeuralMindMapScreenProps {
   theme: ThemeType;
   onNavigate: (screen: string) => void;
+  // Phase 5: Focus lock prop
+  focusNodeId?: string | null;
 }
 
 /**
@@ -121,6 +124,7 @@ const COGNITIVE_LOAD_THRESHOLDS = {
 export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   theme,
   onNavigate,
+  focusNodeId,
 }) => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [loadingState, setLoadingState] = useState<LoadingState>({
@@ -135,6 +139,8 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
   const [cognitiveLoad, setCognitiveLoad] = useState(0.5);
   const [error, setError] = useState<string | null>(null);
+
+  const { focusState, startFocusSession } = useFocus();
 
   const { width, height } = Dimensions.get('window');
   const themeColors = colors[theme];
@@ -736,10 +742,15 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
               setSelectedNode(node);
               generateNodeDetail(node);
               setNodeDetailVisible(true);
+              if (startFocusSession && node.id && node.label) {
+                startFocusSession(node.id, node.label, 'node');
+              }
             }}
             cognitiveLoad={cognitiveLoad}
             showControls={false}
             viewMode={viewMode} // Phase 3: Pass view mode to canvas
+            focusNodeId={focusState.focusNodeId} // Phase 5: Pass focus node ID from context
+            focusLock={!!focusState.focusNodeId} // Phase 5.5: Enable focus lock when focus is active
           />
         </View>
 

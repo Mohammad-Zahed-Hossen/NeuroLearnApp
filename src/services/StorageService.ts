@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import {
   Flashcard,
   Task,
@@ -9,6 +10,71 @@ import {
 } from '../types';
 import { LogicStructure } from './MindMapGeneratorService';
 import { FSRSCard, FSRSReviewLog } from './SpacedRepetitionService';
+
+/**
+ * Phase 5.5: Focus Reinforcement Types
+ *
+ * Anti-distraction tracking and focus session analytics
+ */
+
+export interface DistractionEvent {
+  id: string;
+  sessionId: string;
+  timestamp: Date;
+  reason?: string;
+  contextSwitch?: boolean;         // True if user switched apps/screens
+  duration?: number;               // How long the distraction lasted
+  triggerType?: 'internal' | 'external' | 'notification' | 'unknown';
+  severity?: 1 | 2 | 3 | 4 | 5;    // User-reported distraction severity
+}
+
+export interface FocusSession {
+  id: string;
+  taskId: string;
+  nodeId?: string;                 // Neural node being focused on (from Phase 5)
+  startTime: Date;
+  endTime: Date;
+  durationMinutes: number;
+  plannedDurationMinutes: number;  // Original plan vs actual
+  distractionCount: number;
+  distractionEvents: DistractionEvent[];
+  selfReportFocus: 1 | 2 | 3 | 4 | 5;  // Micro-reflection rating
+  distractionReason?: string;      // Main reason for distractions
+  completionRate: number;          // How much of the planned work was done
+
+  // Neural health impact
+  cognitiveLoadStart: number;      // Mental state when session started
+  cognitiveLoadEnd?: number;       // Mental state when session ended
+  focusLockUsed: boolean;          // Was neural focus lock active?
+
+  // Task convergence
+  todoistTaskCompleted?: boolean;  // Was the linked Todoist task completed?
+  neuralNodeStrengthened?: boolean; // Did this session strengthen neural connections?
+
+  created: Date;
+  modified: Date;
+}
+
+/**
+ * Phase 5.5: Focus Health Metrics
+ */
+export interface FocusHealthMetrics {
+  streakCount: number;             // Days with successful focused sessions
+  averageFocusRating: number;      // Average selfReportFocus across recent sessions
+  distractionsPerSession: number;  // Average distractions per session
+  focusEfficiency: number;         // Actual time / planned time ratio
+  neuralReinforcement: number;     // How much focus sessions strengthen neural paths
+
+  // Time-based analysis
+  dailyFocusTime: number;          // Minutes of successful focus today
+  weeklyFocusTime: number;         // Minutes of successful focus this week
+  bestFocusTimeOfDay: string;      // When user is most focused
+
+  // Distraction patterns
+  commonDistractionTriggers: string[];
+  mostDistractiveDays: string[];   // Which days are hardest to focus
+  focusImprovement: number;        // Trend: improving (+) or declining (-)
+}
 
 /**
  * Enhanced Logic Training Node for structured critical thinking
@@ -41,6 +107,10 @@ export interface LogicNode {
   lastReview?: Date;
   state?: number; // CardState enum value
 
+  // Phase 5.5: Focus impact
+  focusSessionStrength?: number;   // How much focus sessions have strengthened this node
+  distractionPenalty?: number;     // Accumulated penalty from distracted sessions
+
   created: Date;
   modified: Date;
 }
@@ -57,11 +127,15 @@ export interface EnhancedFlashcard extends Flashcard {
   lapses?: number;
   elapsed_days?: number;
   scheduled_days?: number;
+
+  // Phase 5.5: Focus impact
+  focusSessionStrength?: number;   // How much focus sessions have strengthened this card
+  distractionWeakening?: number;   // How much distractions have weakened this card
 }
 
 /**
- * Complete Storage Service with FSRS, Logic Training, and ALL existing methods
- * Fixes all missing method errors while maintaining FSRS integration
+ * Complete Storage Service with FSRS, Logic Training, Focus Tracking, and ALL existing methods
+ * Phase 5.5: Anti-Distraction Layer with session lifecycle management
  */
 export class StorageService {
   private static instance: StorageService;
@@ -76,6 +150,11 @@ export class StorageService {
     LOGIC_NODES: '@neurolearn/logic_nodes',
     FSRS_CARDS: '@neurolearn/fsrs_cards',
     FSRS_REVIEW_LOGS: '@neurolearn/fsrs_review_logs',
+
+    // Phase 5.5: Focus reinforcement keys
+    FOCUS_SESSIONS: '@neurolearn/focus_sessions',
+    DISTRACTION_EVENTS: '@neurolearn/distraction_events',
+    FOCUS_HEALTH_METRICS: '@neurolearn/focus_health_metrics',
 
     // Legacy keys (for backward compatibility)
     LEGACY_FLASHCARDS: 'neurolearn_flashcards',
@@ -101,7 +180,330 @@ export class StorageService {
 
   private constructor() {}
 
-  // ==================== FLASHCARD OPERATIONS ====================
+  // ==================== PHASE 5.5: FOCUS SESSION OPERATIONS ====================
+
+  /**
+   * Save a completed focus session with all distraction tracking
+   */
+  async saveFocusSession(session: FocusSession): Promise<void> {
+    try {
+      const sessions = await this.getFocusSessions();
+      sessions.push(session);
+      await this.saveFocusSessions(sessions);
+
+      // Update focus health metrics
+      await this.updateFocusHealthMetrics(session);
+
+      console.log(`💾 Saved focus session: ${session.id} (${session.distractionCount} distractions)`);
+    } catch (error: any) {
+      console.error('Error saving focus session:', error);
+      throw new Error(`Failed to save focus session: ${error.message}`);
+    }
+  }
+
+  /**
+   * Save multiple focus sessions
+   */
+  async saveFocusSessions(sessions: FocusSession[]): Promise<void> {
+    try {
+      const serializedSessions = sessions.map((session) => ({
+        ...session,
+        startTime: session.startTime.toISOString(),
+        endTime: session.endTime.toISOString(),
+        distractionEvents: session.distractionEvents.map(event => ({
+          ...event,
+          timestamp: event.timestamp.toISOString(),
+        })),
+        created: session.created.toISOString(),
+        modified: session.modified.toISOString(),
+      }));
+
+      await AsyncStorage.setItem(
+        StorageService.KEYS.FOCUS_SESSIONS,
+        JSON.stringify(serializedSessions)
+      );
+    } catch (error: any) {
+      console.error('Error saving focus sessions:', error);
+      throw new Error(`Failed to save focus sessions: ${error.message}`);
+    }
+  }
+
+  /**
+   * Load all focus sessions with distraction tracking
+   */
+  async getFocusSessions(): Promise<FocusSession[]> {
+    try {
+      const data = await AsyncStorage.getItem(StorageService.KEYS.FOCUS_SESSIONS);
+
+      if (!data) {
+        return [];
+      }
+
+      const sessions = JSON.parse(data);
+      return sessions.map((session: any) => ({
+        ...session,
+        startTime: new Date(session.startTime),
+        endTime: new Date(session.endTime),
+        distractionEvents: session.distractionEvents.map((event: any) => ({
+          ...event,
+          timestamp: new Date(event.timestamp),
+        })),
+        created: new Date(session.created),
+        modified: new Date(session.modified),
+      }));
+    } catch (error) {
+      console.error('Error loading focus sessions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get focus sessions for a specific session ID
+   */
+  async getFocusSession(sessionId: string): Promise<FocusSession | null> {
+    try {
+      const sessions = await this.getFocusSessions();
+      return sessions.find(session => session.id === sessionId) || null;
+    } catch (error) {
+      console.error('Error getting focus session:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Phase 5.5: Save a distraction event during an active focus session
+   */
+  async saveDistractionEvent(event: DistractionEvent): Promise<void> {
+    try {
+      const events = await this.getDistractionEvents();
+      events.push(event);
+
+      const serializedEvents = events.map((e) => ({
+        ...e,
+        timestamp: e.timestamp.toISOString(),
+      }));
+
+      await AsyncStorage.setItem(
+        StorageService.KEYS.DISTRACTION_EVENTS,
+        JSON.stringify(serializedEvents)
+      );
+
+      console.log(`😬 Distraction logged: ${event.reason || 'Unknown reason'}`);
+    } catch (error: any) {
+      console.error('Error saving distraction event:', error);
+      throw new Error(`Failed to save distraction event: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all distraction events (or for a specific session)
+   */
+  async getDistractionEvents(sessionId?: string): Promise<DistractionEvent[]> {
+    try {
+      const data = await AsyncStorage.getItem(StorageService.KEYS.DISTRACTION_EVENTS);
+
+      if (!data) {
+        return [];
+      }
+
+      const events = JSON.parse(data);
+      const deserializedEvents = events.map((event: any) => ({
+        ...event,
+        timestamp: new Date(event.timestamp),
+      }));
+
+      if (sessionId) {
+        return deserializedEvents.filter((event: DistractionEvent) => event.sessionId === sessionId);
+      }
+
+      return deserializedEvents;
+    } catch (error) {
+      console.error('Error loading distraction events:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Phase 5.5: Prune old focus sessions and distractions to prevent storage bloat
+   */
+  async pruneOldFocusData(olderThanDays: number = 90): Promise<void> {
+    try {
+      const cutoffDate = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+
+      // Prune old focus sessions
+      const allSessions = await this.getFocusSessions();
+      const recentSessions = allSessions.filter(session => session.endTime > cutoffDate);
+      if (recentSessions.length !== allSessions.length) {
+        await this.saveFocusSessions(recentSessions);
+        console.log(`🗑️ Pruned ${allSessions.length - recentSessions.length} old focus sessions`);
+      }
+
+      // Prune old distraction events
+      const allDistractions = await this.getDistractionEvents();
+      const recentDistractions = allDistractions.filter(event => event.timestamp > cutoffDate);
+      if (recentDistractions.length !== allDistractions.length) {
+        const serializedEvents = recentDistractions.map((e) => ({
+          ...e,
+          timestamp: e.timestamp.toISOString(),
+        }));
+        await AsyncStorage.setItem(
+          StorageService.KEYS.DISTRACTION_EVENTS,
+          JSON.stringify(serializedEvents)
+        );
+        console.log(`🗑️ Pruned ${allDistractions.length - recentDistractions.length} old distraction events`);
+      }
+    } catch (error) {
+      console.error('Error pruning old focus data:', error);
+    }
+  }
+
+  /**
+   * Phase 5.5: Update focus health metrics based on completed session
+   */
+  private async updateFocusHealthMetrics(session: FocusSession): Promise<void> {
+    try {
+      let metrics = await this.getFocusHealthMetrics();
+
+      const allSessions = await this.getFocusSessions();
+      const recentSessions = allSessions
+        .filter(s => s.endTime > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) // Last 30 days
+        .sort((a, b) => b.endTime.getTime() - a.endTime.getTime());
+
+      // Update streak
+      const today = new Date().toDateString();
+      const lastSessionToday = recentSessions.find(s =>
+        s.endTime.toDateString() === today && s.selfReportFocus >= 3
+      );
+
+      if (lastSessionToday) {
+        metrics.streakCount = this.calculateFocusStreak(recentSessions);
+      } else if (session.selfReportFocus < 3) {
+        metrics.streakCount = 0; // Reset streak on poor focus
+      }
+
+      // Update averages
+      if (recentSessions.length > 0) {
+        metrics.averageFocusRating = recentSessions.reduce((sum, s) => sum + s.selfReportFocus, 0) / recentSessions.length;
+        metrics.distractionsPerSession = recentSessions.reduce((sum, s) => sum + s.distractionCount, 0) / recentSessions.length;
+        metrics.focusEfficiency = recentSessions.reduce((sum, s) => sum + (s.durationMinutes / s.plannedDurationMinutes), 0) / recentSessions.length;
+      }
+
+      // Calculate daily/weekly focus time
+      const todaySessions = recentSessions.filter(s => s.endTime.toDateString() === today);
+      const weekSessions = recentSessions.filter(s => s.endTime > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+
+      metrics.dailyFocusTime = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+      metrics.weeklyFocusTime = weekSessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+
+      // Analyze distraction patterns
+      const allDistractionEvents = recentSessions.flatMap(s => s.distractionEvents);
+      const reasonCounts = new Map<string, number>();
+
+      allDistractionEvents.forEach(event => {
+        if (event.reason) {
+          reasonCounts.set(event.reason, (reasonCounts.get(event.reason) || 0) + 1);
+        }
+      });
+
+      metrics.commonDistractionTriggers = Array.from(reasonCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([reason]) => reason);
+
+      // Calculate neural reinforcement (positive impact of good sessions)
+      const reinforcingSessions = recentSessions.filter(s =>
+        s.selfReportFocus >= 4 && s.distractionCount <= 2
+      );
+      metrics.neuralReinforcement = reinforcingSessions.length / Math.max(1, recentSessions.length);
+
+      await this.saveFocusHealthMetrics(metrics);
+    } catch (error) {
+      console.error('Error updating focus health metrics:', error);
+    }
+  }
+
+  /**
+   * Calculate current focus streak
+   */
+  private calculateFocusStreak(sessions: FocusSession[]): number {
+    if (sessions.length === 0) return 0;
+
+    let streak = 0;
+    const today = new Date();
+
+    // Check each day backwards from today
+    for (let i = 0; i < 30; i++) { // Max 30 days
+      const checkDate = new Date(today);
+      checkDate.setDate(today.getDate() - i);
+      const dateString = checkDate.toDateString();
+
+      const daySession = sessions.find(s =>
+        s.endTime.toDateString() === dateString && s.selfReportFocus >= 3
+      );
+
+      if (daySession) {
+        streak++;
+      } else {
+        break; // Streak broken
+      }
+    }
+
+    return streak;
+  }
+
+  /**
+   * Save focus health metrics
+   */
+  async saveFocusHealthMetrics(metrics: FocusHealthMetrics): Promise<void> {
+    try {
+      await AsyncStorage.setItem(
+        StorageService.KEYS.FOCUS_HEALTH_METRICS,
+        JSON.stringify(metrics)
+      );
+    } catch (error: any) {
+      console.error('Error saving focus health metrics:', error);
+      throw new Error(`Failed to save focus health metrics: ${error.message}`);
+    }
+  }
+
+  /**
+   * Load focus health metrics
+   */
+  async getFocusHealthMetrics(): Promise<FocusHealthMetrics> {
+    try {
+      const data = await AsyncStorage.getItem(StorageService.KEYS.FOCUS_HEALTH_METRICS);
+
+      if (!data) {
+        return this.getDefaultFocusHealthMetrics();
+      }
+
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('Error loading focus health metrics:', error);
+      return this.getDefaultFocusHealthMetrics();
+    }
+  }
+
+  /**
+   * Default focus health metrics
+   */
+  private getDefaultFocusHealthMetrics(): FocusHealthMetrics {
+    return {
+      streakCount: 0,
+      averageFocusRating: 3,
+      distractionsPerSession: 0,
+      focusEfficiency: 1.0,
+      neuralReinforcement: 0,
+      dailyFocusTime: 0,
+      weeklyFocusTime: 0,
+      bestFocusTimeOfDay: 'morning',
+      commonDistractionTriggers: [],
+      mostDistractiveDays: [],
+      focusImprovement: 0,
+    };
+  }
+
+  // ==================== EXISTING METHODS (keeping all functionality) ====================
 
   /**
    * Save flashcards with complete FSRS metrics support
@@ -127,7 +529,6 @@ export class StorageService {
             : (card as EnhancedFlashcard).lastReview
             ? new Date((card as EnhancedFlashcard).lastReview!).toISOString()
             : undefined,
-
         // Preserve all FSRS metrics if they exist
         stability: (card as EnhancedFlashcard).stability,
         fsrsDifficulty: (card as EnhancedFlashcard).fsrsDifficulty,
@@ -135,6 +536,9 @@ export class StorageService {
         lapses: (card as EnhancedFlashcard).lapses || 0,
         elapsed_days: (card as EnhancedFlashcard).elapsed_days || 0,
         scheduled_days: (card as EnhancedFlashcard).scheduled_days || 1,
+        // Phase 5.5: Focus impact metrics
+        focusSessionStrength: (card as EnhancedFlashcard).focusSessionStrength || 0,
+        distractionWeakening: (card as EnhancedFlashcard).distractionWeakening || 0,
       }));
 
       // Save to both new and legacy locations for compatibility
@@ -174,7 +578,6 @@ export class StorageService {
       }
 
       const cards = JSON.parse(data);
-
       // Deserialize dates and ensure FSRS compatibility
       return cards.map((card: any) => ({
         ...card,
@@ -191,6 +594,9 @@ export class StorageService {
         lapses: card.lapses || 0,
         elapsed_days: card.elapsed_days || 0,
         scheduled_days: card.scheduled_days || 1,
+        // Phase 5.5: Focus impact metrics
+        focusSessionStrength: card.focusSessionStrength || 0,
+        distractionWeakening: card.distractionWeakening || 0,
       }));
     } catch (error) {
       console.error('Error loading flashcards:', error);
@@ -219,6 +625,9 @@ export class StorageService {
         lapses: 0,
         elapsed_days: 0,
         scheduled_days: 1,
+        // Phase 5.5: Focus defaults
+        focusSessionStrength: 0,
+        distractionWeakening: 0,
       },
       {
         id: '2',
@@ -238,6 +647,9 @@ export class StorageService {
         lapses: 0,
         elapsed_days: 0,
         scheduled_days: 1,
+        // Phase 5.5: Focus defaults
+        focusSessionStrength: 0,
+        distractionWeakening: 0,
       },
       {
         id: '3',
@@ -257,11 +669,138 @@ export class StorageService {
         lapses: 0,
         elapsed_days: 0,
         scheduled_days: 1,
+        // Phase 5.5: Focus defaults
+        focusSessionStrength: 0,
+        distractionWeakening: 0,
       },
     ];
   }
 
-  // ==================== STUDY SESSIONS ====================
+  // ==================== LOGIC NODES (Phase 4 + 5.5 Enhancement) ====================
+
+  async saveLogicNodes(nodes: LogicNode[]): Promise<void> {
+    try {
+      const serializedNodes = nodes.map((node) => ({
+        ...node,
+        nextReviewDate: node.nextReviewDate.toISOString(),
+        lastAccessed: node.lastAccessed.toISOString(),
+        lastReview: node.lastReview ? node.lastReview.toISOString() : undefined,
+        created: node.created.toISOString(),
+        modified: node.modified.toISOString(),
+      }));
+
+      await AsyncStorage.setItem(
+        StorageService.KEYS.LOGIC_NODES,
+        JSON.stringify(serializedNodes)
+      );
+
+      console.log(`💾 Saved ${nodes.length} logic nodes`);
+    } catch (error: any) {
+      console.error('Error saving logic nodes:', error);
+      throw new Error(`Failed to save logic nodes: ${error.message}`);
+    }
+  }
+
+  async getLogicNodes(): Promise<LogicNode[]> {
+    try {
+      const data = await AsyncStorage.getItem(StorageService.KEYS.LOGIC_NODES);
+
+      if (!data) {
+        return [];
+      }
+
+      const nodes = JSON.parse(data);
+      return nodes.map((node: any) => ({
+        ...node,
+        nextReviewDate: new Date(node.nextReviewDate),
+        lastAccessed: new Date(node.lastAccessed),
+        lastReview: node.lastReview ? new Date(node.lastReview) : undefined,
+        created: new Date(node.created),
+        modified: new Date(node.modified),
+        // Ensure Phase 5.5 fields have defaults
+        focusSessionStrength: node.focusSessionStrength || 0,
+        distractionPenalty: node.distractionPenalty || 0,
+      }));
+    } catch (error) {
+      console.error('Error loading logic nodes:', error);
+      return [];
+    }
+  }
+
+  async addLogicNode(nodeData: Partial<LogicNode>): Promise<LogicNode> {
+    try {
+      const now = new Date();
+      const newNode: LogicNode = {
+        id: `logic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        question: nodeData.question || '',
+        premise1: nodeData.premise1 || '',
+        premise2: nodeData.premise2 || '',
+        conclusion: nodeData.conclusion || '',
+        type: nodeData.type || 'deductive',
+        domain: nodeData.domain || 'general',
+        difficulty: nodeData.difficulty || 3,
+
+        // FSRS defaults
+        easeFactor: 2.5,
+        interval: 1,
+        repetitions: 0,
+        nextReviewDate: now,
+        lastAccessed: now,
+
+        // Performance tracking
+        totalAttempts: 0,
+        correctAttempts: 0,
+        accessCount: 0,
+
+        // FSRS-specific metrics
+        stability: undefined,
+        fsrsDifficulty: undefined,
+        lastReview: undefined,
+        state: 0, // CardState.New
+
+        // Phase 5.5: Focus impact
+        focusSessionStrength: 0,
+        distractionPenalty: 0,
+
+        created: now,
+        modified: now,
+      };
+
+      const existingNodes = await this.getLogicNodes();
+      existingNodes.push(newNode);
+      await this.saveLogicNodes(existingNodes);
+
+      return newNode;
+    } catch (error: any) {
+      console.error('Error adding logic node:', error);
+      throw new Error(`Failed to add logic node: ${error.message}`);
+    }
+  }
+
+  async updateLogicNode(nodeId: string, updates: Partial<LogicNode>): Promise<LogicNode | null> {
+    try {
+      const nodes = await this.getLogicNodes();
+      const nodeIndex = nodes.findIndex(node => node.id === nodeId);
+
+      if (nodeIndex === -1) {
+        return null;
+      }
+
+      nodes[nodeIndex] = {
+        ...nodes[nodeIndex],
+        ...updates,
+        modified: new Date(),
+      };
+
+      await this.saveLogicNodes(nodes);
+      return nodes[nodeIndex];
+    } catch (error: any) {
+      console.error('Error updating logic node:', error);
+      throw new Error(`Failed to update logic node: ${error.message}`);
+    }
+  }
+
+  // ==================== ALL OTHER EXISTING METHODS (unchanged) ====================
 
   async saveStudySession(session: StudySession): Promise<void> {
     try {
@@ -320,7 +859,6 @@ export class StorageService {
       }
 
       const sessions = JSON.parse(data);
-
       return sessions.map((session: any) => ({
         ...session,
         startTime: new Date(session.startTime),
@@ -446,7 +984,6 @@ export class StorageService {
       }
 
       const tasks = JSON.parse(data);
-
       return tasks.map((task: any) => ({
         ...task,
         created: new Date(task.created),
@@ -499,6 +1036,7 @@ export class StorageService {
     }
   }
 
+
   private getDefaultSettings(): Settings {
     return {
       theme: 'dark',
@@ -522,10 +1060,8 @@ export class StorageService {
       const serializedPalaces = palaces.map((palace) => ({
         ...palace,
         created: palace.created.toISOString(),
-        lastStudied: palace.lastStudied.toISOString(),
       }));
 
-      // Save to both locations for compatibility
       await Promise.all([
         AsyncStorage.setItem(
           StorageService.KEYS.MEMORY_PALACES,
@@ -537,18 +1073,13 @@ export class StorageService {
         ),
       ]);
     } catch (error: any) {
-      console.error('Error saving Memory Palace:', error);
-      if ((error as Error).message) {
-        throw new Error(
-          `Failed to save Memory Palace: ${(error as Error).message}`,
-        );
-      }
+      console.error('Error saving memory palaces:', error);
+      throw new Error(`Failed to save memory palaces: ${error.message}`);
     }
   }
 
   async getMemoryPalaces(): Promise<MemoryPalace[]> {
     try {
-      // Try new location first, then legacy
       let data = await AsyncStorage.getItem(StorageService.KEYS.MEMORY_PALACES);
       if (!data) {
         data = await AsyncStorage.getItem(StorageService.KEYS.LEGACY_PALACES);
@@ -559,11 +1090,9 @@ export class StorageService {
       }
 
       const palaces = JSON.parse(data);
-
       return palaces.map((palace: any) => ({
         ...palace,
         created: new Date(palace.created),
-        lastStudied: new Date(palace.lastStudied),
       }));
     } catch (error) {
       console.error('Error loading memory palaces:', error);
@@ -571,173 +1100,115 @@ export class StorageService {
     }
   }
 
-  // ==================== LOGIC TRAINING (NEW FSRS Feature) ====================
+  // ==================== EXPORT/IMPORT OPERATIONS ====================
 
-  async saveLogicNodes(logicNodes: LogicNode[]): Promise<void> {
+  async exportAllData(): Promise<string> {
     try {
-      const serializedNodes = logicNodes.map((node) => ({
-        ...node,
-        nextReviewDate: node.nextReviewDate.toISOString(),
-        lastAccessed: node.lastAccessed.toISOString(),
-        created: node.created.toISOString(),
-        modified: node.modified.toISOString(),
-        lastReview: node.lastReview ? node.lastReview.toISOString() : undefined,
-      }));
+      const [
+        flashcards,
+        sessions,
+        progress,
+        tasks,
+        settings,
+        palaces,
+        logicNodes,
+        focusSessions,
+        distractionEvents,
+        focusHealthMetrics,
+      ] = await Promise.all([
+        this.getFlashcards(),
+        this.getStudySessions(),
+        this.getProgressData(),
+        this.getTasks(),
+        this.getSettings(),
+        this.getMemoryPalaces(),
+        this.getLogicNodes(),
+        this.getFocusSessions(),
+        this.getDistractionEvents(),
+        this.getFocusHealthMetrics(),
+      ]);
 
-      await AsyncStorage.setItem(
-        StorageService.KEYS.LOGIC_NODES,
-        JSON.stringify(serializedNodes),
-      );
-
-      console.log(`💾 Saved ${logicNodes.length} logic training nodes`);
-    } catch (error: any) {
-      console.error('Error saving Logic Node:', error);
-      if ((error as Error).message) {
-        throw new Error(
-          `Failed to save Logic Node: ${(error as Error).message}`,
-        );
-      }
-    }
-  }
-
-  async getLogicNodes(): Promise<LogicNode[]> {
-    try {
-      const data = await AsyncStorage.getItem(StorageService.KEYS.LOGIC_NODES);
-
-      if (!data) {
-        return [];
-      }
-
-      const nodes = JSON.parse(data);
-
-      return nodes.map((node: any) => ({
-        ...node,
-        nextReviewDate: new Date(node.nextReviewDate),
-        lastAccessed: new Date(node.lastAccessed),
-        created: new Date(node.created),
-        modified: new Date(node.modified),
-        lastReview: node.lastReview ? new Date(node.lastReview) : undefined,
-      }));
-    } catch (error) {
-      console.error('Error loading logic nodes:', error);
-      return [];
-    }
-  }
-
-  async addLogicNode(logicData: {
-    question: string;
-    premise1: string;
-    premise2: string;
-    conclusion: string;
-    type: 'deductive' | 'inductive' | 'abductive';
-    domain: 'programming' | 'math' | 'english' | 'general';
-    difficulty: 1 | 2 | 3 | 4 | 5;
-  }): Promise<LogicNode> {
-    try {
-      const existingNodes = await this.getLogicNodes();
-      const currentDate = new Date();
-
-      const newNode: LogicNode = {
-        id: `logic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        ...logicData,
-
-        // FSRS initialization
-        easeFactor: 2.5,
-        interval: 1,
-        repetitions: 0,
-        nextReviewDate: currentDate,
-        lastAccessed: currentDate,
-
-        // Performance tracking
-        totalAttempts: 0,
-        correctAttempts: 0,
-        accessCount: 0,
-
-        // FSRS-specific
-        stability: undefined,
-        fsrsDifficulty: undefined,
-        lastReview: undefined,
-        state: 0,
-
-        created: currentDate,
-        modified: currentDate,
+      const exportData = {
+        flashcards,
+        sessions,
+        progress,
+        tasks,
+        settings,
+        palaces,
+        logicNodes,
+        // Phase 5.5: Focus reinforcement data
+        focusSessions,
+        distractionEvents,
+        focusHealthMetrics,
+        exportDate: new Date().toISOString(),
+        version: '2.1.0', // Updated version for Phase 5.5
       };
 
-      const updatedNodes = [...existingNodes, newNode];
-      await this.saveLogicNodes(updatedNodes);
-
-      console.log(
-        `✅ Created new logic node: ${newNode.question.substring(0, 50)}...`,
-      );
-      return newNode;
+      return JSON.stringify(exportData, null, 2);
     } catch (error: any) {
-      console.error('Error Adding Logic Node:', error);
+      console.error('Error Exporting Data:', error);
       throw new Error(
-        `Failed to Add Logic Node: ${error?.message || 'Unknown error'}`,
+        `Failed to Export Data: ${error?.message || 'Unknown error'}`,
       );
     }
   }
 
-  async updateLogicNode(
-    nodeId: string,
-    updates: Partial<LogicNode>,
-  ): Promise<void> {
+  async getStorageInfo(): Promise<{
+    keys: string[];
+    estimatedSize: number;
+  }> {
     try {
-      const existingNodes = await this.getLogicNodes();
-      const nodeIndex = existingNodes.findIndex((node) => node.id === nodeId);
+      const keys = await AsyncStorage.getAllKeys();
+      const neuroLearnKeys = keys.filter(
+        (key) =>
+          key.startsWith('@neurolearn/') || key.startsWith('neurolearn_'),
+      );
 
-      if (nodeIndex === -1) {
-        throw new Error(`Logic node not found: ${nodeId}`);
+      let estimatedSize = 0;
+      for (const key of neuroLearnKeys) {
+        const data = await AsyncStorage.getItem(key);
+        if (data) {
+          estimatedSize += data.length;
+        }
       }
 
-      existingNodes[nodeIndex] = {
-        ...existingNodes[nodeIndex],
-        ...updates,
-        modified: new Date(),
+      return {
+        keys: neuroLearnKeys,
+        estimatedSize,
       };
-
-      await this.saveLogicNodes(existingNodes);
-      console.log(`📝 Updated logic node: ${nodeId}`);
-    } catch (error: any) {
-      console.error('Error Updating Logic Node:', error);
-      if ((error as Error).message) {
-        throw new Error(
-          `Failed to Update Logic Node: ${(error as Error).message}`,
-        );
-      }
+    } catch (error) {
+      console.error('Error getting storage info:', error);
+      return { keys: [], estimatedSize: 0 };
     }
   }
 
-  // ==================== FSRS-SPECIFIC OPERATIONS ====================
+  // ==================== FSRS INTEGRATION SUPPORT ====================
 
-  async saveFSRSCards(fsrsCards: FSRSCard[]): Promise<void> {
+  async saveFSRSCards(cards: FSRSCard[]): Promise<void> {
     try {
-      const serializedCards = fsrsCards.map((card) => ({
+      const serializedCards = cards.map((card) => ({
         ...card,
         due: card.due.toISOString(),
-        last_review: card.last_review
-          ? card.last_review.toISOString()
-          : undefined,
+        last_review: card.last_review ? card.last_review.toISOString() : undefined,
       }));
 
       await AsyncStorage.setItem(
         StorageService.KEYS.FSRS_CARDS,
-        JSON.stringify(serializedCards),
+        JSON.stringify(serializedCards)
       );
     } catch (error: any) {
-      console.error('Error saving FSRS Card:', error);
-      if ((error as Error).message) {
-        throw new Error(
-          `Failed to save FSRS Card: ${(error as Error).message}`,
-        );
-      }
+      console.error('Error saving FSRS cards:', error);
+      throw new Error(`Failed to save FSRS cards: ${error.message}`);
     }
   }
 
   async getFSRSCards(): Promise<FSRSCard[]> {
     try {
       const data = await AsyncStorage.getItem(StorageService.KEYS.FSRS_CARDS);
-      if (!data) return [];
+
+      if (!data) {
+        return [];
+      }
 
       const cards = JSON.parse(data);
       return cards.map((card: any) => ({
@@ -751,37 +1222,30 @@ export class StorageService {
     }
   }
 
-  async saveFSRSReviewLogs(reviewLogs: FSRSReviewLog[]): Promise<void> {
+  async saveFSRSReviewLogs(logs: FSRSReviewLog[]): Promise<void> {
     try {
-      const existingLogs = await this.getFSRSReviewLogs();
-      const allLogs = [...existingLogs, ...reviewLogs];
-      const recentLogs = allLogs.slice(-10000); // Keep last 10k logs
-
-      const serializedLogs = recentLogs.map((log) => ({
+      const serializedLogs = logs.map((log) => ({
         ...log,
         review: log.review.toISOString(),
       }));
 
       await AsyncStorage.setItem(
         StorageService.KEYS.FSRS_REVIEW_LOGS,
-        JSON.stringify(serializedLogs),
+        JSON.stringify(serializedLogs)
       );
     } catch (error: any) {
-      console.error('Error saving FSRS Review Log:', error);
-      if ((error as Error).message) {
-        throw new Error(
-          `Failed to save FSRS Review Log: ${(error as Error).message}`,
-        );
-      }
+      console.error('Error saving FSRS review logs:', error);
+      throw new Error(`Failed to save FSRS review logs: ${error.message}`);
     }
   }
 
   async getFSRSReviewLogs(): Promise<FSRSReviewLog[]> {
     try {
-      const data = await AsyncStorage.getItem(
-        StorageService.KEYS.FSRS_REVIEW_LOGS,
-      );
-      if (!data) return [];
+      const data = await AsyncStorage.getItem(StorageService.KEYS.FSRS_REVIEW_LOGS);
+
+      if (!data) {
+        return [];
+      }
 
       const logs = JSON.parse(data);
       return logs.map((log: any) => ({
@@ -949,8 +1413,6 @@ export class StorageService {
     return streakDays;
   }
 
-  // ==================== UTILITY METHODS ====================
-
   async clearAllData(): Promise<void> {
     try {
       const keys = Object.values(StorageService.KEYS);
@@ -958,81 +1420,47 @@ export class StorageService {
       console.log('🗑️ All data cleared');
     } catch (error: any) {
       console.error('Error Clearing Data:', error);
-      if ((error as Error).message) {
-        throw new Error(`Failed to Clear Data: ${(error as Error).message}`);
-      }
+      throw new Error(`Failed to Clear Data: ${error?.message || 'Unknown error'}`);
     }
   }
 
-  async exportAllData(): Promise<string> {
+  async calculateCurrentStudyStreak(): Promise<number> {
     try {
-      const [
-        flashcards,
-        sessions,
-        progress,
-        tasks,
-        settings,
-        palaces,
-        logicNodes,
-      ] = await Promise.all([
-        this.getFlashcards(),
-        this.getStudySessions(),
-        this.getProgressData(),
-        this.getTasks(),
-        this.getSettings(),
-        this.getMemoryPalaces(),
-        this.getLogicNodes(),
-      ]);
+      const sessions = await this.getStudySessions();
+      if (sessions.length === 0) return 0;
 
-      const exportData = {
-        flashcards,
-        sessions,
-        progress,
-        tasks,
-        settings,
-        palaces,
-        logicNodes,
-        exportDate: new Date().toISOString(),
-        version: '2.0.0',
-      };
-
-      return JSON.stringify(exportData, null, 2);
-    } catch (error: any) {
-      console.error('Error Exporting Data:', error);
-      // Fix: Always throw in catch block
-      throw new Error(
-        `Failed to Export Data: ${error?.message || 'Unknown error'}`,
-      );
-    }
-  }
-
-  async getStorageInfo(): Promise<{
-    keys: string[];
-    estimatedSize: number;
-  }> {
-    try {
-      const keys = await AsyncStorage.getAllKeys();
-      const neuroLearnKeys = keys.filter(
-        (key) =>
-          key.startsWith('@neurolearn/') || key.startsWith('neurolearn_'),
+      const sortedSessions = sessions.sort(
+        (a, b) => b.startTime.getTime() - a.startTime.getTime(),
       );
 
-      let estimatedSize = 0;
-      for (const key of neuroLearnKeys) {
-        const data = await AsyncStorage.getItem(key);
-        if (data) {
-          estimatedSize += data.length;
+      let streak = 0;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Check each day backwards from today
+      for (let i = 0; i < 365; i++) { // Max 365 days
+        const checkDate = new Date(today);
+        checkDate.setDate(today.getDate() - i);
+        const dateString = checkDate.toDateString();
+
+        const daySession = sortedSessions.find(s =>
+          s.startTime.toDateString() === dateString && s.completed
+        );
+
+        if (daySession) {
+          streak++;
+        } else {
+          break; // Streak broken
         }
       }
 
-      return {
-        keys: neuroLearnKeys,
-        estimatedSize,
-      };
+      return streak;
     } catch (error) {
-      console.error('Error getting storage info:', error);
-      return { keys: [], estimatedSize: 0 };
+      console.error('Error calculating study streak:', error);
+      return 0;
     }
   }
+
 }
 
+export default StorageService;

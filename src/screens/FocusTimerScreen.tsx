@@ -19,6 +19,7 @@ import { colors, spacing, borderRadius, typography } from '../theme/colors';
 import { HamburgerMenu, AppHeader } from '../components/Navigation';
 import { FocusMode, Timer } from '../types';
 import { ThemeType } from '../theme/colors';
+import { FocusTimerService } from '../services/FocusTimerService';
 
 interface FocusTimerScreenProps {
   theme: ThemeType;
@@ -86,6 +87,14 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
   const [timer, setTimer] = useState<Timer | null>(null);
   const [customDuration, setCustomDuration] = useState<string>('');
   const [showCustomModal, setShowCustomModal] = useState<boolean>(false);
+  const [showDistractionModal, setShowDistractionModal] = useState<boolean>(false);
+  const [distractionReason, setDistractionReason] = useState<string>('Phone notification');
+  const [distractionSeverity, setDistractionSeverity] = useState<1 | 2 | 3 | 4 | 5>(3);
+  const [distractionTriggerType, setDistractionTriggerType] = useState<'internal' | 'external' | 'notification' | 'unknown'>('external');
+
+  // Additional picker modal states for distraction modal
+  const [showReasonPicker, setShowReasonPicker] = useState<boolean>(false);
+  const [showTriggerTypePicker, setShowTriggerTypePicker] = useState<boolean>(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const themeColors = colors[theme];
@@ -231,6 +240,17 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
       .padStart(2, '0')}`;
   };
 
+  const handleLogDistraction = () => {
+    const focusService = FocusTimerService.getInstance();
+    focusService.logDistraction({
+      reason: distractionReason,
+      severity: distractionSeverity,
+      triggerType: distractionTriggerType,
+    });
+    setShowDistractionModal(false);
+    Alert.alert('Distraction Logged', 'Your distraction has been recorded.');
+  };
+
   if (timer) {
     return (
       <ScreenContainer theme={theme}>
@@ -299,6 +319,18 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
             />
           </View>
 
+          {/* Distraction Button */}
+          <View style={styles.distractionContainer}>
+            <Button
+              title="😬 Distracted"
+              onPress={() => setShowDistractionModal(true)}
+              variant="secondary"
+              size="medium"
+              theme={theme}
+              style={styles.distractionButton}
+            />
+          </View>
+
           {/* Session Info */}
           <GlassCard theme={theme} style={styles.infoCard}>
             <Text style={[styles.infoTitle, { color: themeColors.text }]}>
@@ -326,6 +358,248 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
             </Text>
           </GlassCard>
         </ScrollView>
+
+        {/* Distraction Modal */}
+        <Modal
+          visible={showDistractionModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowDistractionModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <GlassCard theme={theme} style={styles.modalContent}>
+              <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+                Log Distraction
+              </Text>
+              <Text
+                style={[
+                  styles.modalSubtitle,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
+                Help us understand what distracted you
+              </Text>
+
+              <View style={distractionModalStyles.distractionOptions}>
+                <Text style={[distractionModalStyles.optionLabel, { color: themeColors.text }]}>
+                  Reason:
+                </Text>
+                <TouchableOpacity
+                  style={[styles.inputButton, { borderColor: themeColors.border }]}
+                  onPress={() => setShowReasonPicker(true)}
+                >
+                  <Text style={[styles.inputButtonText, { color: themeColors.text }]}>
+                    {distractionReason}
+                  </Text>
+                </TouchableOpacity>
+
+                <Text style={[distractionModalStyles.optionLabel, { color: themeColors.text }]}>
+                  Severity (1-5):
+                </Text>
+                <View style={distractionModalStyles.severityButtons}>
+                  {[1, 2, 3, 4, 5].map((severity) => (
+                    <TouchableOpacity
+                      key={severity}
+                      style={[
+                        distractionModalStyles.severityButton,
+                        {
+                          backgroundColor:
+                            distractionSeverity === severity
+                              ? themeColors.primary
+                              : 'rgba(255, 255, 255, 0.1)',
+                        },
+                      ]}
+                      onPress={() => setDistractionSeverity(severity as 1 | 2 | 3 | 4 | 5)}
+                    >
+                      <Text
+                        style={[
+                          distractionModalStyles.severityText,
+                          {
+                            color:
+                              distractionSeverity === severity
+                                ? themeColors.surface
+                                : themeColors.text,
+                          },
+                        ]}
+                      >
+                        {severity}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={[distractionModalStyles.optionLabel, { color: themeColors.text }]}>
+                  Trigger Type:
+                </Text>
+                <TouchableOpacity
+                  style={[styles.inputButton, { borderColor: themeColors.border }]}
+                  onPress={() => setShowTriggerTypePicker(true)}
+                >
+                  <Text style={[styles.inputButtonText, { color: themeColors.text }]}>
+                    {distractionTriggerType.charAt(0).toUpperCase() + distractionTriggerType.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+        <View style={styles.modalButtons}>
+          <Button
+            title="Cancel"
+            onPress={() => setShowDistractionModal(false)}
+            variant="ghost"
+            theme={theme}
+            style={styles.modalButton}
+          />
+          <Button
+            title="Log Distraction"
+            onPress={handleLogDistraction}
+            variant="primary"
+            theme={theme}
+            style={styles.modalButton}
+          />
+        </View>
+      </GlassCard>
+    </View>
+  </Modal>
+
+  {/* Reason Picker Modal */}
+  <Modal
+    visible={showReasonPicker}
+    transparent={true}
+    animationType="fade"
+    onRequestClose={() => setShowReasonPicker(false)}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={styles.pickerModalContent}>
+        <GlassCard theme={theme} style={styles.pickerModalCard}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+              Select Reason
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowReasonPicker(false)}
+              style={styles.closeButton}
+            >
+              <Text
+                style={[styles.closeButtonText, { color: themeColors.text }]}
+              >
+                ✕
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalScrollContent}>
+            {[
+              'Phone notification',
+              'Social media',
+              'Email',
+              'Colleague interruption',
+              'Personal thoughts',
+              'Noise',
+              'Hunger/Thirst',
+              'Other'
+            ].map((reason) => (
+              <TouchableOpacity
+                key={reason}
+                onPress={() => {
+                  setDistractionReason(reason);
+                  setShowReasonPicker(false);
+                }}
+                style={styles.pickerOption}
+              >
+                <GlassCard
+                  theme={theme}
+                  style={[
+                    styles.pickerOptionCard,
+                    distractionReason === reason && [
+                      styles.pickerOptionSelected,
+                      { borderColor: themeColors.primary },
+                    ],
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.pickerOptionText,
+                      { color: themeColors.text },
+                    ]}
+                  >
+                    {reason}
+                  </Text>
+                </GlassCard>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </GlassCard>
+      </View>
+    </View>
+  </Modal>
+
+  {/* Trigger Type Picker Modal */}
+  <Modal
+    visible={showTriggerTypePicker}
+    transparent={true}
+    animationType="fade"
+    onRequestClose={() => setShowTriggerTypePicker(false)}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={styles.pickerModalContent}>
+        <GlassCard theme={theme} style={styles.pickerModalCard}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+              Select Trigger Type
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowTriggerTypePicker(false)}
+              style={styles.closeButton}
+            >
+              <Text
+                style={[styles.closeButtonText, { color: themeColors.text }]}
+              >
+                ✕
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalScrollContent}>
+            {[
+              'internal',
+              'external',
+              'notification',
+              'unknown'
+            ].map((type) => (
+              <TouchableOpacity
+                key={type}
+                onPress={() => {
+                  setDistractionTriggerType(type as 'internal' | 'external' | 'notification' | 'unknown');
+                  setShowTriggerTypePicker(false);
+                }}
+                style={styles.pickerOption}
+              >
+                <GlassCard
+                  theme={theme}
+                  style={[
+                    styles.pickerOptionCard,
+                    distractionTriggerType === type && [
+                      styles.pickerOptionSelected,
+                      { borderColor: themeColors.primary },
+                    ],
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.pickerOptionText,
+                      { color: themeColors.text },
+                    ]}
+                  >
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </Text>
+                </GlassCard>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </GlassCard>
+      </View>
+    </View>
+  </Modal>
 
         <HamburgerMenu
           visible={menuVisible}
@@ -547,6 +821,13 @@ const styles = StyleSheet.create({
   controlButton: {
     flex: 0.48,
   },
+  distractionContainer: {
+    alignItems: 'center',
+    marginVertical: spacing.md,
+  },
+  distractionButton: {
+    minWidth: 120,
+  },
   infoCard: {
     marginTop: spacing.lg,
   },
@@ -604,6 +885,86 @@ const styles = StyleSheet.create({
   },
   modalButton: {
     flex: 0.48,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.light.border,
+  },
+  closeButton: {
+    padding: spacing.sm,
+  },
+  closeButtonText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  modalScrollContent: {
+    padding: spacing.md,
+  },
+  pickerOption: {
+    marginBottom: spacing.sm,
+  },
+  pickerOptionCard: {
+    padding: spacing.md,
+  },
+  pickerOptionSelected: {
+    borderWidth: 2,
+  },
+  pickerOptionText: {
+    ...typography.body,
+  },
+  inputButton: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.xl,
+  },
+  inputButtonText: {
+    fontSize: 16,
+  },
+  inputButtonArrow: {
+    fontSize: 16,
+  },
+  pickerModalContent: {
+    width: '90%',
+    maxHeight: '70%',
+  },
+  pickerModalCard: {
+    maxHeight: '100%',
+  },
+});
+
+const distractionModalStyles = StyleSheet.create({
+  distractionOptions: {
+    marginBottom: spacing.xl,
+  },
+  optionLabel: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+    marginBottom: spacing.sm,
+  },
+  severityButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  severityButton: {
+    flex: 1,
+    alignItems: 'center',
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginHorizontal: 2,
+  },
+  severityText: {
+    ...typography.bodySmall,
+    fontWeight: '600',
   },
 });
 
