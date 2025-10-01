@@ -20,6 +20,8 @@ import { HamburgerMenu, AppHeader } from '../components/Navigation';
 import { FocusMode, Timer } from '../types';
 import { ThemeType } from '../theme/colors';
 import { FocusTimerService } from '../services/FocusTimerService';
+import { useSoundscape } from '../contexts/SoundscapeContext';
+import { neuralIntegrationService } from '../services/NeuralIntegrationService';
 
 interface FocusTimerScreenProps {
   theme: ThemeType;
@@ -98,6 +100,12 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const themeColors = colors[theme];
+  const soundscape = useSoundscape();
+
+  // Notify neural integration of screen change
+  useEffect(() => {
+    neuralIntegrationService.onScreenChange('focus');
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -183,14 +191,25 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
     setCustomDuration('');
   };
 
-  const handleStartPause = () => {
+  const handleStartPause = async () => {
     if (!timer) return;
 
+    const wasRunning = timer.isRunning;
+    
     setTimer((prev) => ({
       ...prev!,
       isRunning: !prev!.isRunning,
       isPaused: prev!.isRunning,
     }));
+
+    // Start optimal soundscape when timer starts
+    if (!wasRunning && soundscape.isInitialized) {
+      const optimalPreset = getOptimalPresetForMode(timer.mode.id);
+      await soundscape.startPreset(optimalPreset, {
+        cognitiveLoad: 0.7,
+        fadeIn: true,
+      });
+    }
   };
 
   const handleStop = () => {
@@ -202,7 +221,18 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
         {
           text: 'Stop',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            // Record performance if session was running
+            if (timer && timer.isRunning) {
+              const completionRate = (timer.totalTime - timer.timeLeft) / timer.totalTime;
+              await soundscape.recordPerformance(completionRate);
+            }
+            
+            // Transition to calm state
+            if (soundscape.isActive) {
+              await soundscape.startPreset('calm_readiness', { fadeIn: true });
+            }
+            
             setTimer(null);
             setSelectedMode(null);
           },
@@ -211,10 +241,18 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
     );
   };
 
-  const handleTimerComplete = () => {
+  const handleTimerComplete = async () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
+    }
+
+    // Record successful completion
+    await soundscape.recordPerformance(1.0); // Perfect completion
+    
+    // Transition to calm state
+    if (soundscape.isActive) {
+      await soundscape.startPreset('calm_readiness', { fadeIn: true });
     }
 
     Alert.alert(
@@ -240,13 +278,34 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
       .padStart(2, '0')}`;
   };
 
-  const handleLogDistraction = () => {
+  const getOptimalPresetForMode = (modeId: string) => {
+    switch (modeId) {
+      case 'pomodoro':
+      case 'deep-work':
+        return 'deep_focus';
+      case 'memory-palace':
+        return 'visualization';
+      case 'ultralearning':
+        return 'reasoning_boost';
+      case 'review':
+        return 'memory_flow';
+      default:
+        return 'deep_focus';
+    }
+  };
+
+  const handleLogDistraction = async () => {
     const focusService = FocusTimerService.getInstance();
     focusService.logDistraction({
       reason: distractionReason,
       severity: distractionSeverity,
       triggerType: distractionTriggerType,
     });
+    
+    // Adjust cognitive load based on distraction severity
+    const loadIncrease = distractionSeverity * 0.1;
+    soundscape.updateCognitiveLoad(Math.min(1, soundscape.cognitiveLoad + loadIncrease));
+    
     setShowDistractionModal(false);
     Alert.alert('Distraction Logged', 'Your distraction has been recorded.');
   };

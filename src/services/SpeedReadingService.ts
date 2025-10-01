@@ -9,7 +9,10 @@
  * - Real-time comprehension tracking integration
  */
 
-import { EventEmitter } from 'events';
+import EventEmitter from 'eventemitter3';
+import { StorageService } from './StorageService';
+import { MindMapGenerator } from './MindMapGeneratorService';
+import { aiCoachingService } from './AICoachingService';
 
 /**
  * Phase 6: Reading Session Interface for Neural Map Integration
@@ -845,6 +848,46 @@ export class SpeedReadingService extends EventEmitter {
       // Create source links for neural map
       this.activeSession.sourceLinks = this.createSourceLinks();
 
+      // Phase 6 Integration: Persist and update neural map
+      const storage = StorageService.getInstance();
+      const mind = MindMapGenerator.getInstance();
+
+      // Generate additional neural links (if any) and persist
+      const generatedLinks = await mind.generateNeuralLinksFromReadingSession(this.activeSession);
+      const allLinks = [...(this.activeSession.sourceLinks || []), ...generatedLinks];
+      this.activeSession.sourceLinks = allLinks;
+      await storage.saveSourceLinks(allLinks);
+
+      // Persist session
+      await storage.saveReadingSession(this.activeSession);
+
+      // Knowledge health update based on efficiency
+      const conceptExtractionRate = (this.processedText?.conceptKeywords.length || 0) / Math.max(1, this.activeSession.wordCount);
+      const efficiency = this.calculateReadingEfficiency(this.activeSession);
+      const healthDelta = mind.updateKnowledgeHealthWithReadingEfficiency(
+        this.activeSession.wpmAchieved,
+        this.activeSession.comprehensionScore || efficiency, // fallback
+        conceptExtractionRate,
+      );
+      this.emit('knowledgeHealthUpdated', { delta: healthDelta, efficiency });
+
+      // Optional: Generate AI comprehension quiz
+      try {
+        const quiz = await aiCoachingService.generateComprehensionQuiz(
+          this.activeSession.textSource,
+          this.activeSession.id,
+          {
+            questionCount: 5,
+            difficulty: 'adaptive',
+            questionTypes: ['factual', 'inference', 'vocabulary'],
+            adaptToPreviousPerformance: true,
+          }
+        );
+        this.emit('quizReady', quiz);
+      } catch (e) {
+        console.warn('AI quiz generation skipped or failed:', e);
+      }
+
       const completedSession = { ...this.activeSession };
       this.activeSession = null;
 
@@ -970,6 +1013,69 @@ export class SpeedReadingService extends EventEmitter {
   }
 
   /**
+   * Generate neural links from reading session for mind map integration
+   */
+  public async generateNeuralLinksFromReadingSession(session: ReadingSession): Promise<SourceLink[]> {
+    try {
+      const links: SourceLink[] = [];
+      
+      // Create source links for each concept identified
+      session.conceptsIdentified.forEach(concept => {
+        links.push({
+          type: 'source_read',
+          sessionId: session.id,
+          textSource: session.textSource,
+          conceptId: concept,
+          relevanceScore: 0.8,
+          extractedAt: new Date(),
+        });
+      });
+      
+      console.log(`🔗 Generated ${links.length} neural links from reading session`);
+      return links;
+    } catch (error) {
+      console.error('Error generating neural links:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Update knowledge health based on reading efficiency
+   */
+  public updateKnowledgeHealthWithReadingEfficiency(
+    wpmAchieved: number,
+    comprehensionScore: number,
+    conceptExtractionRate: number
+  ): number {
+    try {
+      // Calculate health delta based on reading performance
+      let healthDelta = 0;
+      
+      // WPM contribution (higher speed = better health)
+      if (wpmAchieved > 300) {
+        healthDelta += 0.1;
+      } else if (wpmAchieved > 200) {
+        healthDelta += 0.05;
+      }
+      
+      // Comprehension contribution
+      healthDelta += comprehensionScore * 0.2;
+      
+      // Concept extraction contribution
+      healthDelta += conceptExtractionRate * 0.1;
+      
+      // Cap the delta
+      healthDelta = Math.max(-0.1, Math.min(0.3, healthDelta));
+      
+      console.log(`🧠 Knowledge health delta from reading: ${healthDelta}`);
+      return healthDelta;
+    } catch (error) {
+      console.error('Error updating knowledge health:', error);
+      return 0;
+    }
+  }
+
+  /**
    * Cleanup resources
    */
   public cleanup(): void {
@@ -979,4 +1085,6 @@ export class SpeedReadingService extends EventEmitter {
   }
 }
 
+// Export singleton instance
+export const speedReadingService = SpeedReadingService.getInstance();
 export default SpeedReadingService;

@@ -86,6 +86,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       if (savedSettings.todoistToken) {
         testTodoistConnection(savedSettings.todoistToken, false);
       }
+
+      // Sound UI handled by global MiniPlayer
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -225,6 +227,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     );
   };
 
+  const resetSoundLearning = async () => {
+    try {
+      await StorageService.getInstance().resetOptimalProfiles();
+      Alert.alert('Success', 'Sound personalization has been reset.');
+    } catch (error) {
+      console.error('Failed to reset sound learning:', error);
+      Alert.alert('Error', 'Failed to reset sound learning.');
+    }
+  };
+
   const exportData = async () => {
     try {
       const exportString = await storage.exportAllData();
@@ -346,9 +358,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   styles.themeButtonText,
                   {
                     color:
-                      settings.theme === 'dark'
-                        ? '#FFFFFF'
-                        : themeColors.text,
+                      settings.theme === 'dark' ? '#FFFFFF' : themeColors.text,
                   },
                 ]}
               >
@@ -371,13 +381,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   styles.themeButtonText,
                   {
                     color:
-                      settings.theme === 'light'
-                        ? '#FFFFFF'
-                        : themeColors.text,
+                      settings.theme === 'light' ? '#FFFFFF' : themeColors.text,
                   },
                 ]}
               >
-              ☀️ Light
+                ☀️ Light
               </Text>
             </TouchableOpacity>
           </View>
@@ -785,6 +793,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             />
           </View>
 
+          <View style={[styles.dataActions, { marginTop: 12 }]}>
+            <Button
+              title="Reset Sound Learning"
+              onPress={() =>
+                Alert.alert(
+                  'Reset Sound Learning',
+                  'This will clear personalized soundscape adjustments. Continue?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Reset',
+                      style: 'destructive',
+                      onPress: resetSoundLearning,
+                    },
+                  ],
+                )
+              }
+              variant="outline"
+              size="medium"
+              theme={theme}
+              style={[styles.dataButton, { borderColor: themeColors.primary }]}
+            />
+          </View>
+
           <Text style={[styles.dataWarning, { color: themeColors.textMuted }]}>
             ⚠️ Data clearing is permanent and cannot be undone. Export your data
             first if you want to keep a backup.
@@ -1037,5 +1069,12 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     width: '100%',
+  },
+  smallButton: {
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -6,6 +6,7 @@ import StorageService, {
 } from './StorageService';
 import { TodoistService } from './TodoistService';
 import { MindMapGenerator } from './MindMapGeneratorService';
+import { eyeTrackingService } from './EyeTrackingService';
 
 /**
  * Phase 6: Focus Timer Service - Anti-Distraction Layer
@@ -43,21 +44,51 @@ export class DistractionLogValidationError extends Error {
   }
 }
 
-export const validateDistractionLogOptions = (options: DistractionLogOptions): void => {
-  if (options.reason !== undefined && (typeof options.reason !== 'string' || options.reason.trim().length === 0)) {
-    throw new DistractionLogValidationError('Reason must be a non-empty string', 'reason');
+export const validateDistractionLogOptions = (
+  options: DistractionLogOptions,
+): void => {
+  if (
+    options.reason !== undefined &&
+    (typeof options.reason !== 'string' || options.reason.trim().length === 0)
+  ) {
+    throw new DistractionLogValidationError(
+      'Reason must be a non-empty string',
+      'reason',
+    );
   }
 
-  if (options.severity !== undefined && (!Number.isInteger(options.severity) || options.severity < 1 || options.severity > 5)) {
-    throw new DistractionLogValidationError('Severity must be an integer between 1 and 5', 'severity');
+  if (
+    options.severity !== undefined &&
+    (!Number.isInteger(options.severity) ||
+      options.severity < 1 ||
+      options.severity > 5)
+  ) {
+    throw new DistractionLogValidationError(
+      'Severity must be an integer between 1 and 5',
+      'severity',
+    );
   }
 
-  if (options.triggerType !== undefined && !['internal', 'external', 'notification', 'unknown'].includes(options.triggerType)) {
-    throw new DistractionLogValidationError('Trigger type must be one of: internal, external, notification, unknown', 'triggerType');
+  if (
+    options.triggerType !== undefined &&
+    !['internal', 'external', 'notification', 'unknown'].includes(
+      options.triggerType,
+    )
+  ) {
+    throw new DistractionLogValidationError(
+      'Trigger type must be one of: internal, external, notification, unknown',
+      'triggerType',
+    );
   }
 
-  if (options.duration !== undefined && (!Number.isFinite(options.duration) || options.duration < 0)) {
-    throw new DistractionLogValidationError('Duration must be a non-negative number', 'duration');
+  if (
+    options.duration !== undefined &&
+    (!Number.isFinite(options.duration) || options.duration < 0)
+  ) {
+    throw new DistractionLogValidationError(
+      'Duration must be a non-negative number',
+      'duration',
+    );
   }
 };
 
@@ -65,7 +96,11 @@ export const validateDistractionLogOptions = (options: DistractionLogOptions): v
  * Exponential backoff retry utility for critical async operations
  */
 export class RetryError extends Error {
-  constructor(message: string, public attempts: number, public lastError: Error) {
+  constructor(
+    message: string,
+    public attempts: number,
+    public lastError: Error,
+  ) {
     super(message);
     this.name = 'RetryError';
   }
@@ -75,7 +110,7 @@ export const withExponentialBackoff = async <T>(
   operation: () => Promise<T>,
   maxAttempts: number = 3,
   baseDelay: number = 1000,
-  maxDelay: number = 10000
+  maxDelay: number = 10000,
 ): Promise<T> => {
   let lastError: Error;
 
@@ -90,7 +125,7 @@ export const withExponentialBackoff = async <T>(
         throw new RetryError(
           `Operation failed after ${maxAttempts} attempts`,
           maxAttempts,
-          lastError
+          lastError,
         );
       }
 
@@ -100,7 +135,7 @@ export const withExponentialBackoff = async <T>(
       const totalDelay = delay + jitter;
 
       console.log(`Retrying in ${Math.round(totalDelay)}ms...`);
-      await new Promise(resolve => setTimeout(resolve, totalDelay));
+      await new Promise((resolve) => setTimeout(resolve, totalDelay));
     }
   }
 
@@ -122,6 +157,9 @@ export class FocusTimerService {
   private todoistService: TodoistService;
   private mindMapGenerator: MindMapGenerator;
   private physicsEngine: NeuralPhysicsEngine | null = null;
+  // Eye tracking integration
+  private eyeTrackingEnabled: boolean = false;
+  private adaptiveBreakCheckInterval: NodeJS.Timeout | null = null;
 
   // Active session state
   private activeSession: ActiveSession | null = null;
@@ -131,6 +169,7 @@ export class FocusTimerService {
   // Event listeners
   private sessionCallbacks: ((session: ActiveSession | null) => void)[] = [];
   private distractionCallbacks: ((event: DistractionEvent) => void)[] = [];
+  private eyeTrackingCallbacks: ((metrics: any) => void)[] = [];
 
   public static getInstance(): FocusTimerService {
     if (!FocusTimerService.instance) {
@@ -145,6 +184,134 @@ export class FocusTimerService {
     this.mindMapGenerator = MindMapGenerator.getInstance();
 
     console.log('🔒 Focus Timer Service initialized for Phase 5.5');
+  }
+
+  /**
+   * Enable eye tracking integration
+   */
+  public async enableEyeTracking(): Promise<boolean> {
+    try {
+      const ok = await eyeTrackingService.initialize();
+      if (ok) {
+        this.eyeTrackingEnabled = true;
+        eyeTrackingService.startTracking();
+        this.startAdaptiveBreakMonitoring();
+        console.log('👁️ Eye tracking integrated with FocusTimerService');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to enable eye tracking:', error);
+      return false;
+    }
+  }
+
+  private startAdaptiveBreakMonitoring(): void {
+    if (this.adaptiveBreakCheckInterval) {
+      clearInterval(this.adaptiveBreakCheckInterval);
+    }
+
+    this.adaptiveBreakCheckInterval = setInterval(() => {
+      this.checkAdaptiveBreak();
+    }, 30000); // every 30s
+  }
+
+  private checkAdaptiveBreak(): void {
+    if (!this.eyeTrackingEnabled) return;
+
+    const breakCheck = eyeTrackingService.shouldTakeBreak();
+    if (breakCheck.needed) {
+      this.triggerAdaptiveBreak(breakCheck.reason);
+    }
+
+    const metrics = eyeTrackingService.getMetrics();
+    this.eyeTrackingCallbacks.forEach((cb) => {
+      try {
+        cb(metrics);
+      } catch (e) {
+        console.error(e);
+      }
+    });
+
+    // Update cognitive load from eye tracking
+    this.updateCognitiveLoad(eyeTrackingService.getCognitiveLoad());
+  }
+
+  private async triggerAdaptiveBreak(reason: string): Promise<void> {
+    if (!this.activeSession) return;
+
+    console.log(`🧠 Adaptive break triggered: ${reason}`);
+
+    // Soft pause of current timer
+    if (this.sessionTimer) clearTimeout(this.sessionTimer);
+
+    // Emit an event via distractionCallbacks to allow UI to show a break
+    const evt: DistractionEvent = {
+      id: `adaptive_break_${Date.now()}`,
+      sessionId: this.activeSession.id,
+      timestamp: new Date(),
+      reason: `Adaptive break: ${reason}`,
+      severity: 1,
+      triggerType: 'unknown',
+      contextSwitch: false,
+    };
+
+    this.notifyDistractionListeners(evt);
+
+    // Auto-resume after 5 minutes
+    setTimeout(() => {
+      if (this.activeSession) {
+        // restart session timer for remaining planned minutes
+        this.sessionTimer = setTimeout(
+          () => this.handleSessionTimeUp(),
+          this.activeSession.plannedDurationMinutes * 60 * 1000,
+        );
+      }
+    }, 5 * 60 * 1000);
+  }
+
+  /**
+   * Subscribe to eye tracking metrics
+   */
+  public onEyeTrackingMetrics(callback: (metrics: any) => void): () => void {
+    this.eyeTrackingCallbacks.push(callback);
+    return () => {
+      const idx = this.eyeTrackingCallbacks.indexOf(callback);
+      if (idx > -1) this.eyeTrackingCallbacks.splice(idx, 1);
+    };
+  }
+
+  /**
+   * Update cognitive load from external sources (AI coaching, etc.)
+   */
+  public updateCognitiveLoad(
+    level: number,
+    duration: number = 5 * 60 * 1000,
+  ): void {
+    // clamp
+    const clamped = Math.max(0, Math.min(1, level));
+    // store lightly on the activeSession for session-level reporting
+    if (this.activeSession) {
+      this.activeSession.cognitiveLoadStart = clamped;
+    }
+    console.log(`🧠 Cognitive load updated to: ${clamped}`);
+    // Emit an event for UI/other services
+    this.notifySessionListeners();
+
+    // After duration, reduce the cognitive load effect
+    setTimeout(() => {
+      if (this.activeSession) {
+        this.activeSession.cognitiveLoadStart = Math.max(
+          0.3,
+          this.activeSession.cognitiveLoadStart - 0.2,
+        );
+        this.notifySessionListeners();
+      }
+    }, duration);
+  }
+
+  public getCognitiveLoad(): number {
+    return this.activeSession ? this.activeSession.cognitiveLoadStart : 0.5;
   }
 
   /**
@@ -243,7 +410,9 @@ export class FocusTimerService {
       validateDistractionLogOptions(options);
     } catch (validationError) {
       if (validationError instanceof DistractionLogValidationError) {
-        console.error(`Distraction log validation failed: ${validationError.message} (field: ${validationError.field})`);
+        console.error(
+          `Distraction log validation failed: ${validationError.message} (field: ${validationError.field})`,
+        );
         throw validationError;
       }
       throw validationError;
@@ -268,7 +437,7 @@ export class FocusTimerService {
         () => this.storageService.saveDistractionEvent(distractionEvent),
         3, // max attempts
         1000, // base delay
-        5000 // max delay
+        5000, // max delay
       );
 
       // Update active session distraction count
@@ -346,7 +515,7 @@ export class FocusTimerService {
         todoistTaskCompleted: options.todoistTaskCompleted,
         neuralNodeStrengthened: await this.calculateNeuralReinforcement(
           options,
-),
+        ),
 
         created: this.activeSession.startTime,
         modified: endTime,
@@ -357,7 +526,7 @@ export class FocusTimerService {
         () => this.storageService.saveFocusSession(completedSession),
         3, // max attempts
         1000, // base delay
-        5000 // max delay
+        5000, // max delay
       );
 
       // Phase 5.5: Apply neural rewards/penalties based on session quality
@@ -472,7 +641,7 @@ export class FocusTimerService {
         const frequencyMultiplier = Math.min(
           2.0,
           1 + (this.activeSession.distractionCount - 1) * 0.2,
-);
+        );
 
         const penalty = basePenalty * severityMultiplier * frequencyMultiplier;
 
@@ -614,7 +783,7 @@ export class FocusTimerService {
       // Get current neural graph
       const neuralGraph = await this.mindMapGenerator.generateNeuralGraph(
         false,
-);
+      );
 
       // Base cognitive load
       let cognitiveLoad =
@@ -867,4 +1036,3 @@ export class FocusTimerService {
 }
 
 export default FocusTimerService;
-

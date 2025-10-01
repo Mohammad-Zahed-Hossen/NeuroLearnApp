@@ -19,6 +19,10 @@ import {
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
 import { StorageService } from '../services/StorageService';
+import { aiCoachingService } from '../services/AICoachingService';
+import SpeedReadingService from '../services/SpeedReadingService';
+import { useSoundscape } from '../contexts/SoundscapeContext';
+import { neuralIntegrationService } from '../services/NeuralIntegrationService';
 import { StudySession } from '../types';
 
 interface SpeedReadingScreenProps {
@@ -108,13 +112,154 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     pauseOnComplete: true,
   });
 
+  // Phase 6: AI Quiz state
+  const [quizVisible, setQuizVisible] = useState(false);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quiz, setQuiz] = useState<{
+    id: string;
+    sessionId: string;
+    questions: Array<{
+      id: string;
+      question: string;
+      options: string[];
+      correctAnswer: number;
+      explanation?: string;
+      difficulty: 1 | 2 | 3 | 4 | 5;
+      conceptTested: string;
+    }>;
+    timeLimit?: number;
+    created: Date;
+  } | null>(null);
+  const [answers, setAnswers] = useState<Record<string, number | null>>({});
+  const [quizScore, setQuizScore] = useState<number | null>(null);
+  const [lastTextRead, setLastTextRead] = useState<string>('');
+  const [currentWord, setCurrentWord] = useState<string>('Ready to read...');
+  const [analytics, setAnalytics] = useState<any>(null);
+
   // Animation and refs
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Event handlers for SpeedReadingService
+  const handleWordDisplay = (data: any) => {
+    const { word, progress, analytics } = data;
+    setCurrentWord(word);
+    setAnalytics(analytics);
+    
+    // Update reading state
+    setReadingState(prev => ({
+      ...prev,
+      currentIndex: data.index,
+    }));
+    
+    // Enhance soundscape based on reading performance
+    if (analytics && soundscape.isActive) {
+      neuralIntegrationService.enhanceSpeedReading(
+        analytics.currentWPM,
+        analytics.comprehensionPrediction,
+        selectedPreset?.difficulty?.toLowerCase() as any || 'medium'
+      );
+      
+      // Update cognitive load based on reading difficulty
+      const loadAdjustment = analytics.comprehensionPrediction < 0.6 ? 0.2 : -0.1;
+      soundscape.updateCognitiveLoad(Math.max(0, Math.min(1, soundscape.cognitiveLoad + loadAdjustment)));
+    }
+    
+    // Animate word transition
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 0.3,
+          duration: 50,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 0.9,
+          duration: 50,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  };
+
+  const handleSessionComplete = async (completedSession: any) => {
+    try {
+      // Generate comprehension quiz
+      const quiz = await aiCoachingService.generateComprehensionQuiz(
+        completedSession.textSource,
+        completedSession.id,
+        {
+          questionCount: 5,
+          difficulty: 'adaptive',
+          questionTypes: ['factual', 'inference', 'vocabulary'],
+        }
+      );
+      
+      setQuiz(quiz as any);
+      setAnswers(
+        quiz.questions.reduce((acc: any, q: any) => {
+          acc[q.id] = null;
+          return acc;
+        }, {})
+      );
+      setQuizVisible(true);
+      
+      // Record performance for soundscape learning
+      if (soundscape.isActive) {
+        const performance = completedSession.comprehensionScore || 0.8;
+        await soundscape.recordPerformance(performance);
+      }
+      
+      // Reset reading state
+      setReadingState(prev => ({
+        ...prev,
+        active: false,
+        sessionStarted: false,
+      }));
+      
+      // Show completion alert
+      Alert.alert(
+        'Reading Complete! 📚',
+        `Speed: ${completedSession.wpmAchieved} WPM\nComprehension: Ready for quiz\nConcepts: ${completedSession.conceptsIdentified.length}`,
+        [
+          { text: 'Take Quiz', onPress: () => setQuizVisible(true) },
+          { text: 'Continue', onPress: () => {} },
+        ]
+      );
+      
+    } catch (error) {
+      console.error('Error handling session completion:', error);
+      // Fallback to basic completion
+      setReadingState(prev => ({
+        ...prev,
+        active: false,
+        sessionStarted: false,
+      }));
+    }
+  };
+
   const themeColors = colors[theme];
   const storage = StorageService.getInstance();
+  const speedReadingService = SpeedReadingService.getInstance();
+  const soundscape = useSoundscape();
+  
+  // Notify neural integration of screen change
+  useEffect(() => {
+    neuralIntegrationService.onScreenChange('speed_reading');
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -135,35 +280,47 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     return cleanedText.split(/\s+/).filter((word) => word.length > 0);
   };
 
-  const startReading = (text: string, preset?: TextPreset) => {
-    const words = prepareText(text);
-
-    if (words.length === 0) {
-      Alert.alert('Error', 'Please provide text to read');
-      return;
+  const startReading = async (text: string, preset?: TextPreset) => {
+    try {
+      setLastTextRead(text);
+      
+      // Start optimal soundscape for speed reading
+      if (soundscape.isInitialized && !soundscape.isActive) {
+        await soundscape.startPreset('speed_integration', {
+          cognitiveLoad: 0.6,
+          fadeIn: true,
+        });
+      }
+      
+      const session = await speedReadingService.startSession(text, {
+        title: preset?.title || 'Custom Reading',
+        difficulty: preset?.difficulty?.toLowerCase() as any || 'medium',
+        wpm: readingState.wpm,
+        mode: readingState.mode as any,
+        cognitiveLoad: soundscape.cognitiveLoad || 0.5,
+      });
+      
+      setReadingState({
+        active: true,
+        words: speedReadingService.getProcessedText()?.words || [],
+        currentIndex: 0,
+        startTime: session.startTime,
+        wpm: session.wpmGoal,
+        mode: readingState.mode,
+        chunkSize: readingState.chunkSize,
+        sessionStarted: true,
+      });
+      
+      setSelectedPreset(preset || null);
+      
+      // Listen for service events
+      speedReadingService.on('wordDisplay', handleWordDisplay);
+      speedReadingService.on('sessionCompleted', handleSessionComplete);
+      
+    } catch (error) {
+      Alert.alert('Error', 'Failed to start reading session');
+      console.error('Reading start error:', error);
     }
-
-    setReadingState({
-      active: true,
-      words,
-      currentIndex: 0,
-      startTime: new Date(),
-      wpm: readingState.wpm,
-      mode: readingState.mode,
-      chunkSize: readingState.chunkSize,
-      sessionStarted: true,
-    });
-
-    setSession({
-      wordsRead: 0,
-      timeElapsed: 0,
-      averageWPM: 0,
-    });
-
-    setSelectedPreset(preset || null);
-
-    // Start RSVP
-    startRSVP(words);
   };
 
   const startRSVP = (words: string[]) => {
@@ -225,25 +382,23 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   };
 
   const pauseReading = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-
+    speedReadingService.pauseSession();
     setReadingState((prev) => ({ ...prev, active: false }));
   };
 
   const resumeReading = () => {
+    speedReadingService.resumeSession();
     setReadingState((prev) => ({ ...prev, active: true }));
-    startRSVP(readingState.words);
   };
 
-  const stopReading = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+  const stopReading = async () => {
+    await speedReadingService.stopSession();
+    
+    // Transition soundscape to calm state
+    if (soundscape.isActive) {
+      await soundscape.startPreset('calm_readiness', { fadeIn: true });
     }
-
+    
     setReadingState({
       active: false,
       words: [],
@@ -254,7 +409,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
       chunkSize: readingState.chunkSize,
       sessionStarted: false,
     });
-
+    setCurrentWord('Ready to read...');
     setSelectedPreset(null);
   };
 
@@ -323,9 +478,64 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
             }
           },
         },
-        { text: 'Continue', onPress: () => {} },
+        { text: 'Take Quiz', onPress: () => generateQuiz() },
       ],
     );
+  };
+
+  // Generate AI quiz from last text read (or selected preset)
+  const generateQuiz = async () => {
+    const text = lastTextRead || selectedPreset?.content || '';
+    if (!text || text.trim().length < 20) {
+      Alert.alert(
+        'Quiz unavailable',
+        'No recent text to generate a quiz from.',
+      );
+      return;
+    }
+
+    setQuizLoading(true);
+    try {
+      const sessionId = `ui_quiz_${Date.now()}`;
+      const generated = await aiCoachingService.generateComprehensionQuiz(
+        text,
+        sessionId,
+        {
+          questionCount: 5,
+          difficulty: 'adaptive',
+          questionTypes: ['factual', 'inference', 'vocabulary'],
+        },
+      );
+
+      setQuiz(generated as any);
+      setAnswers(
+        generated.questions.reduce((acc: any, q: any) => {
+          acc[q.id] = null;
+          return acc;
+        }, {}),
+      );
+      setQuizScore(null);
+      setQuizVisible(true);
+    } catch (error) {
+      console.warn('Quiz generation failed', error);
+      Alert.alert(
+        'Quiz generation failed',
+        'Unable to create quiz at this time.',
+      );
+    } finally {
+      setQuizLoading(false);
+    }
+  };
+
+  const submitQuiz = () => {
+    if (!quiz) return;
+    let correct = 0;
+    quiz.questions.forEach((q) => {
+      const ans = answers[q.id];
+      if (ans === q.correctAnswer) correct++;
+    });
+    const score = Math.round((correct / quiz.questions.length) * 100);
+    setQuizScore(score);
   };
 
   const adjustWPM = (newWPM: number) => {
@@ -340,25 +550,16 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   };
 
   const getCurrentDisplay = () => {
-    if (!readingState.sessionStarted || readingState.words.length === 0) {
-      return 'Ready to read...';
+    if (!readingState.sessionStarted) {
+      return currentWord;
     }
-
-    if (readingState.mode === 'word') {
-      return readingState.words[readingState.currentIndex] || 'Complete!';
-    } else {
-      // Chunk mode - show multiple words
-      const chunk = readingState.words
-        .slice(
-          readingState.currentIndex,
-          readingState.currentIndex + readingState.chunkSize,
-        )
-        .join(' ');
-      return chunk || 'Complete!';
-    }
+    return currentWord;
   };
 
   const getProgress = () => {
+    if (analytics) {
+      return analytics.progressPercent || 0;
+    }
     if (readingState.words.length === 0) return 0;
     return (readingState.currentIndex / readingState.words.length) * 100;
   };
@@ -445,6 +646,15 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
               <Text style={[styles.rsvpText, { color: themeColors.text }]}>
                 {getCurrentDisplay()}
               </Text>
+              
+              {/* Real-time analytics display */}
+              {analytics && (
+                <View style={styles.analyticsOverlay}>
+                  <Text style={[styles.analyticsText, { color: themeColors.accent }]}>
+                    {Math.round(analytics.currentWPM)} WPM • {Math.round(analytics.comprehensionPrediction * 100)}% predicted
+                  </Text>
+                </View>
+              )}
             </Animated.View>
 
             {/* Fixation Point */}
@@ -496,6 +706,28 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                 sec
               </Text>
             </View>
+            
+            {analytics && (
+              <>
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: themeColors.textSecondary }]}>
+                    Current WPM:
+                  </Text>
+                  <Text style={[styles.infoValue, { color: themeColors.primary }]}>
+                    {Math.round(analytics.currentWPM)}
+                  </Text>
+                </View>
+                
+                <View style={styles.infoRow}>
+                  <Text style={[styles.infoLabel, { color: themeColors.textSecondary }]}>
+                    Comprehension:
+                  </Text>
+                  <Text style={[styles.infoValue, { color: themeColors.success }]}>
+                    {Math.round(analytics.comprehensionPrediction * 100)}%
+                  </Text>
+                </View>
+              </>
+            )}
           </GlassCard>
 
           {/* Controls */}
@@ -873,6 +1105,82 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
         </View>
       </Modal>
 
+      {/* Quiz Modal using enhanced UI components */}
+      {quizVisible && quiz && (
+        <Modal visible={true} animationType="slide">
+          <View style={[styles.quizContainer, { backgroundColor: themeColors.background }]}>
+            <View style={styles.quizHeader}>
+              <Text style={[styles.quizTitle, { color: themeColors.text }]}>
+                Comprehension Quiz
+              </Text>
+              <TouchableOpacity onPress={() => setQuizVisible(false)}>
+                <Text style={[styles.closeButton, { color: themeColors.text }]}>×</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.quizContent}>
+              {quiz.questions.map((question, index) => (
+                <View key={question.id} style={[styles.questionCard, { backgroundColor: themeColors.surface }]}>
+                  <Text style={[styles.questionText, { color: themeColors.text }]}>
+                    {index + 1}. {question.question}
+                  </Text>
+                  
+                  {question.options.map((option, optionIndex) => (
+                    <TouchableOpacity
+                      key={optionIndex}
+                      style={[
+                        styles.optionButton,
+                        {
+                          backgroundColor: answers[question.id] === optionIndex 
+                            ? themeColors.primary 
+                            : themeColors.surfaceLight,
+                          borderColor: themeColors.primary,
+                        }
+                      ]}
+                      onPress={() => setAnswers(prev => ({ ...prev, [question.id]: optionIndex }))}
+                    >
+                      <Text style={[
+                        styles.optionText,
+                        {
+                          color: answers[question.id] === optionIndex 
+                            ? themeColors.background 
+                            : themeColors.text,
+                        }
+                      ]}>
+                        {String.fromCharCode(65 + optionIndex)}. {option}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+            
+            <View style={styles.quizActions}>
+              <Button
+                title="Submit Quiz"
+                onPress={submitQuiz}
+                variant="primary"
+                theme={theme}
+                style={styles.submitButton}
+              />
+            </View>
+            
+            {quizScore !== null && (
+              <View style={[styles.scoreDisplay, { backgroundColor: themeColors.surface }]}>
+                <Text style={[styles.scoreText, { color: themeColors.primary }]}>
+                  Score: {quizScore}%
+                </Text>
+                <Text style={[styles.scoreMessage, { color: themeColors.text }]}>
+                  {quizScore >= 80 ? 'Excellent comprehension!' : 
+                   quizScore >= 60 ? 'Good understanding!' : 
+                   'Consider reviewing the material.'}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Modal>
+      )}
+
       <HamburgerMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -1088,6 +1396,17 @@ const styles = StyleSheet.create({
     flex: 0.48,
   },
 
+  // Analytics overlay
+  analyticsOverlay: {
+    position: 'absolute',
+    top: -40,
+    alignItems: 'center',
+  },
+  analyticsText: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+
   // Modal Styles
   modalOverlay: {
     flex: 1,
@@ -1126,5 +1445,67 @@ const styles = StyleSheet.create({
   },
   modalButton: {
     flex: 0.48,
+  },
+
+  // Quiz Styles
+  quizContainer: {
+    flex: 1,
+    padding: spacing.lg,
+  },
+  quizHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 40,
+    marginBottom: spacing.lg,
+  },
+  quizTitle: {
+    ...typography.h2,
+  },
+  closeButton: {
+    ...typography.h2,
+    fontSize: 32,
+  },
+  quizContent: {
+    flex: 1,
+  },
+  questionCard: {
+    padding: spacing.md,
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing.md,
+  },
+  questionText: {
+    ...typography.body,
+    marginBottom: spacing.md,
+    lineHeight: 24,
+  },
+  optionButton: {
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.xs,
+    borderWidth: 1,
+  },
+  optionText: {
+    ...typography.bodySmall,
+  },
+  quizActions: {
+    paddingVertical: spacing.md,
+  },
+  submitButton: {
+    width: '100%',
+  },
+  scoreDisplay: {
+    padding: spacing.md,
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+    marginTop: spacing.md,
+  },
+  scoreText: {
+    ...typography.h3,
+    marginBottom: spacing.sm,
+  },
+  scoreMessage: {
+    ...typography.body,
+    textAlign: 'center',
   },
 });

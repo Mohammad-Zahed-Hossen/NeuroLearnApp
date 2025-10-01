@@ -102,6 +102,8 @@ export class AICoachingService {
     exerciseType: 'deductive' | 'inductive' | 'abductive',
     domain: 'programming' | 'math' | 'english' | 'general',
   ): Promise<AICoachingResponse> {
+    const startTime = Date.now();
+
     try {
       // Create cache key
       const cacheKey = this.createCacheKey(
@@ -121,8 +123,7 @@ export class AICoachingService {
         }
       }
 
-      // TODO: Phase 4 Implementation - Replace with actual AI API call
-      // For now, use enhanced local evaluation
+      // Use enhanced local evaluation (placeholder for real AI)
       const response = await this.evaluateLocallyEnhanced(
         premise1,
         premise2,
@@ -136,17 +137,94 @@ export class AICoachingService {
         this.cacheResponse(cacheKey, response);
       }
 
+      // Calculate cognitive load proxy and trigger update in FocusTimerService
+      const processingTime = Date.now() - startTime;
+      const complexityScore = this.calculateFeedbackComplexity(response);
+
+      let loadIntensity: 'low' | 'medium' | 'high';
+      if (complexityScore > 0.7 || processingTime > 5000) {
+        loadIntensity = 'high';
+      } else if (complexityScore > 0.4 || processingTime > 2000) {
+        loadIntensity = 'medium';
+      } else {
+        loadIntensity = 'low';
+      }
+
+      // Fire-and-forget cognitive load update (avoid blocking main flow)
+      this.triggerCognitiveLoadUpdate(loadIntensity).catch((e) =>
+        console.warn('Cognitive load update failed:', e),
+      );
+
       return response;
     } catch (error) {
       console.error('Error getting AI feedback:', error);
 
       // Fallback to simple local evaluation
-      return this.getFallbackResponse(
+      const fallback = this.getFallbackResponse(
         premise1,
         premise2,
         conclusion,
         exerciseType,
       );
+
+      // Attempt to notify about a lower-intensity cognitive load
+      this.triggerCognitiveLoadUpdate('low').catch(() => {});
+
+      return fallback;
+    }
+  }
+
+  private calculateFeedbackComplexity(response: AICoachingResponse): number {
+    let complexity = 0;
+
+    // Grammar corrections increase complexity
+    complexity += (response.grammarFeedback.corrections?.length || 0) * 0.08;
+
+    // Logic weaknesses and suggestions increase complexity
+    complexity += (response.logicFeedback.weaknesses?.length || 0) * 0.12;
+    complexity += (response.logicFeedback.suggestions?.length || 0) * 0.06;
+
+    // Lower combined score indicates more remediation required
+    if ((response.combinedScore?.overall || 3) < 3) {
+      complexity += 0.25;
+    }
+
+    return Math.min(1, complexity);
+  }
+
+  /**
+   * Trigger cognitive load update in FocusTimerService (dynamic import to avoid circular deps)
+   */
+  private async triggerCognitiveLoadUpdate(
+    intensity: 'low' | 'medium' | 'high',
+    duration: number = 5 * 60 * 1000,
+  ): Promise<void> {
+    try {
+      const { FocusTimerService } = await import('./FocusTimerService');
+      const focusService = FocusTimerService.getInstance();
+
+      let loadLevel: number;
+      switch (intensity) {
+        case 'high':
+          loadLevel = 0.8;
+          break;
+        case 'medium':
+          loadLevel = 0.6;
+          break;
+        case 'low':
+        default:
+          loadLevel = 0.4;
+      }
+
+      if (typeof (focusService as any).updateCognitiveLoad === 'function') {
+        (focusService as any).updateCognitiveLoad(loadLevel, duration);
+        console.log(
+          `🧠 Cognitive load updated to ${loadLevel} for ${duration}ms`,
+        );
+      }
+    } catch (error) {
+      // Log but don't fail the calling flow
+      console.warn('Could not update cognitive load:', error);
     }
   }
 
@@ -819,9 +897,86 @@ export class AICoachingService {
    *    - Adapt coaching style to user's learning patterns
    *    - Provide domain-specific feedback
    */
+
+  /**
+   * Phase 6: Generate a lightweight comprehension quiz from text
+   */
+  public async generateComprehensionQuiz(
+    text: string,
+    sessionId: string,
+    options: {
+      questionCount?: number;
+      difficulty?: 'adaptive' | 'easy' | 'medium' | 'hard';
+      questionTypes?: Array<'factual' | 'inference' | 'vocabulary'>;
+      adaptToPreviousPerformance?: boolean;
+    } = {},
+  ): Promise<{
+    id: string;
+    sessionId: string;
+    questions: Array<{
+      id: string;
+      question: string;
+      options: string[];
+      correctAnswer: number;
+      explanation?: string;
+      difficulty: 1 | 2 | 3 | 4 | 5;
+      conceptTested: string;
+    }>;
+    timeLimit?: number;
+    created: Date;
+  }> {
+    const count = Math.max(3, Math.min(10, options.questionCount ?? 5));
+    const words = text.split(/\W+/).filter((w) => w.length > 4);
+    const unique = Array.from(new Set(words.map((w) => w.toLowerCase())));
+    const concepts = unique.slice(0, Math.min(20, unique.length));
+
+    const difficultyMap: Record<string, 1 | 2 | 3 | 4 | 5> = {
+      easy: 2,
+      medium: 3,
+      hard: 4,
+      adaptive: 3,
+    } as any;
+    const baseDiff = difficultyMap[options.difficulty || 'adaptive'];
+
+    const questions = Array.from({ length: count }).map((_, i) => {
+      const concept = concepts[i % Math.max(1, concepts.length)] || 'concept';
+      const type =
+        options.questionTypes?.[i % (options.questionTypes?.length || 1)] ||
+        'factual';
+      const qPrefix =
+        type === 'inference'
+          ? 'What can be inferred about'
+          : type === 'vocabulary'
+          ? 'What is the meaning of'
+          : 'According to the text, what is true about';
+      const correct = `${concept} (correct)`;
+      const distractors = [
+        `${concept} (partially true)`,
+        `${concept} (unrelated)`,
+        `${concept} (opposite)`,
+      ];
+      const optionsArr = [correct, ...distractors];
+      return {
+        id: `q_${sessionId}_${i}`,
+        question: `${qPrefix} "${concept}"?`,
+        options: optionsArr,
+        correctAnswer: 0,
+        explanation: `Checks understanding of the concept "${concept}" from the passage`,
+        difficulty: baseDiff,
+        conceptTested: concept,
+      };
+    });
+
+    return {
+      id: `quiz_${sessionId}_${Date.now()}`,
+      sessionId,
+      questions,
+      timeLimit: 60,
+      created: new Date(),
+    };
+  }
 }
 
 // Export singleton instance
 export const aiCoachingService = AICoachingService.getInstance();
 export default aiCoachingService;
-

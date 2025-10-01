@@ -3,10 +3,11 @@
 
   // This is where 'include' belongs: at the root level.
   "include": ["**/*.ts", "**/*.tsx", "./src/types/reanimated.d.ts"],
+  "exclude": ["node_modules", "__tests__", "**/*.test.ts", "**/*.test.tsx"],
 
   "compilerOptions": {
     "strict": true,
-    "types": ["react-native-reanimated", "node"],
+    "types": ["react-native-reanimated", "node", "jest"],
     "skipLibCheck": true
   }
 }

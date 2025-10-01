@@ -10,6 +10,25 @@ import {
 } from '../types';
 import { LogicStructure } from './MindMapGeneratorService';
 import { FSRSCard, FSRSReviewLog } from './SpacedRepetitionService';
+import { ReadingSession, SourceLink } from './SpeedReadingService';
+
+// ==================== Phase 7: Soundscape storage interfaces ====================
+export interface SoundSettings {
+  volume: number;
+  lastPreset?: string;
+  optimalProfile?: Record<string, any>;
+  personalizationEnabled?: boolean;
+  updatedAt?: string;
+}
+
+export interface NeuralLogEntry {
+  id: string;
+  sessionId?: string;
+  preset?: string;
+  timestamp: string; // ISO
+  metrics?: { cognitiveLoad?: number; entrainmentScore?: number };
+  notes?: string;
+}
 
 /**
  * Phase 5.5: Focus Reinforcement Types
@@ -22,33 +41,33 @@ export interface DistractionEvent {
   sessionId: string;
   timestamp: Date;
   reason?: string;
-  contextSwitch?: boolean;         // True if user switched apps/screens
-  duration?: number;               // How long the distraction lasted
+  contextSwitch?: boolean; // True if user switched apps/screens
+  duration?: number; // How long the distraction lasted
   triggerType?: 'internal' | 'external' | 'notification' | 'unknown';
-  severity?: 1 | 2 | 3 | 4 | 5;    // User-reported distraction severity
+  severity?: 1 | 2 | 3 | 4 | 5; // User-reported distraction severity
 }
 
 export interface FocusSession {
   id: string;
   taskId: string;
-  nodeId?: string;                 // Neural node being focused on (from Phase 5)
+  nodeId?: string; // Neural node being focused on (from Phase 5)
   startTime: Date;
   endTime: Date;
   durationMinutes: number;
-  plannedDurationMinutes: number;  // Original plan vs actual
+  plannedDurationMinutes: number; // Original plan vs actual
   distractionCount: number;
   distractionEvents: DistractionEvent[];
-  selfReportFocus: 1 | 2 | 3 | 4 | 5;  // Micro-reflection rating
-  distractionReason?: string;      // Main reason for distractions
-  completionRate: number;          // How much of the planned work was done
+  selfReportFocus: 1 | 2 | 3 | 4 | 5; // Micro-reflection rating
+  distractionReason?: string; // Main reason for distractions
+  completionRate: number; // How much of the planned work was done
 
   // Neural health impact
-  cognitiveLoadStart: number;      // Mental state when session started
-  cognitiveLoadEnd?: number;       // Mental state when session ended
-  focusLockUsed: boolean;          // Was neural focus lock active?
+  cognitiveLoadStart: number; // Mental state when session started
+  cognitiveLoadEnd?: number; // Mental state when session ended
+  focusLockUsed: boolean; // Was neural focus lock active?
 
   // Task convergence
-  todoistTaskCompleted?: boolean;  // Was the linked Todoist task completed?
+  todoistTaskCompleted?: boolean; // Was the linked Todoist task completed?
   neuralNodeStrengthened?: boolean; // Did this session strengthen neural connections?
 
   created: Date;
@@ -59,21 +78,21 @@ export interface FocusSession {
  * Phase 5.5: Focus Health Metrics
  */
 export interface FocusHealthMetrics {
-  streakCount: number;             // Days with successful focused sessions
-  averageFocusRating: number;      // Average selfReportFocus across recent sessions
-  distractionsPerSession: number;  // Average distractions per session
-  focusEfficiency: number;         // Actual time / planned time ratio
-  neuralReinforcement: number;     // How much focus sessions strengthen neural paths
+  streakCount: number; // Days with successful focused sessions
+  averageFocusRating: number; // Average selfReportFocus across recent sessions
+  distractionsPerSession: number; // Average distractions per session
+  focusEfficiency: number; // Actual time / planned time ratio
+  neuralReinforcement: number; // How much focus sessions strengthen neural paths
 
   // Time-based analysis
-  dailyFocusTime: number;          // Minutes of successful focus today
-  weeklyFocusTime: number;         // Minutes of successful focus this week
-  bestFocusTimeOfDay: string;      // When user is most focused
+  dailyFocusTime: number; // Minutes of successful focus today
+  weeklyFocusTime: number; // Minutes of successful focus this week
+  bestFocusTimeOfDay: string; // When user is most focused
 
   // Distraction patterns
   commonDistractionTriggers: string[];
-  mostDistractiveDays: string[];   // Which days are hardest to focus
-  focusImprovement: number;        // Trend: improving (+) or declining (-)
+  mostDistractiveDays: string[]; // Which days are hardest to focus
+  focusImprovement: number; // Trend: improving (+) or declining (-)
 }
 
 /**
@@ -108,8 +127,8 @@ export interface LogicNode {
   state?: number; // CardState enum value
 
   // Phase 5.5: Focus impact
-  focusSessionStrength?: number;   // How much focus sessions have strengthened this node
-  distractionPenalty?: number;     // Accumulated penalty from distracted sessions
+  focusSessionStrength?: number; // How much focus sessions have strengthened this node
+  distractionPenalty?: number; // Accumulated penalty from distracted sessions
 
   created: Date;
   modified: Date;
@@ -129,8 +148,8 @@ export interface EnhancedFlashcard extends Flashcard {
   scheduled_days?: number;
 
   // Phase 5.5: Focus impact
-  focusSessionStrength?: number;   // How much focus sessions have strengthened this card
-  distractionWeakening?: number;   // How much distractions have weakened this card
+  focusSessionStrength?: number; // How much focus sessions have strengthened this card
+  distractionWeakening?: number; // How much distractions have weakened this card
 }
 
 /**
@@ -169,6 +188,13 @@ export class StorageService {
     APP_SETTINGS: '@neurolearn/app_settings',
     PROGRESS_DATA: '@neurolearn/progress_data',
     SETTINGS: '@neurolearn/settings',
+
+    // Phase 6: Speed Reading keys
+    READING_SESSIONS: '@neurolearn/reading_sessions',
+    READING_SOURCE_LINKS: '@neurolearn/reading_source_links',
+    // Phase 7: Soundscape keys
+    SOUND_SETTINGS: '@neurolearn/sound_settings',
+    NEURAL_LOGS: '@neurolearn/neural_performance_logs',
   };
 
   public static getInstance(): StorageService {
@@ -194,7 +220,9 @@ export class StorageService {
       // Update focus health metrics
       await this.updateFocusHealthMetrics(session);
 
-      console.log(`💾 Saved focus session: ${session.id} (${session.distractionCount} distractions)`);
+      console.log(
+        `💾 Saved focus session: ${session.id} (${session.distractionCount} distractions)`,
+      );
     } catch (error: any) {
       console.error('Error saving focus session:', error);
       throw new Error(`Failed to save focus session: ${error.message}`);
@@ -210,7 +238,7 @@ export class StorageService {
         ...session,
         startTime: session.startTime.toISOString(),
         endTime: session.endTime.toISOString(),
-        distractionEvents: session.distractionEvents.map(event => ({
+        distractionEvents: session.distractionEvents.map((event) => ({
           ...event,
           timestamp: event.timestamp.toISOString(),
         })),
@@ -220,7 +248,7 @@ export class StorageService {
 
       await AsyncStorage.setItem(
         StorageService.KEYS.FOCUS_SESSIONS,
-        JSON.stringify(serializedSessions)
+        JSON.stringify(serializedSessions),
       );
     } catch (error: any) {
       console.error('Error saving focus sessions:', error);
@@ -233,7 +261,9 @@ export class StorageService {
    */
   async getFocusSessions(): Promise<FocusSession[]> {
     try {
-      const data = await AsyncStorage.getItem(StorageService.KEYS.FOCUS_SESSIONS);
+      const data = await AsyncStorage.getItem(
+        StorageService.KEYS.FOCUS_SESSIONS,
+      );
 
       if (!data) {
         return [];
@@ -263,7 +293,7 @@ export class StorageService {
   async getFocusSession(sessionId: string): Promise<FocusSession | null> {
     try {
       const sessions = await this.getFocusSessions();
-      return sessions.find(session => session.id === sessionId) || null;
+      return sessions.find((session) => session.id === sessionId) || null;
     } catch (error) {
       console.error('Error getting focus session:', error);
       return null;
@@ -285,7 +315,7 @@ export class StorageService {
 
       await AsyncStorage.setItem(
         StorageService.KEYS.DISTRACTION_EVENTS,
-        JSON.stringify(serializedEvents)
+        JSON.stringify(serializedEvents),
       );
 
       console.log(`😬 Distraction logged: ${event.reason || 'Unknown reason'}`);
@@ -300,7 +330,9 @@ export class StorageService {
    */
   async getDistractionEvents(sessionId?: string): Promise<DistractionEvent[]> {
     try {
-      const data = await AsyncStorage.getItem(StorageService.KEYS.DISTRACTION_EVENTS);
+      const data = await AsyncStorage.getItem(
+        StorageService.KEYS.DISTRACTION_EVENTS,
+      );
 
       if (!data) {
         return [];
@@ -313,7 +345,9 @@ export class StorageService {
       }));
 
       if (sessionId) {
-        return deserializedEvents.filter((event: DistractionEvent) => event.sessionId === sessionId);
+        return deserializedEvents.filter(
+          (event: DistractionEvent) => event.sessionId === sessionId,
+        );
       }
 
       return deserializedEvents;
@@ -328,19 +362,29 @@ export class StorageService {
    */
   async pruneOldFocusData(olderThanDays: number = 90): Promise<void> {
     try {
-      const cutoffDate = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+      const cutoffDate = new Date(
+        Date.now() - olderThanDays * 24 * 60 * 60 * 1000,
+      );
 
       // Prune old focus sessions
       const allSessions = await this.getFocusSessions();
-      const recentSessions = allSessions.filter(session => session.endTime > cutoffDate);
+      const recentSessions = allSessions.filter(
+        (session) => session.endTime > cutoffDate,
+      );
       if (recentSessions.length !== allSessions.length) {
         await this.saveFocusSessions(recentSessions);
-        console.log(`🗑️ Pruned ${allSessions.length - recentSessions.length} old focus sessions`);
+        console.log(
+          `🗑️ Pruned ${
+            allSessions.length - recentSessions.length
+          } old focus sessions`,
+        );
       }
 
       // Prune old distraction events
       const allDistractions = await this.getDistractionEvents();
-      const recentDistractions = allDistractions.filter(event => event.timestamp > cutoffDate);
+      const recentDistractions = allDistractions.filter(
+        (event) => event.timestamp > cutoffDate,
+      );
       if (recentDistractions.length !== allDistractions.length) {
         const serializedEvents = recentDistractions.map((e) => ({
           ...e,
@@ -348,9 +392,13 @@ export class StorageService {
         }));
         await AsyncStorage.setItem(
           StorageService.KEYS.DISTRACTION_EVENTS,
-          JSON.stringify(serializedEvents)
+          JSON.stringify(serializedEvents),
         );
-        console.log(`🗑️ Pruned ${allDistractions.length - recentDistractions.length} old distraction events`);
+        console.log(
+          `🗑️ Pruned ${
+            allDistractions.length - recentDistractions.length
+          } old distraction events`,
+        );
       }
     } catch (error) {
       console.error('Error pruning old focus data:', error);
@@ -366,13 +414,15 @@ export class StorageService {
 
       const allSessions = await this.getFocusSessions();
       const recentSessions = allSessions
-        .filter(s => s.endTime > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) // Last 30 days
+        .filter(
+          (s) => s.endTime > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        ) // Last 30 days
         .sort((a, b) => b.endTime.getTime() - a.endTime.getTime());
 
       // Update streak
       const today = new Date().toDateString();
-      const lastSessionToday = recentSessions.find(s =>
-        s.endTime.toDateString() === today && s.selfReportFocus >= 3
+      const lastSessionToday = recentSessions.find(
+        (s) => s.endTime.toDateString() === today && s.selfReportFocus >= 3,
       );
 
       if (lastSessionToday) {
@@ -383,25 +433,48 @@ export class StorageService {
 
       // Update averages
       if (recentSessions.length > 0) {
-        metrics.averageFocusRating = recentSessions.reduce((sum, s) => sum + s.selfReportFocus, 0) / recentSessions.length;
-        metrics.distractionsPerSession = recentSessions.reduce((sum, s) => sum + s.distractionCount, 0) / recentSessions.length;
-        metrics.focusEfficiency = recentSessions.reduce((sum, s) => sum + (s.durationMinutes / s.plannedDurationMinutes), 0) / recentSessions.length;
+        metrics.averageFocusRating =
+          recentSessions.reduce((sum, s) => sum + s.selfReportFocus, 0) /
+          recentSessions.length;
+        metrics.distractionsPerSession =
+          recentSessions.reduce((sum, s) => sum + s.distractionCount, 0) /
+          recentSessions.length;
+        metrics.focusEfficiency =
+          recentSessions.reduce(
+            (sum, s) => sum + s.durationMinutes / s.plannedDurationMinutes,
+            0,
+          ) / recentSessions.length;
       }
 
       // Calculate daily/weekly focus time
-      const todaySessions = recentSessions.filter(s => s.endTime.toDateString() === today);
-      const weekSessions = recentSessions.filter(s => s.endTime > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+      const todaySessions = recentSessions.filter(
+        (s) => s.endTime.toDateString() === today,
+      );
+      const weekSessions = recentSessions.filter(
+        (s) => s.endTime > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      );
 
-      metrics.dailyFocusTime = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0);
-      metrics.weeklyFocusTime = weekSessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+      metrics.dailyFocusTime = todaySessions.reduce(
+        (sum, s) => sum + s.durationMinutes,
+        0,
+      );
+      metrics.weeklyFocusTime = weekSessions.reduce(
+        (sum, s) => sum + s.durationMinutes,
+        0,
+      );
 
       // Analyze distraction patterns
-      const allDistractionEvents = recentSessions.flatMap(s => s.distractionEvents);
+      const allDistractionEvents = recentSessions.flatMap(
+        (s) => s.distractionEvents,
+      );
       const reasonCounts = new Map<string, number>();
 
-      allDistractionEvents.forEach(event => {
+      allDistractionEvents.forEach((event) => {
         if (event.reason) {
-          reasonCounts.set(event.reason, (reasonCounts.get(event.reason) || 0) + 1);
+          reasonCounts.set(
+            event.reason,
+            (reasonCounts.get(event.reason) || 0) + 1,
+          );
         }
       });
 
@@ -411,10 +484,11 @@ export class StorageService {
         .map(([reason]) => reason);
 
       // Calculate neural reinforcement (positive impact of good sessions)
-      const reinforcingSessions = recentSessions.filter(s =>
-        s.selfReportFocus >= 4 && s.distractionCount <= 2
+      const reinforcingSessions = recentSessions.filter(
+        (s) => s.selfReportFocus >= 4 && s.distractionCount <= 2,
       );
-      metrics.neuralReinforcement = reinforcingSessions.length / Math.max(1, recentSessions.length);
+      metrics.neuralReinforcement =
+        reinforcingSessions.length / Math.max(1, recentSessions.length);
 
       await this.saveFocusHealthMetrics(metrics);
     } catch (error) {
@@ -432,13 +506,15 @@ export class StorageService {
     const today = new Date();
 
     // Check each day backwards from today
-    for (let i = 0; i < 30; i++) { // Max 30 days
+    for (let i = 0; i < 30; i++) {
+      // Max 30 days
       const checkDate = new Date(today);
       checkDate.setDate(today.getDate() - i);
       const dateString = checkDate.toDateString();
 
-      const daySession = sessions.find(s =>
-        s.endTime.toDateString() === dateString && s.selfReportFocus >= 3
+      const daySession = sessions.find(
+        (s) =>
+          s.endTime.toDateString() === dateString && s.selfReportFocus >= 3,
       );
 
       if (daySession) {
@@ -458,7 +534,7 @@ export class StorageService {
     try {
       await AsyncStorage.setItem(
         StorageService.KEYS.FOCUS_HEALTH_METRICS,
-        JSON.stringify(metrics)
+        JSON.stringify(metrics),
       );
     } catch (error: any) {
       console.error('Error saving focus health metrics:', error);
@@ -471,7 +547,9 @@ export class StorageService {
    */
   async getFocusHealthMetrics(): Promise<FocusHealthMetrics> {
     try {
-      const data = await AsyncStorage.getItem(StorageService.KEYS.FOCUS_HEALTH_METRICS);
+      const data = await AsyncStorage.getItem(
+        StorageService.KEYS.FOCUS_HEALTH_METRICS,
+      );
 
       if (!data) {
         return this.getDefaultFocusHealthMetrics();
@@ -537,8 +615,10 @@ export class StorageService {
         elapsed_days: (card as EnhancedFlashcard).elapsed_days || 0,
         scheduled_days: (card as EnhancedFlashcard).scheduled_days || 1,
         // Phase 5.5: Focus impact metrics
-        focusSessionStrength: (card as EnhancedFlashcard).focusSessionStrength || 0,
-        distractionWeakening: (card as EnhancedFlashcard).distractionWeakening || 0,
+        focusSessionStrength:
+          (card as EnhancedFlashcard).focusSessionStrength || 0,
+        distractionWeakening:
+          (card as EnhancedFlashcard).distractionWeakening || 0,
       }));
 
       // Save to both new and legacy locations for compatibility
@@ -691,7 +771,7 @@ export class StorageService {
 
       await AsyncStorage.setItem(
         StorageService.KEYS.LOGIC_NODES,
-        JSON.stringify(serializedNodes)
+        JSON.stringify(serializedNodes),
       );
 
       console.log(`💾 Saved ${nodes.length} logic nodes`);
@@ -777,10 +857,13 @@ export class StorageService {
     }
   }
 
-  async updateLogicNode(nodeId: string, updates: Partial<LogicNode>): Promise<LogicNode | null> {
+  async updateLogicNode(
+    nodeId: string,
+    updates: Partial<LogicNode>,
+  ): Promise<LogicNode | null> {
     try {
       const nodes = await this.getLogicNodes();
-      const nodeIndex = nodes.findIndex(node => node.id === nodeId);
+      const nodeIndex = nodes.findIndex((node) => node.id === nodeId);
 
       if (nodeIndex === -1) {
         return null;
@@ -1036,6 +1119,91 @@ export class StorageService {
     }
   }
 
+  // ==================== SOUNDSCAPE STORAGE HELPERS (Phase 7) ====================
+
+  /**
+   * Save sound settings (typed)
+   */
+  async saveSoundSettings(settings: SoundSettings): Promise<void> {
+    try {
+      const toSave = { ...settings, updatedAt: new Date().toISOString() };
+      await AsyncStorage.setItem(
+        StorageService.KEYS.SOUND_SETTINGS,
+        JSON.stringify(toSave),
+      );
+      console.log('💾 Saved sound settings');
+    } catch (error: any) {
+      console.error('Error saving sound settings:', error);
+      throw new Error(
+        `Failed to save sound settings: ${error?.message || String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Load sound settings (typed). Returns defaults if not present.
+   */
+  async getSoundSettings(): Promise<SoundSettings> {
+    try {
+      const data = await AsyncStorage.getItem(
+        StorageService.KEYS.SOUND_SETTINGS,
+      );
+      if (!data) return { volume: 0.7 };
+      return JSON.parse(data) as SoundSettings;
+    } catch (error) {
+      console.error('Error loading sound settings:', error);
+      return { volume: 0.7 };
+    }
+  }
+
+  /**
+   * Append a neural performance log
+   */
+  async appendNeuralLog(entry: NeuralLogEntry): Promise<void> {
+    try {
+      const logs = await this.getNeuralLogs();
+      logs.push(entry);
+      await AsyncStorage.setItem(
+        StorageService.KEYS.NEURAL_LOGS,
+        JSON.stringify(logs),
+      );
+      console.log(`💾 Appended neural log: ${entry.id}`);
+    } catch (error: any) {
+      console.error('Error appending neural log:', error);
+      throw new Error(
+        `Failed to append neural log: ${error?.message || String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Reset optimal profiles (used by tests and by user 'Reset Sound Learning')
+   */
+  async resetOptimalProfiles(): Promise<void> {
+    try {
+      const settings = await this.getSoundSettings();
+      settings.optimalProfile = {};
+      await this.saveSoundSettings(settings);
+      console.log('🔁 Optimal profiles reset');
+    } catch (error) {
+      console.error('Error resetting optimal profiles:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get neural performance logs
+   */
+  async getNeuralLogs(): Promise<NeuralLogEntry[]> {
+    try {
+      const raw = await AsyncStorage.getItem(StorageService.KEYS.NEURAL_LOGS);
+      if (!raw) return [];
+      return JSON.parse(raw) as NeuralLogEntry[];
+    } catch (error) {
+      console.error('Error loading neural logs:', error);
+      return [];
+    }
+  }
 
   private getDefaultSettings(): Settings {
     return {
@@ -1100,6 +1268,220 @@ export class StorageService {
     }
   }
 
+  // ==================== PHASE 6: SPEED READING OPERATIONS ====================
+
+  /**
+   * Save a reading session with neural map integration
+   */
+  async saveReadingSession(session: ReadingSession): Promise<void> {
+    try {
+      const sessions = await this.getReadingSessions();
+      sessions.push(session);
+      await this.saveReadingSessions(sessions);
+      console.log(`💾 Saved reading session: ${session.id}`);
+    } catch (error: any) {
+      console.error('Error saving reading session:', error);
+      throw new Error(`Failed to save reading session: ${error.message}`);
+    }
+  }
+
+  /**
+   * Save multiple reading sessions
+   */
+  async saveReadingSessions(sessions: ReadingSession[]): Promise<void> {
+    try {
+      const serializedSessions = sessions.map((session) => ({
+        ...session,
+        startTime: session.startTime.toISOString(),
+        endTime: session.endTime.toISOString(),
+        nextReviewDate: session.nextReviewDate?.toISOString(),
+        lastAccessed: session.lastAccessed?.toISOString(),
+        created: session.created.toISOString(),
+        modified: session.modified.toISOString(),
+        sourceLinks: session.sourceLinks?.map(link => ({
+          ...link,
+          extractedAt: link.extractedAt.toISOString(),
+        })) || [],
+      }));
+
+      await AsyncStorage.setItem(
+        StorageService.KEYS.READING_SESSIONS,
+        JSON.stringify(serializedSessions),
+      );
+    } catch (error: any) {
+      console.error('Error saving reading sessions:', error);
+      throw new Error(`Failed to save reading sessions: ${error.message}`);
+    }
+  }
+
+  /**
+   * Load all reading sessions
+   */
+  async getReadingSessions(): Promise<ReadingSession[]> {
+    try {
+      const data = await AsyncStorage.getItem(StorageService.KEYS.READING_SESSIONS);
+      if (!data) return [];
+
+      const sessions = JSON.parse(data);
+      return sessions.map((session: any) => ({
+        ...session,
+        startTime: new Date(session.startTime),
+        endTime: new Date(session.endTime),
+        nextReviewDate: session.nextReviewDate ? new Date(session.nextReviewDate) : undefined,
+        lastAccessed: session.lastAccessed ? new Date(session.lastAccessed) : undefined,
+        created: new Date(session.created),
+        modified: new Date(session.modified),
+        sourceLinks: session.sourceLinks?.map((link: any) => ({
+          ...link,
+          extractedAt: new Date(link.extractedAt),
+        })) || [],
+      }));
+    } catch (error) {
+      console.error('Error loading reading sessions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Save source links for neural map integration
+   */
+  async saveSourceLinks(links: SourceLink[]): Promise<void> {
+    try {
+      const existingLinks = await this.getSourceLinks();
+      const allLinks = [...existingLinks, ...links];
+      
+      const serializedLinks = allLinks.map(link => ({
+        ...link,
+        extractedAt: link.extractedAt.toISOString(),
+      }));
+
+      await AsyncStorage.setItem(
+        StorageService.KEYS.READING_SOURCE_LINKS,
+        JSON.stringify(serializedLinks),
+      );
+      console.log(`💾 Saved ${links.length} source links`);
+    } catch (error: any) {
+      console.error('Error saving source links:', error);
+      throw new Error(`Failed to save source links: ${error.message}`);
+    }
+  }
+
+  /**
+   * Load source links
+   */
+  async getSourceLinks(): Promise<SourceLink[]> {
+    try {
+      const data = await AsyncStorage.getItem(StorageService.KEYS.READING_SOURCE_LINKS);
+      if (!data) return [];
+
+      const links = JSON.parse(data);
+      return links.map((link: any) => ({
+        ...link,
+        extractedAt: new Date(link.extractedAt),
+      }));
+    } catch (error) {
+      console.error('Error loading source links:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get reading analytics for dashboard
+   */
+  async getReadingAnalytics(): Promise<{
+    averageWPM: number;
+    averageComprehension: number;
+    readingStreak: number;
+    totalSessions: number;
+    totalWordsRead: number;
+    performanceByDifficulty: Record<string, { wpm: number; comprehension: number; sessions: number }>;
+    bestReadingHour: number;
+    conceptsExtracted: number;
+  }> {
+    try {
+      const sessions = await this.getReadingSessions();
+      
+      if (sessions.length === 0) {
+        return {
+          averageWPM: 0,
+          averageComprehension: 0,
+          readingStreak: 0,
+          totalSessions: 0,
+          totalWordsRead: 0,
+          performanceByDifficulty: {},
+          bestReadingHour: 9,
+          conceptsExtracted: 0,
+        };
+      }
+
+      const totalSessions = sessions.length;
+      const averageWPM = sessions.reduce((sum, s) => sum + s.wpmAchieved, 0) / totalSessions;
+      const averageComprehension = sessions.reduce((sum, s) => sum + s.comprehensionScore, 0) / totalSessions;
+      const totalWordsRead = sessions.reduce((sum, s) => sum + s.wordCount, 0);
+      const conceptsExtracted = sessions.reduce((sum, s) => sum + s.conceptsIdentified.length, 0);
+      
+      // Calculate reading streak
+      const today = new Date();
+      let streak = 0;
+      for (let i = 0; i < 30; i++) {
+        const checkDate = new Date(today);
+        checkDate.setDate(today.getDate() - i);
+        const hasSessionOnDate = sessions.some(s => 
+          s.endTime.toDateString() === checkDate.toDateString()
+        );
+        if (hasSessionOnDate) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+      
+      // Performance by difficulty
+      const performanceByDifficulty: Record<string, { wpm: number; comprehension: number; sessions: number }> = {};
+      ['easy', 'medium', 'hard', 'technical'].forEach(difficulty => {
+        const diffSessions = sessions.filter(s => s.textDifficulty === difficulty);
+        if (diffSessions.length > 0) {
+          performanceByDifficulty[difficulty] = {
+            wpm: diffSessions.reduce((sum, s) => sum + s.wpmAchieved, 0) / diffSessions.length,
+            comprehension: diffSessions.reduce((sum, s) => sum + s.comprehensionScore, 0) / diffSessions.length,
+            sessions: diffSessions.length,
+          };
+        }
+      });
+      
+      // Best reading hour
+      const hourCounts = new Array(24).fill(0);
+      sessions.forEach(s => {
+        const hour = s.startTime.getHours();
+        hourCounts[hour]++;
+      });
+      const bestReadingHour = hourCounts.indexOf(Math.max(...hourCounts));
+      
+      return {
+        averageWPM,
+        averageComprehension,
+        readingStreak: streak,
+        totalSessions,
+        totalWordsRead,
+        performanceByDifficulty,
+        bestReadingHour,
+        conceptsExtracted,
+      };
+    } catch (error) {
+      console.error('Error calculating reading analytics:', error);
+      return {
+        averageWPM: 0,
+        averageComprehension: 0,
+        readingStreak: 0,
+        totalSessions: 0,
+        totalWordsRead: 0,
+        performanceByDifficulty: {},
+        bestReadingHour: 9,
+        conceptsExtracted: 0,
+      };
+    }
+  }
+
   // ==================== EXPORT/IMPORT OPERATIONS ====================
 
   async exportAllData(): Promise<string> {
@@ -1115,6 +1497,8 @@ export class StorageService {
         focusSessions,
         distractionEvents,
         focusHealthMetrics,
+        readingSessions,
+        sourceLinks,
       ] = await Promise.all([
         this.getFlashcards(),
         this.getStudySessions(),
@@ -1126,6 +1510,8 @@ export class StorageService {
         this.getFocusSessions(),
         this.getDistractionEvents(),
         this.getFocusHealthMetrics(),
+        this.getReadingSessions(),
+        this.getSourceLinks(),
       ]);
 
       const exportData = {
@@ -1138,6 +1524,9 @@ export class StorageService {
         logicNodes,
         // Phase 5.5: Focus reinforcement data
         focusSessions,
+        // Phase 6: Speed reading data
+        readingSessions,
+        sourceLinks,
         distractionEvents,
         focusHealthMetrics,
         exportDate: new Date().toISOString(),
@@ -1189,12 +1578,14 @@ export class StorageService {
       const serializedCards = cards.map((card) => ({
         ...card,
         due: card.due.toISOString(),
-        last_review: card.last_review ? card.last_review.toISOString() : undefined,
+        last_review: card.last_review
+          ? card.last_review.toISOString()
+          : undefined,
       }));
 
       await AsyncStorage.setItem(
         StorageService.KEYS.FSRS_CARDS,
-        JSON.stringify(serializedCards)
+        JSON.stringify(serializedCards),
       );
     } catch (error: any) {
       console.error('Error saving FSRS cards:', error);
@@ -1231,7 +1622,7 @@ export class StorageService {
 
       await AsyncStorage.setItem(
         StorageService.KEYS.FSRS_REVIEW_LOGS,
-        JSON.stringify(serializedLogs)
+        JSON.stringify(serializedLogs),
       );
     } catch (error: any) {
       console.error('Error saving FSRS review logs:', error);
@@ -1241,7 +1632,9 @@ export class StorageService {
 
   async getFSRSReviewLogs(): Promise<FSRSReviewLog[]> {
     try {
-      const data = await AsyncStorage.getItem(StorageService.KEYS.FSRS_REVIEW_LOGS);
+      const data = await AsyncStorage.getItem(
+        StorageService.KEYS.FSRS_REVIEW_LOGS,
+      );
 
       if (!data) {
         return [];
@@ -1413,6 +1806,109 @@ export class StorageService {
     return streakDays;
   }
 
+  // ==================== PHASE 6: SPEED READING PERSISTENCE ====================
+  async saveReadingSession(session: ReadingSession): Promise<void> {
+    try {
+      const sessions = await this.getReadingSessions();
+      const serialized = {
+        ...session,
+        startTime: session.startTime.toISOString(),
+        endTime: session.endTime.toISOString(),
+        created: session.created.toISOString(),
+        modified: session.modified.toISOString(),
+        sourceLinks: session.sourceLinks.map((l) => ({
+          ...l,
+          extractedAt: l.extractedAt.toISOString(),
+        })),
+      } as any;
+      sessions.push(session); // push hydrated; we'll serialize whole array below
+
+      const serializedSessions = sessions.map((s) => ({
+        ...s,
+        startTime: s.startTime.toISOString(),
+        endTime: s.endTime.toISOString(),
+        created: s.created.toISOString(),
+        modified: s.modified.toISOString(),
+        sourceLinks: (s.sourceLinks || []).map((l) => ({
+          ...l,
+          extractedAt: l.extractedAt.toISOString(),
+        })),
+      }));
+
+      await AsyncStorage.setItem(
+        StorageService.KEYS.READING_SESSIONS,
+        JSON.stringify(serializedSessions),
+      );
+      console.log(`💾 Saved reading session: ${session.id}`);
+    } catch (error: any) {
+      console.error('Error saving reading session:', error);
+      throw new Error(
+        `Failed to save reading session: ${error?.message || 'Unknown error'}`,
+      );
+    }
+  }
+
+  async getReadingSessions(): Promise<ReadingSession[]> {
+    try {
+      const raw = await AsyncStorage.getItem(
+        StorageService.KEYS.READING_SESSIONS,
+      );
+      if (!raw) return [];
+      const arr = JSON.parse(raw) as any[];
+      return arr.map(
+        (s) =>
+          ({
+            ...s,
+            startTime: new Date(s.startTime),
+            endTime: new Date(s.endTime),
+            created: new Date(s.created),
+            modified: new Date(s.modified),
+            sourceLinks: (s.sourceLinks || []).map((l: any) => ({
+              ...l,
+              extractedAt: new Date(l.extractedAt),
+            })),
+          } as ReadingSession),
+      );
+    } catch (error) {
+      console.error('Error getting reading sessions:', error);
+      return [];
+    }
+  }
+
+  async saveSourceLinks(links: SourceLink[]): Promise<void> {
+    try {
+      const existing = await this.getSourceLinks();
+      const merged = [...existing, ...links];
+      const serialized = merged.map((l) => ({
+        ...l,
+        extractedAt: l.extractedAt.toISOString(),
+      }));
+      await AsyncStorage.setItem(
+        StorageService.KEYS.READING_SOURCE_LINKS,
+        JSON.stringify(serialized),
+      );
+    } catch (error: any) {
+      console.error('Error saving source links:', error);
+      throw new Error(
+        `Failed to save source links: ${error?.message || 'Unknown error'}`,
+      );
+    }
+  }
+
+  async getSourceLinks(): Promise<SourceLink[]> {
+    try {
+      const raw = await AsyncStorage.getItem(
+        StorageService.KEYS.READING_SOURCE_LINKS,
+      );
+      if (!raw) return [];
+      const arr = JSON.parse(raw) as any[];
+      return arr.map((l) => ({ ...l, extractedAt: new Date(l.extractedAt) }));
+    } catch (error) {
+      console.error('Error getting source links:', error);
+      return [];
+    }
+  }
+
   async clearAllData(): Promise<void> {
     try {
       const keys = Object.values(StorageService.KEYS);
@@ -1420,7 +1916,9 @@ export class StorageService {
       console.log('🗑️ All data cleared');
     } catch (error: any) {
       console.error('Error Clearing Data:', error);
-      throw new Error(`Failed to Clear Data: ${error?.message || 'Unknown error'}`);
+      throw new Error(
+        `Failed to Clear Data: ${error?.message || 'Unknown error'}`,
+      );
     }
   }
 
@@ -1438,13 +1936,14 @@ export class StorageService {
       today.setHours(0, 0, 0, 0);
 
       // Check each day backwards from today
-      for (let i = 0; i < 365; i++) { // Max 365 days
+      for (let i = 0; i < 365; i++) {
+        // Max 365 days
         const checkDate = new Date(today);
         checkDate.setDate(today.getDate() - i);
         const dateString = checkDate.toDateString();
 
-        const daySession = sortedSessions.find(s =>
-          s.startTime.toDateString() === dateString && s.completed
+        const daySession = sortedSessions.find(
+          (s) => s.startTime.toDateString() === dateString && s.completed,
         );
 
         if (daySession) {
@@ -1460,7 +1959,11 @@ export class StorageService {
       return 0;
     }
   }
-
 }
 
 export default StorageService;
+
+// Phase 6: Speed Reading persistence additions
+// Methods appended at end to avoid disrupting existing API
+
+// Extend StorageService class with Phase 6 methods

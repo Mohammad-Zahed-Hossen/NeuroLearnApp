@@ -1,6 +1,6 @@
 import { StorageService } from './StorageService';
 import { SpacedRepetitionService } from './SpacedRepetitionService';
-import { Flashcard, Task, StudySession, MemoryPalace } from '../types';
+import { ReadingSession, SourceLink } from './SpeedReadingService';
 
 /**
  * Enhanced MindMapGeneratorService with Phase 2: Data Intelligence & Logic
@@ -63,7 +63,7 @@ export interface NeuralNode {
   sourceId: string;
 
   // Phase 2 Enhancement: Health Scoring
-  healthScore?: number;      // Calculated health score (0-1)
+  healthScore?: number; // Calculated health score (0-1)
   healthCategory?: 'critical' | 'moderate' | 'healthy';
 
   // Performance optimization
@@ -80,7 +80,13 @@ export interface NeuralLink {
   weight: number;
 
   // Connection semantics - Enhanced for Logic Structure
-  type: 'association' | 'prerequisite' | 'similarity' | 'temporal' | 'spatial' | 'logical';
+  type:
+    | 'association'
+    | 'prerequisite'
+    | 'similarity'
+    | 'temporal'
+    | 'spatial'
+    | 'logical';
 
   // Learning and usage metrics
   activationCount: number;
@@ -166,6 +172,12 @@ export interface NeuralGraph {
     clusterHealthScores: Map<string, number>;
     pathEfficiencyScores: Map<string, number>;
   };
+
+  // Phase 6: Speed Reading Integration
+  totalReadingSessions?: number;
+  readingEfficiencyFactor?: number;
+  averageReadingWPM?: number;
+  readingComprehensionScore?: number;
 }
 
 /**
@@ -217,13 +229,14 @@ export class MindMapGenerator {
       }
 
       // Load all data sources in parallel
-      const [flashcards, tasks, sessions, palaces, logicNodes] =
+      const [flashcards, tasks, sessions, palaces, logicNodes, readingSessions] =
         await Promise.all([
           this.storage.getFlashcards(),
           this.storage.getTasks(),
           this.storage.getStudySessions(),
           this.storage.getMemoryPalaces(),
           this.storage.getLogicNodes(),
+          this.storage.getReadingSessions(),
         ]);
 
       // Early return if no data
@@ -231,7 +244,8 @@ export class MindMapGenerator {
         !flashcards.length &&
         !tasks.length &&
         !palaces.length &&
-        !logicNodes.length
+        !logicNodes.length &&
+        !readingSessions.length
       ) {
         return this.createEmptyGraph();
       }
@@ -243,6 +257,7 @@ export class MindMapGenerator {
         () => this.generateMemoryPalaceNodes(palaces),
         () => this.generateLogicNodes(logicNodes, sessions),
         () => this.generateDerivedNodes(flashcards, tasks),
+        () => this.generateReadingNodes(readingSessions),
       ];
 
       const nodeArrays = await Promise.all(
@@ -291,6 +306,7 @@ export class MindMapGenerator {
         healthMetrics,
         clusters,
         learningPaths,
+        readingSessions,
       );
 
       // Cache the result
@@ -950,6 +966,72 @@ export class MindMapGenerator {
   }
 
   /**
+   * Generate reading session nodes for neural map integration
+   */
+  private generateReadingNodes(readingSessions: any[]): NeuralNode[] {
+    try {
+      return readingSessions.map((session: any, index: number) => {
+        const efficiency = this.calculateReadingEfficiency(session);
+        const cognitiveLoad = 0.3; // Reading is generally lower cognitive load
+        
+        const node: NeuralNode = {
+          id: `reading_${session.id}`,
+          type: 'memory',
+          x: this.generateInitialPosition(index, readingSessions.length).x + 150,
+          y: this.generateInitialPosition(index, readingSessions.length).y - 80,
+          radius: this.calculateNodeRadius(efficiency, cognitiveLoad, 'memory'),
+          activationLevel: efficiency,
+          isActive: efficiency > 0.7,
+          label: session.textTitle || `Reading ${index + 1}`,
+          content: `${session.wpmAchieved} WPM, ${Math.round(session.comprehensionScore * 100)}% comprehension`,
+          category: `reading_${session.textDifficulty || 'medium'}`,
+          masteryLevel: efficiency,
+          cognitiveLoad,
+          lastAccessed: session.endTime,
+          accessCount: 1,
+          easeFactor: 2.5,
+          interval: 7,
+          repetitions: 1,
+          nextReviewDate: session.endTime,
+          sourceType: 'derived',
+          sourceId: session.id,
+        };
+        
+        node.healthScore = this.calculateNodeHealthScore(node);
+        node.healthCategory = this.categorizeNodeHealth(node.healthScore);
+        return node;
+      });
+    } catch (e) {
+      console.warn('generateReadingNodes failed', e);
+      return [];
+    }
+  }
+  
+  /**
+   * Calculate reading efficiency from session data
+   */
+  private calculateReadingEfficiency(session: any): number {
+    try {
+      let efficiency = 0;
+      
+      // WPM efficiency (normalized to 0-1)
+      const wpmScore = Math.min(1, session.wpmAchieved / 500); // 500 WPM as max
+      efficiency += wpmScore * 0.4;
+      
+      // Comprehension score
+      efficiency += (session.comprehensionScore || 0.8) * 0.4;
+      
+      // Concept extraction bonus
+      const conceptBonus = Math.min(0.2, (session.conceptsIdentified?.length || 0) / 10 * 0.2);
+      efficiency += conceptBonus;
+      
+      return Math.max(0, Math.min(1, efficiency));
+    } catch (e) {
+      return 0.6; // Default efficiency
+    }
+  }
+
+  /**
    * Create enhanced graph with Phase 2 analytics
    */
   private async createEnhancedGraph(
@@ -958,6 +1040,7 @@ export class MindMapGenerator {
     healthMetrics: NeuralGraph['healthMetrics'] | undefined,
     clusters: KnowledgeCluster[],
     learningPaths: LearningPath[],
+    readingSessions: any[] = [],
   ): Promise<NeuralGraph> {
     // Calculate core metrics
     const totalActivationLevel = this.calculateTotalActivation(nodes);
@@ -997,6 +1080,18 @@ export class MindMapGenerator {
       pathEfficiencyScores.set(path.id, efficiency);
     });
 
+    // Phase 6: Reading analytics
+    const totalReadingSessions = readingSessions.length;
+    const readingEfficiencyFactor = readingSessions.length > 0 
+      ? readingSessions.reduce((sum, s) => sum + this.calculateReadingEfficiency(s), 0) / readingSessions.length
+      : 0;
+    const averageReadingWPM = readingSessions.length > 0
+      ? readingSessions.reduce((sum, s) => sum + (s.wpmAchieved || 0), 0) / readingSessions.length
+      : 0;
+    const readingComprehensionScore = readingSessions.length > 0
+      ? readingSessions.reduce((sum, s) => sum + (s.comprehensionScore || 0), 0) / readingSessions.length
+      : 0;
+
     return {
       nodes,
       links,
@@ -1011,6 +1106,12 @@ export class MindMapGenerator {
       healthMetrics: safeHealthMetrics,
       clusters,
       learningPaths,
+
+      // Phase 6: Speed Reading Integration
+      totalReadingSessions,
+      readingEfficiencyFactor,
+      averageReadingWPM,
+      readingComprehensionScore,
 
       metrics: {
         density: this.calculateGraphDensity(nodes, links),
@@ -1057,64 +1158,412 @@ export class MindMapGenerator {
     return totalProgress / logicNodes.length;
   }
 
-  // Placeholder methods (to be implemented or kept from existing version)
+  // Placeholder methods (to be implemented or kept from an existing version)
   private generateTaskNodes(tasks: any[]): NeuralNode[] {
-    return [];
+    try {
+      return tasks.map((task: any, idx: number) => {
+        const mastery = task.completed ? 1 : 0.2;
+        const cognitiveLoad = 0.4;
+        const node: NeuralNode = {
+          id: `task_${task.id || idx}`,
+          type: 'goal',
+          x: this.generateInitialPosition(idx, tasks.length).x - 30,
+          y: this.generateInitialPosition(idx, tasks.length).y - 30,
+          radius: this.calculateNodeRadius(mastery, cognitiveLoad, 'goal'),
+          activationLevel: this.calculateActivationLevel(
+            !task.completed,
+            mastery,
+            cognitiveLoad,
+          ),
+          isActive: !task.completed,
+          label: task.title || task.name || `Task ${idx}`,
+          content: task.description || '',
+          category: task.project || task.category || 'tasks',
+          masteryLevel: mastery,
+          cognitiveLoad,
+          lastAccessed: task.modified || new Date(),
+          accessCount: task.accessCount || 1,
+          easeFactor: task.easeFactor || 2.5,
+          interval: task.interval || 1,
+          repetitions: task.repetitions || 0,
+          nextReviewDate: task.nextReview || new Date(),
+          sourceType: 'task',
+          sourceId: task.id || `${idx}`,
+        };
+
+        node.healthScore = this.calculateNodeHealthScore(node);
+        node.healthCategory = this.categorizeNodeHealth(node.healthScore);
+        return node;
+      });
+    } catch (e) {
+      console.warn('generateTaskNodes failed', e);
+      return [];
+    }
   }
   private generateMemoryPalaceNodes(palaces: any[]): NeuralNode[] {
-    return [];
+    try {
+      return palaces.map((palace: any, idx: number) => {
+        const mastery = palace.masteryLevel || 0.6;
+        const cognitiveLoad = 0.3;
+        const node: NeuralNode = {
+          id: `palace_${palace.id || idx}`,
+          type: 'memory',
+          x: this.generateInitialPosition(idx, palaces.length).x,
+          y: this.generateInitialPosition(idx, palaces.length).y - 120,
+          radius: this.calculateNodeRadius(mastery, cognitiveLoad, 'memory'),
+          activationLevel: this.calculateActivationLevel(
+            true,
+            mastery,
+            cognitiveLoad,
+          ),
+          isActive: true,
+          label: palace.name || `Memory Palace ${idx}`,
+          content: palace.description || '',
+          category: palace.category || 'memory_palace',
+          masteryLevel: mastery,
+          cognitiveLoad,
+          lastAccessed: palace.lastAccessed || new Date(),
+          accessCount: palace.accessCount || 1,
+          easeFactor: palace.easeFactor || 2.5,
+          interval: palace.interval || 7,
+          repetitions: palace.repetitions || 0,
+          nextReviewDate: palace.nextReview || new Date(),
+          sourceType: 'palace',
+          sourceId: palace.id || `${idx}`,
+        };
+
+        node.healthScore = this.calculateNodeHealthScore(node);
+        node.healthCategory = this.categorizeNodeHealth(node.healthScore);
+        return node;
+      });
+    } catch (e) {
+      console.warn('generateMemoryPalaceNodes failed', e);
+      return [];
+    }
   }
   private generateDerivedNodes(flashcards: any[], tasks: any[]): NeuralNode[] {
-    return [];
+    try {
+      const derived: NeuralNode[] = [];
+      // Simple derived skills: group flashcard categories to produce skill nodes
+      const categories = new Map<string, any[]>();
+      flashcards.forEach((c) => {
+        const cat = c.category || 'general';
+        if (!categories.has(cat)) categories.set(cat, []);
+        categories.get(cat)!.push(c);
+      });
+
+      let idx = 0;
+      for (const [cat, cards] of categories.entries()) {
+        const mastery =
+          cards.reduce(
+            (s: number, c: any) =>
+              s + (c.easeFactor ? Math.min(1, (c.easeFactor - 1) / 3) : 0.5),
+            0,
+          ) / cards.length;
+        const node: NeuralNode = {
+          id: `skill_${cat}`,
+          type: 'skill',
+          x: this.generateInitialPosition(idx, categories.size).x + 50,
+          y: this.generateInitialPosition(idx, categories.size).y + 50,
+          radius: this.calculateNodeRadius(mastery, 0.4, 'skill'),
+          activationLevel: this.calculateActivationLevel(false, mastery, 0.4),
+          isActive: false,
+          label: `Skill: ${this.formatCategoryName(cat)}`,
+          content: `Derived skill from ${cards.length} cards`,
+          category: cat,
+          masteryLevel: mastery,
+          cognitiveLoad: 0.4,
+          lastAccessed: new Date(),
+          accessCount: cards.length,
+          easeFactor: 2.5,
+          interval: 7,
+          repetitions: 0,
+          nextReviewDate: new Date(),
+          sourceType: 'derived',
+          sourceId: `derived_${cat}`,
+        };
+
+        node.healthScore = this.calculateNodeHealthScore(node);
+        node.healthCategory = this.categorizeNodeHealth(node.healthScore);
+        derived.push(node);
+        idx++;
+      }
+
+      return derived;
+    } catch (e) {
+      console.warn('generateDerivedNodes failed', e);
+      return [];
+    }
   }
   private generateCategoryLinks(nodes: NeuralNode[]): NeuralLink[] {
-    return [];
+    try {
+      const links: NeuralLink[] = [];
+      // Link nodes that share the same category
+      const byCategory = new Map<string, NeuralNode[]>();
+      nodes.forEach((n) => {
+        const cat = n.category || 'uncategorized';
+        if (!byCategory.has(cat)) byCategory.set(cat, []);
+        byCategory.get(cat)!.push(n);
+      });
+
+      for (const [cat, group] of byCategory.entries()) {
+        if (group.length < 2) continue;
+        for (let i = 0; i < group.length; i++) {
+          for (let j = i + 1; j < group.length; j++) {
+            links.push({
+              id: `cat_${group[i].id}_${group[j].id}`,
+              source: group[i].id,
+              target: group[j].id,
+              strength: 0.5,
+              weight: 0.3,
+              type: 'association',
+              activationCount: 0,
+              lastActivated: new Date(),
+              confidence: 0.4,
+            });
+          }
+        }
+      }
+
+      return links;
+    } catch (e) {
+      console.warn('generateCategoryLinks failed', e);
+      return [];
+    }
   }
   private generateSemanticLinks(nodes: NeuralNode[]): NeuralLink[] {
-    return [];
+    try {
+      const links: NeuralLink[] = [];
+      // Very simple semantic linking: if labels share words, link them
+      const sanitize = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = sanitize(nodes[i].label || '');
+          const b = sanitize(nodes[j].label || '');
+          const aWords = new Set(a.split(' ').filter(Boolean));
+          const bWords = new Set(b.split(' ').filter(Boolean));
+          const common = Array.from(aWords).filter((w) => bWords.has(w));
+          if (common.length > 0) {
+            links.push({
+              id: `sem_${nodes[i].id}_${nodes[j].id}`,
+              source: nodes[i].id,
+              target: nodes[j].id,
+              strength: Math.min(0.9, 0.2 + common.length * 0.1),
+              weight: 0.2,
+              type: 'similarity',
+              activationCount: 0,
+              lastActivated: new Date(),
+              confidence: Math.min(0.9, 0.3 + common.length * 0.1),
+            });
+          }
+        }
+      }
+
+      return links;
+    } catch (e) {
+      console.warn('generateSemanticLinks failed', e);
+      return [];
+    }
   }
   private generateTemporalLinks(
     nodes: NeuralNode[],
     sessions: any[],
   ): NeuralLink[] {
-    return [];
+    try {
+      const links: NeuralLink[] = [];
+      // Link nodes that were referenced in the same session (co-occurrence)
+      sessions.forEach((s: any) => {
+        const refs = (s.sourceLinks || [])
+          .map((l: any) => l.conceptId)
+          .filter(Boolean);
+        for (let i = 0; i < refs.length; i++) {
+          for (let j = i + 1; j < refs.length; j++) {
+            const a = refs[i];
+            const b = refs[j];
+            links.push({
+              id: `temp_${s.id}_${a}_${b}`,
+              source: a,
+              target: b,
+              strength: 0.3,
+              weight: 0.2,
+              type: 'temporal',
+              activationCount: 0,
+              lastActivated: new Date(s.endTime || Date.now()),
+              confidence: 0.4,
+            });
+          }
+        }
+      });
+
+      return links;
+    } catch (e) {
+      console.warn('generateTemporalLinks failed', e);
+      return [];
+    }
   }
   private generateGoalLinks(nodes: NeuralNode[], tasks: any[]): NeuralLink[] {
-    return [];
+    try {
+      const links: NeuralLink[] = [];
+      // For each task node, try to find nodes with matching category or shared words
+      tasks.forEach((task: any) => {
+        const taskNodeId = `task_${task.id}`;
+        const candidates = nodes.filter(
+          (n) =>
+            n.category === task.project ||
+            (n.label &&
+              task.title &&
+              n.label.toLowerCase().includes((task.title || '').toLowerCase())),
+        );
+        candidates.forEach((cand) => {
+          links.push({
+            id: `goal_${taskNodeId}_${cand.id}`,
+            source: taskNodeId,
+            target: cand.id,
+            strength: 0.45,
+            weight: 0.35,
+            type: 'prerequisite',
+            activationCount: 0,
+            lastActivated: new Date(),
+            confidence: 0.5,
+          });
+        });
+      });
+
+      return links;
+    } catch (e) {
+      console.warn('generateGoalLinks failed', e);
+      return [];
+    }
   }
   private generatePrerequisiteLinks(nodes: NeuralNode[]): NeuralLink[] {
-    return [];
+    try {
+      const links: NeuralLink[] = [];
+      const concepts = nodes.filter(
+        (n) => n.type === 'concept' || n.type === 'skill',
+      );
+      concepts.sort((a, b) => (a.masteryLevel || 0) - (b.masteryLevel || 0));
+      for (let i = 0; i < concepts.length - 1; i++) {
+        const a = concepts[i];
+        const b = concepts[i + 1];
+        links.push({
+          id: `prereq_${a.id}_${b.id}`,
+          source: a.id,
+          target: b.id,
+          strength: 0.35,
+          weight: 0.25,
+          type: 'prerequisite',
+          activationCount: 0,
+          lastActivated: new Date(),
+          confidence: 0.45,
+        });
+      }
+      return links;
+    } catch (e) {
+      console.warn('generatePrerequisiteLinks failed', e);
+      return [];
+    }
   }
   private generateLogicalLinks(nodes: NeuralNode[]): NeuralLink[] {
-    return [];
+    try {
+      const links: NeuralLink[] = [];
+      const logicNodes = nodes.filter((n) => n.type === 'logic');
+      const conceptNodes = nodes.filter((n) => n.type === 'concept');
+
+      logicNodes.forEach((ln) => {
+        const text =
+          typeof ln.content === 'string'
+            ? ln.content
+            : JSON.stringify(ln.content);
+        conceptNodes.forEach((cn) => {
+          const label = (cn.label || '').toLowerCase();
+          if (label && text.toLowerCase().includes(label.split(' ')[0])) {
+            links.push({
+              id: `logical_${ln.id}_${cn.id}`,
+              source: ln.id,
+              target: cn.id,
+              strength: 0.5,
+              weight: 0.4,
+              type: 'logical',
+              activationCount: 0,
+              lastActivated: new Date(),
+              confidence: 0.6,
+            });
+          }
+        });
+      });
+
+      return links;
+    } catch (e) {
+      console.warn('generateLogicalLinks failed', e);
+      return [];
+    }
   }
 
   private calculateEnhancedMastery(card: any, sessions: any[]): number {
-    return 0.5;
+    try {
+      const reps = card.repetitions || 0;
+      const ef = card.easeFactor || 2.5;
+      return Math.max(0, Math.min(1, Math.tanh(reps / 8) + (ef - 2.5) * 0.05));
+    } catch (e) {
+      return 0.5;
+    }
   }
   private calculateCognitiveLoad(card: any, masteryLevel: number): number {
-    return 0.5;
+    try {
+      const length =
+        typeof card === 'string'
+          ? card.length
+          : (card.front || card.content || '').length || 100;
+      const lenFactor = Math.min(1, length / 400);
+      return Math.max(
+        0.1,
+        Math.min(1, 0.3 + (1 - masteryLevel) * 0.5 + lenFactor * 0.2),
+      );
+    } catch (e) {
+      return 0.5;
+    }
   }
   private calculateNodeRadius(
     masteryLevel: number,
     cognitiveLoad: number,
     type: string,
   ): number {
-    return 15;
+    const base = type === 'goal' || type === 'skill' ? 18 : 14;
+    return Math.round(
+      base + (masteryLevel || 0) * 6 + (cognitiveLoad || 0) * 3,
+    );
   }
   private calculateActivationLevel(
     isActive: boolean,
     masteryLevel: number,
     cognitiveLoad: number,
   ): number {
-    return 0.5;
+    const activeBoost = isActive ? 0.35 : 0;
+    const masteryPenalty = (masteryLevel || 0) * 0.25;
+    const loadBoost = (cognitiveLoad || 0) * 0.2;
+    return Math.max(
+      0,
+      Math.min(1, 0.2 + activeBoost + loadBoost - masteryPenalty),
+    );
   }
   private calculateAccessCount(
     id: string,
     sessions: any[],
     type: string,
   ): number {
-    return 1;
+    try {
+      if (!sessions || sessions.length === 0) return 1;
+      let count = 0;
+      sessions.forEach((s) => {
+        if (Array.isArray(s.sourceLinks)) {
+          if (s.sourceLinks.some((l: any) => l.conceptId === id)) count++;
+        }
+      });
+      return Math.max(1, count);
+    } catch (e) {
+      return 1;
+    }
   }
   private generateInitialPosition(
     index: number,
@@ -1140,10 +1589,68 @@ export class MindMapGenerator {
     return logic.question.split(' ').slice(0, 3).join(' ') + '...';
   }
   private calculateTotalActivation(nodes: NeuralNode[]): number {
-    return 0.5;
+    try {
+      return nodes.reduce((sum, n) => sum + (n.activationLevel || 0), 0);
+    } catch (e) {
+      return 0.5;
+    }
   }
   private calculateCognitiveComplexity(nodes: NeuralNode[]): number {
-    return 0.5;
+    try {
+      if (!nodes.length) return 0;
+      const avg =
+        nodes.reduce((s, n) => s + (n.cognitiveLoad || 0.5), 0) / nodes.length;
+      return Math.max(0, Math.min(1, avg));
+    } catch (e) {
+      return 0.5;
+    }
+  }
+
+  // ==================== PHASE 6: Neural integration helpers ====================
+  public async generateNeuralLinksFromReadingSession(
+    session: ReadingSession,
+  ): Promise<SourceLink[]> {
+    try {
+      const concepts =
+        session.conceptsIdentified && session.conceptsIdentified.length > 0
+          ? session.conceptsIdentified
+          : [];
+      const links: SourceLink[] = concepts.map((concept) => ({
+        type: 'source_read',
+        sessionId: session.id,
+        textSource: session.textSource,
+        conceptId: concept,
+        relevanceScore: 0.8,
+        extractedAt: new Date(),
+      }));
+      // Optionally persist
+      await StorageService.getInstance().saveSourceLinks(links);
+      return links;
+    } catch (e) {
+      console.error(
+        'MindMapGenerator.generateNeuralLinksFromReadingSession error:',
+        e,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Update knowledge health using reading efficiency inputs.
+   * Returns a normalized delta [0..1] that can be used to boost overall health.
+   */
+  public updateKnowledgeHealthWithReadingEfficiency(
+    wpmAchieved: number,
+    comprehensionScore: number,
+    conceptExtractionRate: number,
+  ): number {
+    // Weighted combination; conservative effect to avoid spikes
+    const wpmFactor = Math.min(1, wpmAchieved / 600); // 600 as reference high
+    const delta =
+      0.5 * comprehensionScore +
+      0.3 * wpmFactor +
+      0.2 * Math.min(1, conceptExtractionRate);
+    return Math.max(0, Math.min(1, delta));
   }
 
   private createEmptyGraph(): NeuralGraph {

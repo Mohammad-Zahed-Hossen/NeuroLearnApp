@@ -18,6 +18,7 @@ import {
   ScreenContainer,
 } from '../components/GlassComponents';
 import { NeuralMindMap } from '../components/NeuralCanvas';
+import { MiniPlayer } from '../components/MiniPlayerComponent';
 import {
   colors,
   spacing,
@@ -33,6 +34,8 @@ import {
 } from '../services/MindMapGeneratorService';
 import { StorageService } from '../services/StorageService';
 import { useFocus } from '../contexts/FocusContext';
+import { useSoundscape } from '../contexts/SoundscapeContext';
+import { SoundscapeType } from '../services/CognitiveSoundscapeEngine';
 
 interface NeuralMindMapScreenProps {
   theme: ThemeType;
@@ -811,6 +814,12 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         )}
       </View>
 
+      {/* MiniPlayer Component Integration */}
+      <MiniPlayer
+        theme={theme}
+        style={styles.miniPlayer}
+      />
+
       {/* Enhanced Node Detail Modal with Phase 3 Insights */}
       <Modal
         visible={nodeDetailVisible}
@@ -1300,5 +1309,11 @@ const styles = StyleSheet.create({
   refreshIcon: {
     fontSize: 18,
     fontWeight: '600',
+  },
+  miniPlayer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
   },
 });

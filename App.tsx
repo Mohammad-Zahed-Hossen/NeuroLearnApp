@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { BackHandler } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { FocusTimerScreen } from './src/screens/FocusTimerScreen';
 import { FlashcardsScreen } from './src/screens/FlashcardsScreen';
@@ -15,6 +16,8 @@ import { AdaptiveFocusScreen } from './src/screens/AdaptiveFocusScreen';
 import { ThemeType } from './src/theme/colors';
 import { TodoistService } from './src/services/TodoistService';
 import { FocusProvider } from './src/contexts/FocusContext';
+import { SoundscapeProvider } from './src/contexts/SoundscapeContext';
+import { MiniPlayer } from './src/components/MiniPlayerComponent';
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeType>('dark');
@@ -87,11 +90,16 @@ export default function App() {
   };
 
   return (
-    <SafeAreaProvider>
-      <FocusProvider>
-        {renderCurrentScreen()}
-        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      </FocusProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <FocusProvider>
+          <SoundscapeProvider>
+            {renderCurrentScreen()}
+            <MiniPlayer theme={theme} />
+          </SoundscapeProvider>
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        </FocusProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

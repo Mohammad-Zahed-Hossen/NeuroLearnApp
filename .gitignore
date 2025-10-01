@@ -39,3 +39,29 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Extension folders
+.amazonq/
+.junie/
+.qodo/
+
+# Test files and mocks
+__tests__/
+__mocks__/
+
+# Build scripts and utilities
+scripts/
+
+# Duplicate/backup folders
+d/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
