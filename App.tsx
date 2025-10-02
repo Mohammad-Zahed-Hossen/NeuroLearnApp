@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { BackHandler } from 'react-native';
+import { BackHandler, Linking } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { FocusTimerScreen } from './src/screens/FocusTimerScreen';
@@ -13,23 +13,74 @@ import { MemoryPalaceScreen } from './src/screens/MemoryPalaceScreen';
 import { NeuralMindMapScreen } from './src/screens/NeuralMindMapScreen';
 import { LogicTrainerScreen } from './src/screens/LogicTrainerScreen';
 import { AdaptiveFocusScreen } from './src/screens/AdaptiveFocusScreen';
+import { AuthScreen } from './src/screens/AuthScreen';
+import { MigrationScreen } from './src/screens/MigrationScreen';
 import { ThemeType } from './src/theme/colors';
 import { TodoistService } from './src/services/TodoistService';
 import { FocusProvider } from './src/contexts/FocusContext';
 import { SoundscapeProvider } from './src/contexts/SoundscapeContext';
 import { MiniPlayer } from './src/components/MiniPlayerComponent';
+import SupabaseService from './src/services/SupabaseService';
+import MigrationService from './src/services/MigrationService';
+
+type AppState = 'loading' | 'auth' | 'migration' | 'app';
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeType>('dark');
+  const [appState, setAppState] = useState<AppState>('loading');
   const [navigationStack, setNavigationStack] = useState<string[]>([
     'dashboard',
   ]);
 
   const currentScreen = navigationStack[navigationStack.length - 1];
+  const supabaseService = SupabaseService.getInstance();
+  const migrationService = MigrationService.getInstance();
 
   const handleNavigate = (screen: string) => {
     setNavigationStack((prev) => [...prev, screen]);
   };
+
+  useEffect(() => {
+    initializeApp();
+  }, []);
+
+  // Handle deep linking for email confirmation
+  useEffect(() => {
+    const handleDeepLink = async (event: { url: string }) => {
+      const { url } = event;
+      console.log('Deep link received:', url);
+
+      if (url.includes('neurolearn://')) {
+        try {
+          // Handle the auth callback
+          const { data, error } = await supabaseService.getClient().auth.getSession();
+          if (error) {
+            console.error('Auth callback error:', error);
+          } else if (data.session) {
+            console.log('User confirmed email successfully');
+            // Refresh the app state
+            initializeApp();
+          }
+        } catch (error) {
+          console.error('Deep link handling error:', error);
+        }
+      }
+    };
+
+    // Listen for deep links
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    // Check if app was opened from a deep link
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
+
+    return () => {
+      subscription?.remove();
+    };
+  }, []);
 
   useEffect(() => {
     const backAction = () => {
@@ -47,6 +98,37 @@ export default function App() {
 
     return () => backHandler.remove();
   }, [navigationStack]);
+
+  const initializeApp = async () => {
+    try {
+      const isAuthenticated = await supabaseService.isAuthenticated();
+      
+      if (!isAuthenticated) {
+        setAppState('auth');
+        return;
+      }
+      
+      const needsMigration = await migrationService.needsMigration();
+      
+      if (needsMigration) {
+        setAppState('migration');
+        return;
+      }
+      
+      setAppState('app');
+    } catch (error) {
+      console.error('App initialization error:', error);
+      setAppState('auth');
+    }
+  };
+
+  const handleAuthenticated = () => {
+    initializeApp();
+  };
+
+  const handleMigrationComplete = () => {
+    setAppState('app');
+  };
 
   const handleThemeChange = (newTheme: ThemeType) => {
     setTheme(newTheme);
@@ -88,6 +170,38 @@ export default function App() {
         return <DashboardScreen theme={theme} onNavigate={handleNavigate} />;
     }
   };
+
+  if (appState === 'loading') {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
+  if (appState === 'auth') {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <AuthScreen theme={theme} onAuthenticated={handleAuthenticated} />
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
+  if (appState === 'migration') {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <MigrationScreen theme={theme} onMigrationComplete={handleMigrationComplete} />
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

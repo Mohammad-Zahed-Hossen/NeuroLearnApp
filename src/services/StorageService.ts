@@ -1268,6 +1268,26 @@ export class StorageService {
     }
   }
 
+  // ==================== UTILITY METHODS ====================
+
+  async clearAllData(): Promise<void> {
+    try {
+      if (await this.shouldUseSupabase()) {
+        const supabaseService = await this.getSupabaseService();
+        await supabaseService.clearAllData();
+      }
+
+      // Also clear AsyncStorage
+      const keys = Object.values(StorageService.KEYS);
+      await Promise.all(keys.map(key => AsyncStorage.removeItem(key)));
+      
+      console.log('🗑️ All data cleared');
+    } catch (error) {
+      console.error('Error clearing data:', error);
+      throw new Error(`Failed to clear data: ${error}`);
+    }
+  }
+
   // ==================== PHASE 6: SPEED READING OPERATIONS ====================
 
   /**
