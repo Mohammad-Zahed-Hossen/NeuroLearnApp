@@ -1,4 +1,4 @@
-import { HybridStorageService } from './HybridStorageService';
+import HybridStorageService from './HybridStorageService';
 import { SpacedRepetitionService } from './SpacedRepetitionService';
 import { ReadingSession, SourceLink } from './SpeedReadingService';
 
@@ -973,7 +973,7 @@ export class MindMapGenerator {
       return readingSessions.map((session: any, index: number) => {
         const efficiency = this.calculateReadingEfficiency(session);
         const cognitiveLoad = 0.3; // Reading is generally lower cognitive load
-        
+
         const node: NeuralNode = {
           id: `reading_${session.id}`,
           type: 'memory',
@@ -996,7 +996,7 @@ export class MindMapGenerator {
           sourceType: 'derived',
           sourceId: session.id,
         };
-        
+
         node.healthScore = this.calculateNodeHealthScore(node);
         node.healthCategory = this.categorizeNodeHealth(node.healthScore);
         return node;
@@ -1006,25 +1006,25 @@ export class MindMapGenerator {
       return [];
     }
   }
-  
+
   /**
    * Calculate reading efficiency from session data
    */
   private calculateReadingEfficiency(session: any): number {
     try {
       let efficiency = 0;
-      
+
       // WPM efficiency (normalized to 0-1)
       const wpmScore = Math.min(1, session.wpmAchieved / 500); // 500 WPM as max
       efficiency += wpmScore * 0.4;
-      
+
       // Comprehension score
       efficiency += (session.comprehensionScore || 0.8) * 0.4;
-      
+
       // Concept extraction bonus
       const conceptBonus = Math.min(0.2, (session.conceptsIdentified?.length || 0) / 10 * 0.2);
       efficiency += conceptBonus;
-      
+
       return Math.max(0, Math.min(1, efficiency));
     } catch (e) {
       return 0.6; // Default efficiency
@@ -1082,7 +1082,7 @@ export class MindMapGenerator {
 
     // Phase 6: Reading analytics
     const totalReadingSessions = readingSessions.length;
-    const readingEfficiencyFactor = readingSessions.length > 0 
+    const readingEfficiencyFactor = readingSessions.length > 0
       ? readingSessions.reduce((sum, s) => sum + this.calculateReadingEfficiency(s), 0) / readingSessions.length
       : 0;
     const averageReadingWPM = readingSessions.length > 0

@@ -19,7 +19,7 @@ import {
   SoundscapeType,
 } from './CognitiveSoundscapeEngine';
 import { FocusTimerService } from './FocusTimerService';
-import { HybridStorageService } from './HybridStorageService';
+import HybridStorageService from './HybridStorageService';
 
 // ==================== TYPES ====================
 

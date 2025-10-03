@@ -37,6 +37,39 @@ export class SupabaseStorageService {
 
   private constructor() {}
 
+  /**
+   * Generate a UUID v4
+   */
+  private generateUUID(): string {
+    // Use crypto.randomUUID if available (modern browsers/React Native)
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+
+    // Fallback UUID v4 generator
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  // Safe ISO conversion: accepts Date | number | string | undefined
+  private toISO(dateLike?: any): string {
+    try {
+      if (!dateLike) return new Date().toISOString();
+      if (dateLike instanceof Date) return dateLike.toISOString();
+      if (typeof dateLike === 'number') return new Date(dateLike).toISOString();
+      if (typeof dateLike === 'string') {
+        const parsed = Date.parse(dateLike);
+        if (!isNaN(parsed)) return new Date(parsed).toISOString();
+      }
+    } catch (err) {
+      // fallthrough to default
+    }
+    return new Date().toISOString();
+  }
+
   private async getCurrentUserId(): Promise<string> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -167,7 +200,7 @@ export class SupabaseStorageService {
         front: card.front,
         back: card.back,
         category: card.category,
-        next_review_date: card.nextReview.toISOString(),
+        next_review_date: card.nextReview?.toISOString() || new Date().toISOString(),
         stability: (card as EnhancedFlashcard).stability,
         focus_strength: (card as EnhancedFlashcard).focusSessionStrength || 0,
         created_at: card.created.toISOString(),
@@ -235,9 +268,9 @@ export class SupabaseStorageService {
         user_id: userId,
         question: node.question,
         type: node.type,
-        next_review_date: node.nextReviewDate.toISOString(),
+        next_review_date: node.nextReviewDate ? this.toISO(node.nextReviewDate) : this.toISO(new Date()),
         total_attempts: node.totalAttempts,
-        created_at: node.created.toISOString(),
+        created_at: node.created ? this.toISO(node.created) : this.toISO(new Date()),
       }));
 
       const { error } = await supabase
@@ -257,7 +290,7 @@ export class SupabaseStorageService {
       const now = new Date();
 
       const newNode: LogicNode = {
-        id: `logic_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: this.generateUUID(),
         question: nodeData.question || '',
         premise1: nodeData.premise1 || '',
         premise2: nodeData.premise2 || '',
@@ -511,42 +544,59 @@ export class SupabaseStorageService {
   async saveReadingSession(session: ReadingSession): Promise<void> {
     try {
       const userId = await this.getCurrentUserId();
+      const payload: any = {
+        id: session.id,
+        user_id: userId,
+        text_source: session.textSource,
+        text_title: session.textTitle,
+        text_difficulty: session.textDifficulty,
+        word_count: session.wordCount,
+        wpm_goal: session.wpmGoal,
+        wpm_achieved: session.wpmAchieved,
+        wpm_peak: session.wpmPeak,
+        comprehension_score: session.comprehensionScore,
+        start_time: this.toISO(session.startTime),
+        end_time: this.toISO(session.endTime),
+        total_duration_ms: session.totalDurationMs,
+        reading_duration_ms: session.readingDurationMs,
+        pause_duration_ms: session.pauseDurationMs,
+        fixation_accuracy: session.fixationAccuracy,
+        regression_count: session.regressionCount,
+        sub_vocalization_events: session.subVocalizationEvents,
+        cognitive_load_start: session.cognitiveLoadStart,
+        cognitive_load_end: session.cognitiveLoadEnd,
+        display_mode: session.displayMode,
+        chunk_size: session.chunkSize,
+        pause_on_punctuation: session.pauseOnPunctuation,
+        highlight_vowels: session.highlightVowels,
+        concepts_identified: session.conceptsIdentified,
+        neural_nodes_strengthened: session.neuralNodesStrengthened,
+        source_links: (session.sourceLinks || []).map((l: any) => ({
+          ...l,
+          extractedAt: this.toISO(l.extractedAt),
+        })),
+        created_at: this.toISO(session.created),
+        modified_at: this.toISO(session.modified),
+      };
 
-      const { error } = await supabase
-        .from('reading_sessions')
-        .upsert({
-          id: session.id,
-          user_id: userId,
-          text_source: session.textSource,
-          text_title: session.textTitle,
-          text_difficulty: session.textDifficulty,
-          word_count: session.wordCount,
-          wpm_goal: session.wpmGoal,
-          wpm_achieved: session.wpmAchieved,
-          wpm_peak: session.wpmPeak,
-          comprehension_score: session.comprehensionScore,
-          start_time: session.startTime.toISOString(),
-          end_time: session.endTime.toISOString(),
-          total_duration_ms: session.totalDurationMs,
-          reading_duration_ms: session.readingDurationMs,
-          pause_duration_ms: session.pauseDurationMs,
-          fixation_accuracy: session.fixationAccuracy,
-          regression_count: session.regressionCount,
-          sub_vocalization_events: session.subVocalizationEvents,
-          cognitive_load_start: session.cognitiveLoadStart,
-          cognitive_load_end: session.cognitiveLoadEnd,
-          display_mode: session.displayMode,
-          chunk_size: session.chunkSize,
-          pause_on_punctuation: session.pauseOnPunctuation,
-          highlight_vowels: session.highlightVowels,
-          concepts_identified: session.conceptsIdentified,
-          neural_nodes_strengthened: session.neuralNodesStrengthened,
-          source_links: session.sourceLinks,
-          created_at: session.created.toISOString(),
-          modified_at: session.modified.toISOString(),
-        });
-
-      if (error) throw error;
+      // Attempt to upsert; if DB schema is missing a column (PGRST204), retry without that column
+      let res = await supabase.from('reading_sessions').upsert(payload);
+      if (res.error) {
+        const err: any = res.error;
+        if (err.code === 'PGRST205') {
+          console.error("Supabase error: reading_sessions table not found (PGRST205). Ensure DB migrations were applied.", err);
+          throw err;
+        }
+        if (err.code === 'PGRST204' && payload.chunk_size !== undefined) {
+          console.warn("reading_sessions appears to be missing a column (PGRST204). Retrying upsert without 'chunk_size'.");
+          const reduced = { ...payload };
+          delete reduced.chunk_size;
+          const retry = await supabase.from('reading_sessions').upsert(reduced);
+          if (retry.error) throw retry.error;
+        } else {
+          throw err;
+        }
+      }
     } catch (error) {
       console.error('Error saving reading session:', error);
       throw new Error(`Failed to save reading session: ${error}`);
@@ -703,7 +753,7 @@ export class SupabaseStorageService {
         text_source: link.textSource,
         concept_id: link.conceptId,
         relevance_score: link.relevanceScore,
-        extracted_at: link.extractedAt.toISOString(),
+        extracted_at: this.toISO(link.extractedAt),
       }));
 
       const { error } = await supabase
@@ -712,7 +762,13 @@ export class SupabaseStorageService {
 
       if (error) throw error;
     } catch (error) {
-      console.error('Error saving source links:', error);
+      // More helpful error for missing table/schema cache
+      const err: any = error;
+      if (err?.code === 'PGRST205') {
+        console.error("Supabase error: source_links table not found (PGRST205). Make sure you've applied the DB migrations or supabase schema includes 'source_links'.", err);
+      } else {
+        console.error('Error saving source links:', err);
+      }
       throw new Error(`Failed to save source links: ${error}`);
     }
   }
@@ -778,7 +834,40 @@ export class SupabaseStorageService {
     };
   }
   async saveFocusHealthMetrics(metrics: FocusHealthMetrics): Promise<void> {}
-  async pruneOldFocusData(olderThanDays: number = 90): Promise<void> {}
+  async pruneOldFocusData(olderThanDays: number = 90): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+
+      // Delete distraction events referencing very old sessions first
+      const { error: delDistractionError } = await supabase
+        .from('distraction_events')
+        .delete()
+        .eq('user_id', userId)
+        .lt('timestamp', cutoff);
+
+      if (delDistractionError) {
+        console.warn('Failed to prune old distraction events:', delDistractionError);
+      }
+
+      // Then delete old focus sessions
+      const { error: delSessionsError } = await supabase
+        .from('focus_sessions')
+        .delete()
+        .eq('user_id', userId)
+        .lt('created_at', cutoff);
+
+      if (delSessionsError) {
+        console.warn('Failed to prune old focus sessions:', delSessionsError);
+      }
+
+      console.log(`🧹 Pruned focus data older than ${olderThanDays} days`);
+    } catch (error) {
+      console.warn('Prune old focus data skipped (Supabase unavailable or error):', error);
+      // Don't throw - pruning is best-effort
+    }
+  }
   async saveFocusSessions(sessions: FocusSession[]): Promise<void> {}
   async getFocusSession(sessionId: string): Promise<FocusSession | null> { return null; }
   async saveReadingSessions(sessions: ReadingSession[]): Promise<void> {}

@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  SafeAreaView,
 } from 'react-native';
 import { AppHeader, HamburgerMenu } from '../components/Navigation';
 import {
@@ -32,7 +33,7 @@ import {
   NeuralGraph,
   NeuralNode,
 } from '../services/MindMapGeneratorService';
-import { HybridStorageService } from '../services/StorageService';
+import HybridStorageService from '../services/HybridStorageService';
 import { useFocus } from '../contexts/FocusContext';
 import { useSoundscape } from '../contexts/SoundscapeContext';
 import { SoundscapeType } from '../services/CognitiveSoundscapeEngine';
@@ -154,8 +155,8 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
   // Get current view mode configuration
   const currentViewMode = useMemo(
-    () => VIEW_MODES.find(mode => mode.id === viewMode) || VIEW_MODES[0],
-    [viewMode]
+    () => VIEW_MODES.find((mode) => mode.id === viewMode) || VIEW_MODES[0],
+    [viewMode],
   );
 
   /**
@@ -212,7 +213,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                 (sum, p) => sum + p.estimatedTimeMinutes,
                 0,
               ) / neuralGraph.learningPaths.length
-            : 0, //issue here
+            : 0,
         insight: `${
           neuralGraph.learningPaths?.length || 0
         } optimal learning sequences available`,
@@ -261,7 +262,6 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           clusters: graph.clusters?.length || 0,
           paths: graph.learningPaths?.length || 0,
         });
-
       } catch (error: unknown) {
         console.error('Error generating neural graph:', error);
         setError((error as Error)?.message || 'Failed to generate brain map');
@@ -275,13 +275,13 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
             },
             { text: 'Try Again', onPress: () => generateNeuralGraph(true) },
             { text: 'Cancel', style: 'cancel' },
-          ]
+          ],
         );
       } finally {
         setLoadingState((prev) => ({ ...prev, isGenerating: false }));
       }
     },
-    [mindMapGenerator, onNavigate]
+    [mindMapGenerator, onNavigate],
   );
 
   /**
@@ -298,20 +298,23 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       ]);
 
       const dueFlashcards = flashcards.filter(
-        (card) => new Date(card.nextReview) <= new Date()
+        (card) => new Date(card.nextReview) <= new Date(),
       ).length;
 
       const urgentTasks = tasks.filter(
-        (task) => !task.isCompleted && task.priority >= 3
+        (task) => !task.isCompleted && task.priority >= 3,
       ).length;
 
       const recentFailures = sessions
         .filter((s) => s.type === 'flashcards' && !s.completed)
         .filter(
-          (s) => Date.now() - s.startTime.getTime() < 24 * 60 * 60 * 1000
+          (s) => Date.now() - s.startTime.getTime() < 24 * 60 * 60 * 1000,
         ).length;
 
-      const baseLoad = Math.min(1, (dueFlashcards * 0.1 + urgentTasks * 0.2) / 10);
+      const baseLoad = Math.min(
+        1,
+        (dueFlashcards * 0.1 + urgentTasks * 0.2) / 10,
+      );
       const stressLoad = Math.min(0.3, recentFailures * 0.05);
       const totalLoad = Math.min(1, baseLoad + stressLoad);
 
@@ -333,7 +336,8 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
     // Analytics and smart suggestions
     const suggestions: Record<ViewMode['id'], string> = {
-      health: '🏥 Health Mode: Focusing on concepts that need immediate attention',
+      health:
+        '🏥 Health Mode: Focusing on concepts that need immediate attention',
       clusters: '🔗 Cluster Mode: Viewing knowledge organized by domain',
       paths: '🛤️ Path Mode: Showing optimal learning sequences',
       network: '🧠 Network Mode: Full neural visualization of all connections',
@@ -364,7 +368,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         mode: viewMode,
       });
     },
-    [viewMode]
+    [viewMode],
   );
 
   /**
@@ -377,16 +381,24 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       try {
         // Calculate network metrics
         const connections = neuralGraph.links.filter(
-          (link) => link.source === node.id || link.target === node.id
+          (link) => link.source === node.id || link.target === node.id,
         ).length;
 
-        const centrality = connections / Math.max(1, neuralGraph.nodes.length - 1);
+        const centrality =
+          connections / Math.max(1, neuralGraph.nodes.length - 1);
 
         const networkPosition: NodeDetail['networkPosition'] =
-          centrality > 0.7 ? 'central' : centrality > 0.3 ? 'bridge' : 'peripheral';
+          centrality > 0.7
+            ? 'central'
+            : centrality > 0.3
+            ? 'bridge'
+            : 'peripheral';
 
         // Generate enhanced AI recommendations
-        const recommendations = generateEnhancedRecommendations(node, networkPosition);
+        const recommendations = generateEnhancedRecommendations(
+          node,
+          networkPosition,
+        );
 
         // Phase 3: Mode-specific insights
         const healthInsights = generateHealthInsights(node);
@@ -405,7 +417,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         console.error('Error generating node detail:', error);
       }
     },
-    [neuralGraph]
+    [neuralGraph],
   );
 
   /**
@@ -417,7 +429,9 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     if (node.healthScore !== undefined) {
       if (node.healthScore < 0.3) {
         insights.push('🚨 Critical health - requires immediate intervention');
-        insights.push('📈 Success rate below 30% - foundational issues detected');
+        insights.push(
+          '📈 Success rate below 30% - foundational issues detected',
+        );
       } else if (node.healthScore < 0.7) {
         insights.push('⚠️ Moderate health - regular maintenance needed');
         insights.push('📊 Success rate 30-70% - room for improvement');
@@ -437,28 +451,37 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   /**
    * Phase 3: Generate path-specific recommendations
    */
-  const generatePathRecommendations = useCallback((node: NeuralNode): string[] => {
-    if (!neuralGraph?.learningPaths) return [];
+  const generatePathRecommendations = useCallback(
+    (node: NeuralNode): string[] => {
+      if (!neuralGraph?.learningPaths) return [];
 
-    const recommendations: string[] = [];
+      const recommendations: string[] = [];
 
-    // Find paths involving this node
-    const involvedPaths = neuralGraph.learningPaths.filter(path =>
-      path.path.some(pathNode => pathNode.id === node.id)
-    );
-
-    if (involvedPaths.length > 0) {
-      recommendations.push(`🛤️ Part of ${involvedPaths.length} learning sequences`);
-
-      const shortestPath = involvedPaths.reduce((shortest, current) =>
-        current.estimatedTimeMinutes < shortest.estimatedTimeMinutes ? current : shortest
+      // Find paths involving this node
+      const involvedPaths = neuralGraph.learningPaths.filter((path) =>
+        path.path.some((pathNode) => pathNode.id === node.id),
       );
 
-      recommendations.push(`⏱️ Shortest path: ${shortestPath.estimatedTimeMinutes} minutes`);
-    }
+      if (involvedPaths.length > 0) {
+        recommendations.push(
+          `🛤️ Part of ${involvedPaths.length} learning sequences`,
+        );
 
-    return recommendations;
-  }, [neuralGraph]);
+        const shortestPath = involvedPaths.reduce((shortest, current) =>
+          current.estimatedTimeMinutes < shortest.estimatedTimeMinutes
+            ? current
+            : shortest,
+        );
+
+        recommendations.push(
+          `⏱️ Shortest path: ${shortestPath.estimatedTimeMinutes} minutes`,
+        );
+      }
+
+      return recommendations;
+    },
+    [neuralGraph],
+  );
 
   /**
    * Enhanced AI recommendations with Phase 3 features
@@ -470,13 +493,17 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       // Health-based recommendations
       if (node.healthScore !== undefined) {
         if (node.healthScore < 0.3) {
-          recommendations.push('🎯 URGENT: Review this concept daily until mastery improves');
+          recommendations.push(
+            '🎯 URGENT: Review this concept daily until mastery improves',
+          );
           recommendations.push('🧩 Break into smaller, manageable pieces');
         } else if (node.healthScore < 0.7) {
           recommendations.push('📈 Regular practice will improve health score');
           recommendations.push('🔗 Connect to related concepts you know well');
         } else {
-          recommendations.push('🌟 Excellent health - use as foundation for new learning');
+          recommendations.push(
+            '🌟 Excellent health - use as foundation for new learning',
+          );
         }
       }
 
@@ -484,25 +511,33 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       if (node.masteryLevel < 0.25) {
         recommendations.push('📚 Focus on fundamentals and core understanding');
       } else if (node.masteryLevel > 0.85) {
-        recommendations.push('🚀 Ready for advanced applications and teaching others');
+        recommendations.push(
+          '🚀 Ready for advanced applications and teaching others',
+        );
       }
 
       // Network position insights
       switch (position) {
         case 'central':
-          recommendations.push('🌟 KEY CONCEPT: Mastering this unlocks many others');
+          recommendations.push(
+            '🌟 KEY CONCEPT: Mastering this unlocks many others',
+          );
           break;
         case 'bridge':
-          recommendations.push('🌉 CONNECTOR: Links different knowledge domains');
+          recommendations.push(
+            '🌉 CONNECTOR: Links different knowledge domains',
+          );
           break;
         case 'peripheral':
-          recommendations.push('🔍 ISOLATED: Create more connections to integrate');
+          recommendations.push(
+            '🔍 ISOLATED: Create more connections to integrate',
+          );
           break;
       }
 
       return recommendations.slice(0, 4); // Limit for focus
     },
-    []
+    [],
   );
 
   /**
@@ -512,7 +547,10 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     setLoadingState((prev) => ({ ...prev, isRefreshing: true }));
     try {
       await Promise.all([generateNeuralGraph(true), calculateCognitiveLoad()]);
-      Alert.alert('Updated', 'Your neural map has been refreshed with the latest data.');
+      Alert.alert(
+        'Updated',
+        'Your neural map has been refreshed with the latest data.',
+      );
     } catch (error) {
       Alert.alert('Error', 'Failed to refresh neural map.');
     } finally {
@@ -525,14 +563,31 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
    */
   const cognitiveLoadConfig = useMemo(() => {
     const configs = {
-      low: { color: themeColors.success, label: 'Optimal Load', description: 'Perfect for new concepts' },
-      moderate: { color: themeColors.primary, label: 'Moderate Load', description: 'Good challenge balance' },
-      high: { color: themeColors.warning, label: 'High Load', description: 'Reduce active items' },
-      critical: { color: themeColors.error, label: 'Critical Load', description: 'Focus on urgent only' },
+      low: {
+        color: themeColors.success,
+        label: 'Optimal Load',
+        description: 'Perfect for new concepts',
+      },
+      moderate: {
+        color: themeColors.primary,
+        label: 'Moderate Load',
+        description: 'Good challenge balance',
+      },
+      high: {
+        color: themeColors.warning,
+        label: 'High Load',
+        description: 'Reduce active items',
+      },
+      critical: {
+        color: themeColors.error,
+        label: 'Critical Load',
+        description: 'Focus on urgent only',
+      },
     };
 
     if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.LOW) return configs.low;
-    if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.MODERATE) return configs.moderate;
+    if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.MODERATE)
+      return configs.moderate;
     if (cognitiveLoad < COGNITIVE_LOAD_THRESHOLDS.HIGH) return configs.high;
     return configs.critical;
   }, [cognitiveLoad, themeColors]);
@@ -548,13 +603,20 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           theme={theme}
           onMenuPress={() => setMenuVisible(true)}
           cognitiveLoad={cognitiveLoad}
+          floating={false}
         />
         <GlassCard theme={theme} style={styles.loadingCard}>
           <Text style={[styles.loadingText, { color: themeColors.text }]}>
             🧠 Analyzing your learning patterns...
           </Text>
-          <Text style={[styles.loadingSubtext, { color: themeColors.textSecondary }]}>
-            Creating neural connections from your flashcards, tasks, and memory palaces
+          <Text
+            style={[
+              styles.loadingSubtext,
+              { color: themeColors.textSecondary },
+            ]}
+          >
+            Creating neural connections from your flashcards, tasks, and memory
+            palaces
           </Text>
           <ActivityIndicator size="large" color={themeColors.primary} />
           {loadingState.progress && (
@@ -562,7 +624,10 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
               <View
                 style={[
                   styles.progressBar,
-                  { backgroundColor: themeColors.primary, width: `${loadingState.progress}%` },
+                  {
+                    backgroundColor: themeColors.primary,
+                    width: `${loadingState.progress}%`,
+                  },
                 ]}
               />
             </View>
@@ -570,7 +635,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         </GlassCard>
       </ScreenContainer>
     ),
-    [theme, themeColors, cognitiveLoad, loadingState.progress]
+    [theme, themeColors, cognitiveLoad, loadingState.progress],
   );
 
   /**
@@ -584,15 +649,18 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           theme={theme}
           onMenuPress={() => setMenuVisible(true)}
           cognitiveLoad={cognitiveLoad}
+          floating={false}
         />
         <GlassCard theme={theme} style={styles.emptyCard}>
           <Text style={[styles.emptyTitle, { color: themeColors.text }]}>
             🧠 Build Your Neural Map
           </Text>
-          <Text style={[styles.emptyText, { color: themeColors.textSecondary }]}>
-            Start learning with flashcards, tasks, or memory palaces to see your knowledge
-            network come alive. Your brain map will show connections between concepts and
-            highlight areas that need attention.
+          <Text
+            style={[styles.emptyText, { color: themeColors.textSecondary }]}
+          >
+            Start learning with flashcards, tasks, or memory palaces to see your
+            knowledge network come alive. Your brain map will show connections
+            between concepts and highlight areas that need attention.
           </Text>
           <View style={styles.emptyActions}>
             <Button
@@ -613,7 +681,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         </GlassCard>
       </ScreenContainer>
     ),
-    [theme, themeColors, cognitiveLoad, onNavigate]
+    [theme, themeColors, cognitiveLoad, onNavigate],
   );
 
   // Loading state
@@ -627,365 +695,534 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   }
 
   return (
-    <ScreenContainer theme={theme} style={styles.container}>
-      <AppHeader
-        title="Neural Map"
-        theme={theme}
-        onMenuPress={() => setMenuVisible(true)}
-        cognitiveLoad={cognitiveLoad}
-        rightComponent={
-          <TouchableOpacity onPress={handleRefresh}>
-            <Text style={[styles.refreshIcon, { color: themeColors.text }]}>
-              {loadingState.isRefreshing ? '⟳' : '↻'}
-            </Text>
-          </TouchableOpacity>
-        }
-      />
+    <View style={{ flex: 1 }}>
+      <SafeAreaView style={{ backgroundColor: themeColors.background }}>
+        <AppHeader
+          title="Neural Map"
+          theme={theme}
+          onMenuPress={() => setMenuVisible(true)}
+          cognitiveLoad={cognitiveLoad}
+          rightComponent={
+            <TouchableOpacity onPress={handleRefresh}>
+              <Text style={[styles.refreshIcon, { color: themeColors.text }]}>
+                {loadingState.isRefreshing ? '⟳' : '↻'}
+              </Text>
+            </TouchableOpacity>
+          }
+          floating={true}
+        />
+      </SafeAreaView>
 
-      <View style={styles.mainContent}>
-        {/* Phase 3: Enhanced Status Dashboard with Mode Analytics */}
-        <View style={styles.topSection}>
-          <GlassCard theme={theme} style={styles.statusCard}>
-            <View style={styles.statusRow}>
-              <View style={styles.statusItem}>
-                <Text style={[styles.statusLabel, { color: themeColors.textSecondary }]}>
-                  Cognitive Load
-                </Text>
-                <Text style={[styles.statusValue, { color: cognitiveLoadConfig.color }]}>
-                  {cognitiveLoadConfig.label}
-                </Text>
-                <Text style={[styles.statusSubText, { color: themeColors.textSecondary }]}>
-                  {cognitiveLoadConfig.description}
-                </Text>
+      <SafeAreaView style={{ flex: 1 }}>
+        <ScreenContainer theme={theme} style={styles.container}>
+          <View style={styles.mainContent}>
+          {/* Phase 3: Enhanced Status Dashboard with Mode Analytics */}
+          <View style={styles.topSection}>
+            <GlassCard theme={theme} style={styles.statusCard}>
+              <View style={styles.statusRow}>
+                <View style={styles.statusItem}>
+                  <Text
+                    style={[
+                      styles.statusLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Cognitive Load
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statusValue,
+                      { color: cognitiveLoadConfig.color },
+                    ]}
+                  >
+                    {cognitiveLoadConfig.label}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statusSubText,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    {cognitiveLoadConfig.description}
+                  </Text>
+                </View>
+
+                <View style={styles.statusItem}>
+                  <Text
+                    style={[
+                      styles.statusLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Knowledge Health
+                  </Text>
+                  <Text
+                    style={[styles.statusValue, { color: themeColors.success }]}
+                  >
+                    {neuralGraph.knowledgeHealth}%
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statusSubText,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Network connectivity score
+                  </Text>
+                </View>
+
+                <View style={styles.statusItem}>
+                  <Text
+                    style={[
+                      styles.statusLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Current View
+                  </Text>
+                  <Text
+                    style={[styles.statusValue, { color: currentViewMode.color }]}
+                  >
+                    {currentViewMode.icon} {currentViewMode.shortName}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statusSubText,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    {viewModeAnalytics?.insight || 'No data'}
+                  </Text>
+                </View>
               </View>
+            </GlassCard>
 
-              <View style={styles.statusItem}>
-                <Text style={[styles.statusLabel, { color: themeColors.textSecondary }]}>
-                  Knowledge Health
-                </Text>
-                <Text style={[styles.statusValue, { color: themeColors.success }]}>
-                  {neuralGraph.knowledgeHealth}%
-                </Text>
-                <Text style={[styles.statusSubText, { color: themeColors.textSecondary }]}>
-                  Network connectivity score
-                </Text>
-              </View>
+            {/* Phase 3: Enhanced View Mode Selector with Visual Indicators */}
+            <GlassCard theme={theme} style={styles.viewModeSelector}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.viewModeContainer}
+              >
+                {VIEW_MODES.map((mode) => (
+                  <TouchableOpacity
+                    key={mode.id}
+                    onPress={() => handleViewModeChange(mode.id)}
+                    style={[
+                      styles.viewModeButton,
+                      viewMode === mode.id && [
+                        styles.viewModeButtonActive,
+                        {
+                          backgroundColor: mode.color + '20',
+                          borderColor: mode.color,
+                        },
+                      ],
+                      { borderColor: themeColors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.viewModeIcon,
+                        viewMode === mode.id && { color: mode.color },
+                      ]}
+                    >
+                      {mode.icon}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.viewModeText,
+                        {
+                          color:
+                            viewMode === mode.id ? mode.color : themeColors.text,
+                        },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {mode.shortName}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.viewModeDescription,
+                        {
+                          color:
+                            viewMode === mode.id
+                              ? mode.color
+                              : themeColors.textSecondary,
+                        },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {mode.description}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </GlassCard>
+          </View>
 
-              <View style={styles.statusItem}>
-                <Text style={[styles.statusLabel, { color: themeColors.textSecondary }]}>
-                  Current View
-                </Text>
-                <Text style={[styles.statusValue, { color: currentViewMode.color }]}>
-                  {currentViewMode.icon} {currentViewMode.shortName}
-                </Text>
-                <Text style={[styles.statusSubText, { color: themeColors.textSecondary }]}>
-                  {viewModeAnalytics?.insight || 'No data'}
-                </Text>
-              </View>
-            </View>
-          </GlassCard>
+          {/* Phase 3: Neural Canvas with View Mode Support */}
+          <View style={styles.canvasContainer}>
+            <NeuralMindMap
+              graph={neuralGraph}
+              theme={theme}
+              onNodePress={handleNodePress}
+              onNodeLongPress={(node) => {
+                setSelectedNode(node);
+                generateNodeDetail(node);
+                setNodeDetailVisible(true);
+                if (startFocusSession && node.id && node.label) {
+                  startFocusSession(node.id, node.label, 'node');
+                }
+              }}
+              cognitiveLoad={cognitiveLoad}
+              showControls={false}
+              viewMode={viewMode} // Phase 3: Pass view mode to canvas
+              focusNodeId={focusState.focusNodeId} // Phase 5: Pass focus node ID from context
+              focusLock={!!focusState.focusNodeId} // Phase 5.5: Enable focus lock when focus is active
+            />
+          </View>
 
-          {/* Phase 3: Enhanced View Mode Selector with Visual Indicators */}
-          <GlassCard theme={theme} style={styles.viewModeSelector}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.viewModeContainer}
-            >
-              {VIEW_MODES.map((mode) => (
-                <TouchableOpacity
-                  key={mode.id}
-                  onPress={() => handleViewModeChange(mode.id)}
+          {/* Enhanced Selected Node Panel */}
+          {selectedNode && (
+            <GlassCard theme={theme} style={styles.selectedNodePanel}>
+              <View style={styles.selectedNodeHeader}>
+                <Text
+                  style={[styles.selectedNodeTitle, { color: themeColors.text }]}
+                >
+                  {selectedNode.label}
+                </Text>
+                <Text
                   style={[
-                    styles.viewModeButton,
-                    viewMode === mode.id && [
-                      styles.viewModeButtonActive,
-                      { backgroundColor: mode.color + '20', borderColor: mode.color },
-                    ],
-                    { borderColor: themeColors.border },
+                    styles.selectedNodeSubtitle,
+                    { color: themeColors.textSecondary },
                   ]}
                 >
-                  <Text style={[
-                    styles.viewModeIcon,
-                    viewMode === mode.id && { color: mode.color }
-                  ]}>
-                    {mode.icon}
+                  {selectedNode.type} • {selectedNode.category}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => setNodeDetailVisible(true)}
+                style={[
+                  styles.detailButton,
+                  { backgroundColor: currentViewMode.color },
+                ]}
+              >
+                <Text style={styles.detailButtonText}>Full Analysis</Text>
+              </TouchableOpacity>
+
+              <View style={styles.quickStats}>
+                <View style={styles.statItem}>
+                  <Text
+                    style={[styles.statValue, { color: themeColors.success }]}
+                  >
+                    {Math.round(selectedNode.masteryLevel * 100)}%
                   </Text>
                   <Text
                     style={[
-                      styles.viewModeText,
-                      { color: viewMode === mode.id ? mode.color : themeColors.text },
+                      styles.statLabel,
+                      { color: themeColors.textSecondary },
                     ]}
-                    numberOfLines={1}
                   >
-                    {mode.shortName}
+                    Mastered
+                  </Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text
+                    style={[styles.statValue, { color: themeColors.warning }]}
+                  >
+                    {Math.round(selectedNode.cognitiveLoad * 100)}%
                   </Text>
                   <Text
                     style={[
-                      styles.viewModeDescription,
-                      { color: viewMode === mode.id ? mode.color : themeColors.textSecondary },
+                      styles.statLabel,
+                      { color: themeColors.textSecondary },
                     ]}
-                    numberOfLines={2}
                   >
-                    {mode.description}
+                    Load
+                  </Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={[styles.statValue, { color: themeColors.info }]}>
+                    {selectedNode.accessCount}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Reviews
+                  </Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text
+                    style={[styles.statValue, { color: themeColors.primary }]}
+                  >
+                    {nodeDetail?.connections || 0}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Links
+                  </Text>
+                </View>
+              </View>
+            </GlassCard>
+          )}
+        </View>
+
+        {/* MiniPlayer Component Integration */}
+        <MiniPlayer theme={theme} style={styles.miniPlayer} />
+
+        {/* Enhanced Node Detail Modal with Phase 3 Insights */}
+        <Modal
+          visible={nodeDetailVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setNodeDetailVisible(false)}
+        >
+          {nodeDetail && (
+            <ScreenContainer theme={theme}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: themeColors.text }]}>
+                  🧠 Neural Analysis
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setNodeDetailVisible(false)}
+                  style={styles.closeButton}
+                >
+                  <Text
+                    style={[styles.closeButtonText, { color: themeColors.text }]}
+                  >
+                    ✕
                   </Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </GlassCard>
-        </View>
-
-        {/* Phase 3: Neural Canvas with View Mode Support */}
-        <View style={styles.canvasContainer}>
-          <NeuralMindMap
-            graph={neuralGraph}
-            theme={theme}
-            onNodePress={handleNodePress}
-            onNodeLongPress={(node) => {
-              setSelectedNode(node);
-              generateNodeDetail(node);
-              setNodeDetailVisible(true);
-              if (startFocusSession && node.id && node.label) {
-                startFocusSession(node.id, node.label, 'node');
-              }
-            }}
-            cognitiveLoad={cognitiveLoad}
-            showControls={false}
-            viewMode={viewMode} // Phase 3: Pass view mode to canvas
-            focusNodeId={focusState.focusNodeId} // Phase 5: Pass focus node ID from context
-            focusLock={!!focusState.focusNodeId} // Phase 5.5: Enable focus lock when focus is active
-          />
-        </View>
-
-        {/* Enhanced Selected Node Panel */}
-        {selectedNode && (
-          <GlassCard theme={theme} style={styles.selectedNodePanel}>
-            <View style={styles.selectedNodeHeader}>
-              <Text style={[styles.selectedNodeTitle, { color: themeColors.text }]}>
-                {selectedNode.label}
-              </Text>
-              <Text style={[styles.selectedNodeSubtitle, { color: themeColors.textSecondary }]}>
-                {selectedNode.type} • {selectedNode.category}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => setNodeDetailVisible(true)}
-              style={[styles.detailButton, { backgroundColor: currentViewMode.color }]}
-            >
-              <Text style={styles.detailButtonText}>Full Analysis</Text>
-            </TouchableOpacity>
-
-            <View style={styles.quickStats}>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: themeColors.success }]}>
-                  {Math.round(selectedNode.masteryLevel * 100)}%
-                </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Mastered
-                </Text>
               </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: themeColors.warning }]}>
-                  {Math.round(selectedNode.cognitiveLoad * 100)}%
-                </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Load
-                </Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: themeColors.info }]}>
-                  {selectedNode.accessCount}
-                </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Reviews
-                </Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: themeColors.primary }]}>
-                  {nodeDetail?.connections || 0}
-                </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Links
-                </Text>
-              </View>
-            </View>
-          </GlassCard>
-        )}
-      </View>
 
-      {/* MiniPlayer Component Integration */}
-      <MiniPlayer
-        theme={theme}
-        style={styles.miniPlayer}
-      />
-
-      {/* Enhanced Node Detail Modal with Phase 3 Insights */}
-      <Modal
-        visible={nodeDetailVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setNodeDetailVisible(false)}
-      >
-        {nodeDetail && (
-          <ScreenContainer theme={theme}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: themeColors.text }]}>
-                🧠 Neural Analysis
-              </Text>
-              <TouchableOpacity
-                onPress={() => setNodeDetailVisible(false)}
-                style={styles.closeButton}
-              >
-                <Text style={[styles.closeButtonText, { color: themeColors.text }]}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalContent}>
-              <GlassCard theme={theme} style={styles.nodeOverviewCard}>
-                <Text style={[styles.nodeOverviewTitle, { color: themeColors.text }]}>
-                  {nodeDetail.node.label}
-                </Text>
-                <View style={styles.nodeOverviewBadge}>
-                  <Text style={[styles.nodeOverviewBadgeText, { color: currentViewMode.color }]}>
-                    {nodeDetail.networkPosition.toUpperCase()}
-                  </Text>
-                </View>
-                <Text style={[styles.nodeOverviewSubtitle, { color: themeColors.textSecondary }]}>
-                  {nodeDetail.node.type} • {nodeDetail.node.category}
-                </Text>
-              </GlassCard>
-
-              {/* Phase 3: Health Insights Section */}
-              {nodeDetail.healthInsights && nodeDetail.healthInsights.length > 0 && (
-                <GlassCard theme={theme} style={styles.insightsCard}>
-                  <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                    ❤️‍🩹 Health Analysis
-                  </Text>
-                  {nodeDetail.healthInsights.map((insight, index) => (
-                    <Text
-                      key={index}
-                      style={[styles.insightText, { color: themeColors.textSecondary }]}
-                    >
-                      {insight}
-                    </Text>
-                  ))}
-                </GlassCard>
-              )}
-
-              {/* Network Metrics */}
-              <GlassCard theme={theme} style={styles.metricsCard}>
-                <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                  📊 Network Metrics
-                </Text>
-                <View style={styles.metricsGrid}>
-                  <View style={styles.metricItem}>
-                    <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                      Neural Connections
-                    </Text>
-                    <Text style={[styles.metricValue, { color: themeColors.primary }]}>
-                      {nodeDetail.connections}
-                    </Text>
-                  </View>
-                  <View style={styles.metricItem}>
-                    <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                      Network Centrality
-                    </Text>
-                    <Text style={[styles.metricValue, { color: themeColors.success }]}>
-                      {Math.round(nodeDetail.centrality * 100)}%
-                    </Text>
-                  </View>
-                  <View style={styles.metricItem}>
-                    <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                      Activation Level
-                    </Text>
-                    <Text style={[styles.metricValue, { color: themeColors.warning }]}>
-                      {Math.round(nodeDetail.node.activationLevel * 100)}%
-                    </Text>
-                  </View>
-                  <View style={styles.metricItem}>
-                    <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                      Last Accessed
-                    </Text>
-                    <Text style={[styles.metricValue, { color: themeColors.info }]}>
-                      {nodeDetail.node.lastAccessed.toLocaleDateString()}
-                    </Text>
-                  </View>
-                </View>
-              </GlassCard>
-
-              {/* AI Recommendations */}
-              <GlassCard theme={theme} style={styles.recommendationsCard}>
-                <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                  🎯 AI Learning Recommendations
-                </Text>
-                {nodeDetail.recommendations.map((rec, index) => (
+              <ScrollView style={styles.modalContent}>
+                <GlassCard theme={theme} style={styles.nodeOverviewCard}>
                   <Text
-                    key={index}
-                    style={[styles.recommendationText, { color: themeColors.textSecondary }]}
+                    style={[
+                      styles.nodeOverviewTitle,
+                      { color: themeColors.text },
+                    ]}
                   >
-                    {rec}
+                    {nodeDetail.node.label}
                   </Text>
-                ))}
-              </GlassCard>
+                  <View style={styles.nodeOverviewBadge}>
+                    <Text
+                      style={[
+                        styles.nodeOverviewBadgeText,
+                        { color: currentViewMode.color },
+                      ]}
+                    >
+                      {nodeDetail.networkPosition.toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.nodeOverviewSubtitle,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    {nodeDetail.node.type} • {nodeDetail.node.category}
+                  </Text>
+                </GlassCard>
 
-              {/* Phase 3: Path Recommendations */}
-              {nodeDetail.pathRecommendations && nodeDetail.pathRecommendations.length > 0 && (
-                <GlassCard theme={theme} style={styles.pathCard}>
-                  <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                    🛤️ Learning Path Insights
+                {/* Phase 3: Health Insights Section */}
+                {nodeDetail.healthInsights &&
+                  nodeDetail.healthInsights.length > 0 && (
+                    <GlassCard theme={theme} style={styles.insightsCard}>
+                      <Text
+                        style={[styles.sectionTitle, { color: themeColors.text }]}
+                      >
+                        ❤️‍🩹 Health Analysis
+                      </Text>
+                      {nodeDetail.healthInsights.map((insight, index) => (
+                        <Text
+                          key={index}
+                          style={[
+                            styles.insightText,
+                            { color: themeColors.textSecondary },
+                          ]}
+                        >
+                          {insight}
+                        </Text>
+                      ))}
+                    </GlassCard>
+                  )}
+
+                {/* Network Metrics */}
+                <GlassCard theme={theme} style={styles.metricsCard}>
+                  <Text
+                    style={[styles.sectionTitle, { color: themeColors.text }]}
+                  >
+                    📊 Network Metrics
                   </Text>
-                  {nodeDetail.pathRecommendations.map((rec, index) => (
+                  <View style={styles.metricsGrid}>
+                    <View style={styles.metricItem}>
+                      <Text
+                        style={[
+                          styles.metricLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Neural Connections
+                      </Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          { color: themeColors.primary },
+                        ]}
+                      >
+                        {nodeDetail.connections}
+                      </Text>
+                    </View>
+                    <View style={styles.metricItem}>
+                      <Text
+                        style={[
+                          styles.metricLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Network Centrality
+                      </Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          { color: themeColors.success },
+                        ]}
+                      >
+                        {Math.round(nodeDetail.centrality * 100)}%
+                      </Text>
+                    </View>
+                    <View style={styles.metricItem}>
+                      <Text
+                        style={[
+                          styles.metricLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Activation Level
+                      </Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          { color: themeColors.warning },
+                        ]}
+                      >
+                        {Math.round(nodeDetail.node.activationLevel * 100)}%
+                      </Text>
+                    </View>
+                    <View style={styles.metricItem}>
+                      <Text
+                        style={[
+                          styles.metricLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Last Accessed
+                      </Text>
+                      <Text
+                        style={[styles.metricValue, { color: themeColors.info }]}
+                      >
+                        {nodeDetail.node.lastAccessed.toLocaleDateString()}
+                      </Text>
+                    </View>
+                  </View>
+                </GlassCard>
+
+                {/* AI Recommendations */}
+                <GlassCard theme={theme} style={styles.recommendationsCard}>
+                  <Text
+                    style={[styles.sectionTitle, { color: themeColors.text }]}
+                  >
+                    🎯 AI Learning Recommendations
+                  </Text>
+                  {nodeDetail.recommendations.map((rec, index) => (
                     <Text
                       key={index}
-                      style={[styles.pathText, { color: themeColors.textSecondary }]}
+                      style={[
+                        styles.recommendationText,
+                        { color: themeColors.textSecondary },
+                      ]}
                     >
                       {rec}
                     </Text>
                   ))}
                 </GlassCard>
-              )}
 
-              <View style={styles.modalActions}>
-                <Button
-                  title="Study This Concept"
-                  onPress={() => {
-                    setNodeDetailVisible(false);
-                    // Navigate to appropriate screen
-                    const navigationMap = {
-                      flashcard: 'flashcards',
-                      task: 'tasks',
-                      palace: 'memory-palace',
-                      derived: 'flashcards',
-                      logic: 'flashcards', // Phase 3: Add logic navigation
-                    };
-                    onNavigate(navigationMap[nodeDetail.node.sourceType] || 'flashcards');
-                  }}
-                  variant="primary"
-                  theme={theme}
-                  style={styles.modalButton}
-                />
-                <Button
-                  title="Close Analysis"
-                  onPress={() => setNodeDetailVisible(false)}
-                  variant="outline"
-                  theme={theme}
-                  style={styles.modalButton}
-                />
-              </View>
-            </ScrollView>
-          </ScreenContainer>
-        )}
-      </Modal>
+                {/* Phase 3: Path Recommendations */}
+                {nodeDetail.pathRecommendations &&
+                  nodeDetail.pathRecommendations.length > 0 && (
+                    <GlassCard theme={theme} style={styles.pathCard}>
+                      <Text
+                        style={[styles.sectionTitle, { color: themeColors.text }]}
+                      >
+                        🛤️ Learning Path Insights
+                      </Text>
+                      {nodeDetail.pathRecommendations.map((rec, index) => (
+                        <Text
+                          key={index}
+                          style={[
+                            styles.pathText,
+                            { color: themeColors.textSecondary },
+                          ]}
+                        >
+                          {rec}
+                        </Text>
+                      ))}
+                    </GlassCard>
+                  )}
 
-      <HamburgerMenu
-        visible={menuVisible}
-        onClose={() => setMenuVisible(false)}
-        onNavigate={onNavigate}
-        currentScreen="neural-mind-map"
-        theme={theme}
-      />
-    </ScreenContainer>
+                <View style={styles.modalActions}>
+                  <Button
+                    title="Study This Concept"
+                    onPress={() => {
+                      setNodeDetailVisible(false);
+                      // Navigate to appropriate screen
+                      const navigationMap = {
+                        flashcard: 'flashcards',
+                        task: 'tasks',
+                        palace: 'memory-palace',
+                        derived: 'flashcards',
+                        logic: 'flashcards', // Phase 3: Add logic navigation
+                      };
+                      onNavigate(
+                        navigationMap[nodeDetail.node.sourceType] || 'flashcards',
+                      );
+                    }}
+                    variant="primary"
+                    theme={theme}
+                    style={styles.modalButton}
+                  />
+                  <Button
+                    title="Close Analysis"
+                    onPress={() => setNodeDetailVisible(false)}
+                    variant="outline"
+                    theme={theme}
+                    style={styles.modalButton}
+                  />
+                </View>
+              </ScrollView>
+            </ScreenContainer>
+          )}
+        </Modal>
+
+        <HamburgerMenu
+          visible={menuVisible}
+          onClose={() => setMenuVisible(false)}
+          onNavigate={onNavigate}
+          currentScreen="neural-mind-map"
+          theme={theme}
+        />
+      </ScreenContainer>
+    </SafeAreaView>
+  </View>
   );
 };
 
@@ -995,7 +1232,7 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     flex: 1,
-    paddingTop: 100, // Account for header
+    paddingTop: 100, // Space for floating header
   },
   topSection: {
     flex: 0,
@@ -1281,6 +1518,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.lg,
+    paddingTop: 36,
+    paddingBottom: 120, // Hide under floating nav bar
   },
   emptyCard: {
     alignItems: 'center',

@@ -18,7 +18,7 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { HybridStorageService } from '../services/StorageService';
+import HybridStorageService from '../services/HybridStorageService';
 import { aiCoachingService } from '../services/AICoachingService';
 import SpeedReadingService from '../services/SpeedReadingService';
 import { useSoundscape } from '../contexts/SoundscapeContext';
@@ -146,13 +146,13 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     const { word, progress, analytics } = data;
     setCurrentWord(word);
     setAnalytics(analytics);
-    
+
     // Update reading state
     setReadingState(prev => ({
       ...prev,
       currentIndex: data.index,
     }));
-    
+
     // Enhance soundscape based on reading performance
     if (analytics && soundscape.isActive) {
       neuralIntegrationService.enhanceSpeedReading(
@@ -160,12 +160,12 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
         analytics.comprehensionPrediction,
         selectedPreset?.difficulty?.toLowerCase() as any || 'medium'
       );
-      
+
       // Update cognitive load based on reading difficulty
       const loadAdjustment = analytics.comprehensionPrediction < 0.6 ? 0.2 : -0.1;
       soundscape.updateCognitiveLoad(Math.max(0, Math.min(1, soundscape.cognitiveLoad + loadAdjustment)));
     }
-    
+
     // Animate word transition
     Animated.sequence([
       Animated.parallel([
@@ -197,39 +197,19 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
 
   const handleSessionComplete = async (completedSession: any) => {
     try {
-      // Generate comprehension quiz
-      const quiz = await aiCoachingService.generateComprehensionQuiz(
-        completedSession.textSource,
-        completedSession.id,
-        {
-          questionCount: 5,
-          difficulty: 'adaptive',
-          questionTypes: ['factual', 'inference', 'vocabulary'],
-        }
-      );
-      
-      setQuiz(quiz as any);
-      setAnswers(
-        quiz.questions.reduce((acc: any, q: any) => {
-          acc[q.id] = null;
-          return acc;
-        }, {})
-      );
-      setQuizVisible(true);
-      
       // Record performance for soundscape learning
       if (soundscape.isActive) {
         const performance = completedSession.comprehensionScore || 0.8;
         await soundscape.recordPerformance(performance);
       }
-      
+
       // Reset reading state
       setReadingState(prev => ({
         ...prev,
         active: false,
         sessionStarted: false,
       }));
-      
+
       // Show completion alert
       Alert.alert(
         'Reading Complete! 📚',
@@ -239,7 +219,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
           { text: 'Continue', onPress: () => {} },
         ]
       );
-      
+
     } catch (error) {
       console.error('Error handling session completion:', error);
       // Fallback to basic completion
@@ -251,11 +231,22 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     }
   };
 
+  const handleQuizReady = (quizData: any) => {
+    setQuiz(quizData as any);
+    setAnswers(
+      quizData.questions.reduce((acc: any, q: any) => {
+        acc[q.id] = null;
+        return acc;
+      }, {})
+    );
+    setQuizVisible(true);
+  };
+
   const themeColors = colors[theme];
   const storage = HybridStorageService.getInstance();
   const speedReadingService = SpeedReadingService.getInstance();
   const soundscape = useSoundscape();
-  
+
   // Notify neural integration of screen change
   useEffect(() => {
     neuralIntegrationService.onScreenChange('speed_reading');
@@ -283,7 +274,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   const startReading = async (text: string, preset?: TextPreset) => {
     try {
       setLastTextRead(text);
-      
+
       // Start optimal soundscape for speed reading
       if (soundscape.isInitialized && !soundscape.isActive) {
         await soundscape.startPreset('speed_integration', {
@@ -291,7 +282,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
           fadeIn: true,
         });
       }
-      
+
       const session = await speedReadingService.startSession(text, {
         title: preset?.title || 'Custom Reading',
         difficulty: preset?.difficulty?.toLowerCase() as any || 'medium',
@@ -299,7 +290,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
         mode: readingState.mode as any,
         cognitiveLoad: soundscape.cognitiveLoad || 0.5,
       });
-      
+
       setReadingState({
         active: true,
         words: speedReadingService.getProcessedText()?.words || [],
@@ -310,13 +301,14 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
         chunkSize: readingState.chunkSize,
         sessionStarted: true,
       });
-      
+
       setSelectedPreset(preset || null);
-      
+
       // Listen for service events
       speedReadingService.on('wordDisplay', handleWordDisplay);
       speedReadingService.on('sessionCompleted', handleSessionComplete);
-      
+      speedReadingService.on('quizReady', handleQuizReady);
+
     } catch (error) {
       Alert.alert('Error', 'Failed to start reading session');
       console.error('Reading start error:', error);
@@ -393,12 +385,12 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
 
   const stopReading = async () => {
     await speedReadingService.stopSession();
-    
+
     // Transition soundscape to calm state
     if (soundscape.isActive) {
       await soundscape.startPreset('calm_readiness', { fadeIn: true });
     }
-    
+
     setReadingState({
       active: false,
       words: [],
@@ -498,13 +490,8 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     try {
       const sessionId = `ui_quiz_${Date.now()}`;
       const generated = await aiCoachingService.generateComprehensionQuiz(
-        text,
         sessionId,
-        {
-          questionCount: 5,
-          difficulty: 'adaptive',
-          questionTypes: ['factual', 'inference', 'vocabulary'],
-        },
+        {}
       );
 
       setQuiz(generated as any);
@@ -646,7 +633,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
               <Text style={[styles.rsvpText, { color: themeColors.text }]}>
                 {getCurrentDisplay()}
               </Text>
-              
+
               {/* Real-time analytics display */}
               {analytics && (
                 <View style={styles.analyticsOverlay}>
@@ -706,7 +693,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                 sec
               </Text>
             </View>
-            
+
             {analytics && (
               <>
                 <View style={styles.infoRow}>
@@ -717,7 +704,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                     {Math.round(analytics.currentWPM)}
                   </Text>
                 </View>
-                
+
                 <View style={styles.infoRow}>
                   <Text style={[styles.infoLabel, { color: themeColors.textSecondary }]}>
                     Comprehension:
@@ -1117,22 +1104,22 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                 <Text style={[styles.closeButton, { color: themeColors.text }]}>×</Text>
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.quizContent}>
               {quiz.questions.map((question, index) => (
                 <View key={question.id} style={[styles.questionCard, { backgroundColor: themeColors.surface }]}>
                   <Text style={[styles.questionText, { color: themeColors.text }]}>
                     {index + 1}. {question.question}
                   </Text>
-                  
+
                   {question.options.map((option, optionIndex) => (
                     <TouchableOpacity
                       key={optionIndex}
                       style={[
                         styles.optionButton,
                         {
-                          backgroundColor: answers[question.id] === optionIndex 
-                            ? themeColors.primary 
+                          backgroundColor: answers[question.id] === optionIndex
+                            ? themeColors.primary
                             : themeColors.surfaceLight,
                           borderColor: themeColors.primary,
                         }
@@ -1142,8 +1129,8 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                       <Text style={[
                         styles.optionText,
                         {
-                          color: answers[question.id] === optionIndex 
-                            ? themeColors.background 
+                          color: answers[question.id] === optionIndex
+                            ? themeColors.background
                             : themeColors.text,
                         }
                       ]}>
@@ -1154,7 +1141,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                 </View>
               ))}
             </ScrollView>
-            
+
             <View style={styles.quizActions}>
               <Button
                 title="Submit Quiz"
@@ -1164,15 +1151,15 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                 style={styles.submitButton}
               />
             </View>
-            
+
             {quizScore !== null && (
               <View style={[styles.scoreDisplay, { backgroundColor: themeColors.surface }]}>
                 <Text style={[styles.scoreText, { color: themeColors.primary }]}>
                   Score: {quizScore}%
                 </Text>
                 <Text style={[styles.scoreMessage, { color: themeColors.text }]}>
-                  {quizScore >= 80 ? 'Excellent comprehension!' : 
-                   quizScore >= 60 ? 'Good understanding!' : 
+                  {quizScore >= 80 ? 'Excellent comprehension!' :
+                   quizScore >= 60 ? 'Good understanding!' :
                    'Consider reviewing the material.'}
                 </Text>
               </View>

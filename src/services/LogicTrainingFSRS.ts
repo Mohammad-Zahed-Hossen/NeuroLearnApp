@@ -55,18 +55,28 @@ export class LogicTrainingFSRS {
         cognitiveLoad
       );
 
-      console.log(`🧠 Logic FSRS Scheduling:`, {
-        nodeId: logicNode.id,
-        question: logicNode.question.substring(0, 50) + '...',
-        rating: performanceRating,
-        fsrsRating,
-        oldInterval: logicNode.interval,
-        newInterval: updatedLogicNode.interval,
-        nextReview: updatedLogicNode.nextReviewDate.toISOString(),
-        stability: updatedCard.stability,
-        difficulty: updatedCard.difficulty,
-        cognitiveLoad,
-      });
+      // Ensure nextReviewDate is always a Date object
+      if (!(updatedLogicNode.nextReviewDate instanceof Date)) {
+        updatedLogicNode.nextReviewDate = new Date(updatedLogicNode.nextReviewDate);
+      }
+
+      // Log FSRS scheduling (safely)
+      try {
+        console.log(`🧠 Logic FSRS Scheduling:`, {
+          nodeId: logicNode.id,
+          question: logicNode.question.substring(0, 50) + '...',
+          rating: performanceRating,
+          fsrsRating,
+          oldInterval: logicNode.interval,
+          newInterval: updatedLogicNode.interval,
+          nextReview: updatedLogicNode.nextReviewDate.toISOString(),
+          stability: updatedCard.stability,
+          difficulty: updatedCard.difficulty,
+          cognitiveLoad,
+        });
+      } catch (logError) {
+        console.log('🧠 Logic FSRS Scheduling completed (logging failed)');
+      }
 
       return updatedLogicNode;
 

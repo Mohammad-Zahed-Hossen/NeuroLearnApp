@@ -156,7 +156,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       console.warn('Physics engine initialization failed:', error);
       return null;
     }
-  }, [width, height, theme, focusLock, focusLockSessionId]);
+  }, [width, height, theme]);
   
   // Update focus lock state in physics engine when props change
   useEffect(() => {

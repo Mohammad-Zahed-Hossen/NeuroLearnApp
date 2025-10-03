@@ -1,6 +1,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Task } from '../types';
+import HybridStorageService from './HybridStorageService';
+import { FocusSession, DistractionEvent } from './StorageService';
 
 /**
  * Phase 5 Enhancement: TodoistService with Focus Timer Integration
@@ -9,23 +11,11 @@ import { Task } from '../types';
  * Ensures external to-do list aligns with internal learning goals
  */
 
-export interface FocusSession {
-  id: string;
-  taskId: string;
-  nodeId?: string; // Neural node being focused on
-  startTime: Date;
-  plannedDuration: number; // Minutes planned for session
-  actualDuration?: number; // Minutes actually spent
-  cognitiveLoad: number; // Mental state when session started
-  completed: boolean;
-  outcome: 'completed' | 'interrupted' | 'extended' | 'abandoned';
-  notes?: string;
-}
-
 export class TodoistService {
   private static instance: TodoistService;
   private apiToken: string = '';
   private baseURL = 'https://api.todoist.com/rest/v2';
+  private storageService: HybridStorageService;
 
   // Phase 5: Focus session management
   private taskTimerActiveMap: Map<string, boolean> = new Map();
@@ -33,18 +23,18 @@ export class TodoistService {
   private focusSessionHistory: FocusSession[] = [];
 
   private constructor() {
+    this.storageService = HybridStorageService.getInstance();
     this.loadFocusHistory();
   }
 
   private async loadFocusHistory(): Promise<void> {
     try {
-      const data = await AsyncStorage.getItem('focusSessionHistory');
-      if (data) {
-        this.focusSessionHistory = JSON.parse(data).map((s: any) => ({
-          ...s,
-          startTime: new Date(s.startTime),
-        }));
-      }
+      // Load focus sessions from HybridStorageService (which uses Supabase as primary)
+      const sessions = await this.storageService.getFocusSessions();
+      this.focusSessionHistory = sessions.map((s: any) => ({
+        ...s,
+        startTime: new Date(s.startTime),
+      }));
     } catch (error) {
       console.error('Error loading focus history:', error);
     }
@@ -52,16 +42,10 @@ export class TodoistService {
 
   private async loadApiToken(): Promise<void> {
     try {
-      // Try to load from direct token storage first
-      let token = await AsyncStorage.getItem('todoistApiToken');
-      if (!token) {
-        // Fallback to loading from settings
-        const settingsData = await AsyncStorage.getItem('@neurolearn/settings');
-        if (settingsData) {
-          const settings = JSON.parse(settingsData);
-          token = settings.todoistToken;
-        }
-      }
+      // Load settings from HybridStorageService (which uses Supabase as primary)
+      const settings = await this.storageService.getSettings();
+      const token = settings?.todoistToken;
+
       if (token) {
         this.apiToken = token;
         console.log('🔑 Todoist API token loaded from storage');
@@ -75,10 +59,8 @@ export class TodoistService {
 
   private async saveFocusHistory(): Promise<void> {
     try {
-      await AsyncStorage.setItem(
-        'focusSessionHistory',
-        JSON.stringify(this.focusSessionHistory),
-      );
+      // Save focus sessions using HybridStorageService (which uses Supabase as primary)
+      await this.storageService.saveFocusSessions(this.focusSessionHistory);
     } catch (error) {
       console.error('Error saving focus history:', error);
     }
@@ -324,19 +306,27 @@ export class TodoistService {
   ): Promise<FocusSession> {
     // End any existing session first
     if (this.activeFocusSession) {
-      await this.endCurrentFocusSession('interrupted');
+      await this.endCurrentFocusSession(2, 'Session interrupted by new session');
     }
 
+    const now = new Date();
     // Create new focus session
     const session: FocusSession = {
       id: `focus_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       taskId,
       nodeId,
-      startTime: new Date(),
-      plannedDuration,
-      cognitiveLoad,
-      completed: false,
-      outcome: 'completed', // Will be updated when session ends
+      startTime: now,
+      endTime: now, // Will be updated when session ends
+      durationMinutes: 0, // Will be updated when session ends
+      plannedDurationMinutes: plannedDuration,
+      distractionCount: 0,
+      distractionEvents: [],
+      selfReportFocus: 3, // Default neutral
+      completionRate: 0, // Will be updated when session ends
+      cognitiveLoadStart: cognitiveLoad,
+      focusLockUsed: false,
+      created: now,
+      modified: now,
     };
 
     // Set active session
@@ -373,23 +363,23 @@ export class TodoistService {
    */
   public async stopTaskTimer(
     taskId: string,
-    outcome: FocusSession['outcome'] = 'completed',
-    notes?: string,
+    selfReportFocus: 1 | 2 | 3 | 4 | 5 = 3,
+    distractionReason?: string,
   ): Promise<FocusSession | null> {
     if (!this.activeFocusSession || this.activeFocusSession.taskId !== taskId) {
       console.warn(`No active focus session for task ${taskId}`);
       return null;
     }
 
-    return await this.endCurrentFocusSession(outcome, notes);
+    return await this.endCurrentFocusSession(selfReportFocus, distractionReason);
   }
 
   /**
    * End the current focus session with outcome tracking
    */
   private async endCurrentFocusSession(
-    outcome: FocusSession['outcome'],
-    notes?: string,
+    selfReportFocus: 1 | 2 | 3 | 4 | 5,
+    distractionReason?: string,
   ): Promise<FocusSession | null> {
     if (!this.activeFocusSession) return null;
 
@@ -400,13 +390,18 @@ export class TodoistService {
     const actualDurationMs = now.getTime() - session.startTime.getTime();
     const actualDurationMinutes = Math.round(actualDurationMs / (1000 * 60));
 
+    // Calculate completion rate (actual / planned)
+    const completionRate = Math.min(actualDurationMinutes / session.plannedDurationMinutes, 1);
+
     // Update session with completion data
     const completedSession: FocusSession = {
       ...session,
-      actualDuration: actualDurationMinutes,
-      completed: outcome === 'completed',
-      outcome,
-      notes,
+      endTime: now,
+      durationMinutes: actualDurationMinutes,
+      selfReportFocus,
+      completionRate,
+      distractionReason,
+      modified: now,
     };
 
     // Add to history
@@ -420,10 +415,10 @@ export class TodoistService {
     console.log(`🏁 Focus session ended:`, {
       sessionId: session.id,
       taskId: session.taskId,
-      outcome,
-      planned: session.plannedDuration,
+      selfReportFocus,
+      planned: session.plannedDurationMinutes,
       actual: actualDurationMinutes,
-      efficiency: actualDurationMinutes / session.plannedDuration,
+      completionRate: Math.round(completionRate * 100) + '%',
     });
 
     return completedSession;
@@ -461,20 +456,20 @@ export class TodoistService {
       };
     }
 
-    const completedSessions = sessions.filter((s) => s.completed);
+    const completedSessions = sessions.filter((s) => s.completionRate >= 0.8);
     const totalSessions = sessions.length;
     const completionRate = completedSessions.length / totalSessions;
 
     const avgActual =
       sessions
-        .filter((s) => s.actualDuration)
-        .reduce((sum, s) => sum + (s.actualDuration || 0), 0) / sessions.length;
+        .filter((s) => s.durationMinutes)
+        .reduce((sum, s) => sum + (s.durationMinutes || 0), 0) / sessions.length;
 
     const avgPlanned =
-      sessions.reduce((sum, s) => sum + s.plannedDuration, 0) / sessions.length;
+      sessions.reduce((sum, s) => sum + s.plannedDurationMinutes, 0) / sessions.length;
 
     const avgCognitiveLoad =
-      sessions.reduce((sum, s) => sum + s.cognitiveLoad, 0) / sessions.length;
+      sessions.reduce((sum, s) => sum + s.cognitiveLoadStart, 0) / sessions.length;
 
     // Today's sessions
     const today = new Date().toDateString();

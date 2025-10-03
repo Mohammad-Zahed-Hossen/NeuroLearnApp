@@ -165,6 +165,8 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1010,
+    backgroundColor: 'transparent',
   },
   hamburgerLine: {
     height: 2,
@@ -566,8 +568,8 @@ interface HeaderProps {
   onMenuPress: () => void;
   rightComponent?: React.ReactNode;
   cognitiveLoad?: number; // 0-1 scale for adaptive UI
+  floating?: boolean; // When false, header renders in flow (non-absolute)
 }
-
 
 // NEW FLOATING AppHeader COMPONENT (MODIFIED)
 export const AppHeader: React.FC<HeaderProps> = ({
@@ -576,23 +578,30 @@ export const AppHeader: React.FC<HeaderProps> = ({
   onMenuPress,
   rightComponent,
   cognitiveLoad = 0.5,
+  floating = true,
 }) => {
   const themeColors = colors[theme];
   const [pulseAnim] = React.useState(new Animated.Value(1));
 
   // Adaptive UI based on cognitive load
   const getHeaderStyle = () => {
+    // Compute safe-area and spacing adjustments for inline vs floating header
+    const statusBarHeight = StatusBar.currentHeight || 24;
     const baseStyle = {
-      position: 'absolute' as const,
-      top: 40,
-      left: 20,
-      right: 20,
+      // If floating is true, position absolute to float above content.
+      // If not, render inline (relative) to avoid overlapping content.
+      position: floating ? ('absolute' as const) : ('relative' as const),
+      top: floating ? 40 : undefined,
+      left: floating ? 20 : undefined,
+      right: floating ? 20 : undefined,
       flexDirection: 'row' as const,
       alignItems: 'center' as const,
       justifyContent: 'space-between' as const,
       paddingHorizontal: 16,
-      paddingVertical: 12,
-      borderRadius: 20,
+      // Add extra top padding when inline so content doesn't sit under status bar
+      paddingTop: floating ? 12 : statusBarHeight + 8,
+      paddingBottom: 12,
+      borderRadius: floating ? 20 : 12,
       borderWidth: 1,
       zIndex: 1000,
       elevation: 8,
@@ -600,11 +609,16 @@ export const AppHeader: React.FC<HeaderProps> = ({
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.1,
       shadowRadius: 12,
-      marginHorizontal: spacing.md,
+      // When inline, stretch to full width and align with container padding
+      marginHorizontal: floating ? spacing.md : 0,
+      width: floating ? undefined : '100%',
+      minHeight: 56,
+      // Add bottom margin when inline so following cards don't touch the header
+      marginBottom: floating ? 0 : spacing.md,
       // Glass morphism effect
       backgroundColor: themeColors.surface + 'CC', // Semi-transparent
       borderColor: themeColors.border + '40',
-    };
+    } as any;
 
     if (cognitiveLoad > 0.8) {
       return {
@@ -709,7 +723,7 @@ export const AppHeader: React.FC<HeaderProps> = ({
             flex: 1,
             textAlign: 'center',
             marginHorizontal: spacing.md,
-          }
+          },
         ]}
         numberOfLines={1}
         adjustsFontSizeToFit
@@ -734,7 +748,7 @@ export const AppHeader: React.FC<HeaderProps> = ({
               right: 0,
               height: 2,
               backgroundColor: 'rgba(255, 255, 255, 0.1)',
-            }
+            },
           ]}
         >
           <View
@@ -757,13 +771,3 @@ export const AppHeader: React.FC<HeaderProps> = ({
     </View>
   );
 };
-
-
-
-
-
-
-
-
-
-

@@ -12,7 +12,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SupabaseStorageService } from './SupabaseStorageService';
-import { StorageService } from './StorageService';
+import SpacedRepetitionService from './SpacedRepetitionService';
 import {
   Flashcard,
   Task,
@@ -35,7 +35,6 @@ import { ReadingSession, SourceLink } from './SpeedReadingService';
 export class HybridStorageService {
   private static instance: HybridStorageService;
   private supabaseService: SupabaseStorageService;
-  private legacyService: StorageService;
   private isOnline: boolean = true;
 
   // Cache keys for AsyncStorage
@@ -61,7 +60,6 @@ export class HybridStorageService {
 
   private constructor() {
     this.supabaseService = SupabaseStorageService.getInstance();
-    this.legacyService = StorageService.getInstance();
     this.checkConnectivity();
   }
 
@@ -405,6 +403,14 @@ export class HybridStorageService {
     }
   }
 
+  async saveFocusSessions(sessions: FocusSession[]): Promise<void> {
+    return this.hybridSet(
+      (data) => this.supabaseService.saveFocusSessions(data),
+      HybridStorageService.CACHE_KEYS.FOCUS_SESSIONS,
+      sessions
+    );
+  }
+
   async getFocusSession(sessionId: string): Promise<FocusSession | null> {
     const sessions = await this.getFocusSessions();
     return sessions.find(session => session.id === sessionId) || null;
@@ -558,6 +564,116 @@ export class HybridStorageService {
     );
   }
 
+  // ==================== DASHBOARD METHODS ====================
+
+  async getCardsDueToday(): Promise<{
+    flashcards: (Flashcard | EnhancedFlashcard)[];
+    logicNodes: LogicNode[];
+    criticalLogicCount: number;
+  }> {
+    try {
+      // Get all flashcards and logic nodes
+      const [flashcards, logicNodes] = await Promise.all([
+        this.getFlashcards(),
+        this.getLogicNodes(),
+      ]);
+
+      // Use SpacedRepetitionService to filter due items
+      const srs = SpacedRepetitionService.getInstance();
+
+      // Convert flashcards to FSRS format and get due ones
+      const fsrsCards = flashcards.map(card => srs.convertLegacyCard(card));
+      const dueFlashcards = srs.getCardsDueToday(fsrsCards);
+
+      // Convert back to original format for compatibility
+      const dueFlashcardIds = new Set(dueFlashcards.map(card => card.id));
+      const dueFlashcardsOriginal = flashcards.filter(card => dueFlashcardIds.has(card.id));
+
+      // Get due logic nodes
+      const currentDate = new Date();
+      const dueLogicNodes = logicNodes.filter(node => node.nextReviewDate <= currentDate);
+
+      // Count critical logic nodes (high difficulty or overdue)
+      const criticalLogicCount = logicNodes.filter(node =>
+        node.difficulty >= 8 || (node.nextReviewDate <= currentDate && node.difficulty >= 6)
+      ).length;
+
+      return {
+        flashcards: dueFlashcardsOriginal,
+        logicNodes: dueLogicNodes,
+        criticalLogicCount,
+      };
+    } catch (error) {
+      console.warn('Failed to get cards due today:', error);
+      return {
+        flashcards: [],
+        logicNodes: [],
+        criticalLogicCount: 0,
+      };
+    }
+  }
+
+  // ==================== DASHBOARD METHODS ====================
+
+  async calculateCurrentStudyStreak(): Promise<number> {
+    try {
+      // Get focus sessions to calculate streak
+      const sessions = await this.getFocusSessions();
+
+      if (sessions.length === 0) return 0;
+
+      // Sort sessions by date (most recent first)
+      const sortedSessions = sessions
+        .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+
+      let streak = 0;
+      let currentDate = new Date();
+      currentDate.setHours(0, 0, 0, 0); // Start of today
+
+      // Check if there's a session today or yesterday
+      const todaySession = sortedSessions.find(session => {
+        const sessionDate = new Date(session.startTime);
+        sessionDate.setHours(0, 0, 0, 0);
+        return sessionDate.getTime() === currentDate.getTime();
+      });
+
+      if (!todaySession) {
+        // Check yesterday
+        const yesterday = new Date(currentDate);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdaySession = sortedSessions.find(session => {
+          const sessionDate = new Date(session.startTime);
+          sessionDate.setHours(0, 0, 0, 0);
+          return sessionDate.getTime() === yesterday.getTime();
+        });
+
+        if (!yesterdaySession) {
+          return 0; // No recent sessions
+        }
+        currentDate = yesterday;
+      }
+
+      // Count consecutive days with sessions
+      while (true) {
+        const daySession = sortedSessions.find(session => {
+          const sessionDate = new Date(session.startTime);
+          sessionDate.setHours(0, 0, 0, 0);
+          return sessionDate.getTime() === currentDate.getTime();
+        });
+
+        if (!daySession) break;
+
+        streak++;
+        currentDate.setDate(currentDate.getDate() - 1);
+      }
+
+      return streak;
+    } catch (error) {
+      console.warn('Failed to calculate study streak:', error);
+      return 0;
+    }
+  }
+
   // ==================== UTILITY METHODS ====================
 
   async clearAllData(): Promise<void> {
@@ -634,6 +750,27 @@ export class HybridStorageService {
 
   async getMemoryPalaces(): Promise<MemoryPalace[]> { return []; }
   async saveMemoryPalaces(palaces: MemoryPalace[]): Promise<void> {}
+
+  /**
+   * Prune old focus data both in Supabase (if online) and local cache.
+   * Best-effort: non-blocking and defensive.
+   */
+  async pruneOldFocusData(olderThanDays: number = 90): Promise<void> {
+    try {
+      // Try Supabase prune first
+      await this.supabaseService.pruneOldFocusData(olderThanDays);
+    } catch (error) {
+      console.warn('Supabase pruneOldFocusData failed or unavailable:', error);
+    }
+
+    try {
+      // Clean local AsyncStorage cache entries to avoid stale large caches
+      await AsyncStorage.removeItem(HybridStorageService.CACHE_KEYS.FOCUS_SESSIONS);
+    } catch (error) {
+      console.warn('Failed to prune local focus cache:', error);
+    }
+  }
+
 }
 
 export default HybridStorageService;

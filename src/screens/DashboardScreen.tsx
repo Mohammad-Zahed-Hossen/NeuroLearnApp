@@ -18,8 +18,8 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { HybridStorageService } from '../services/HybridStorageService';
-import { SpacedRepetitionService } from '../services/SpacedRepetitionService';
+import HybridStorageService from '../services/HybridStorageService';
+import SpacedRepetitionService from '../services/SpacedRepetitionService';
 import { FocusTimerService } from '../services/FocusTimerService';
 import { Flashcard, StudySession, ProgressData, Task } from '../types';
 

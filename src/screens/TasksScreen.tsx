@@ -21,7 +21,7 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { HybridStorageService } from '../services/StorageService';
+import HybridStorageService from '../services/HybridStorageService';
 import { TodoistService } from '../services/TodoistService';
 import { Task } from '../types/index';
 

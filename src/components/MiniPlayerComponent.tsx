@@ -33,14 +33,8 @@ import {
   PanGestureHandlerGestureEvent,
   TapGestureHandler,
 } from 'react-native-gesture-handler';
-// BlurView may be optional depending on platform; guard its import
-let BlurView: any;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  BlurView = require('@react-native-community/blur').BlurView;
-} catch (e) {
-  BlurView = ({ children }: any) => <View>{children}</View>;
-}
+// Use Expo's BlurView which works with Expo Go
+import BlurViewWrapper from './BlurViewWrapper';
 
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -822,11 +816,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = React.memo(({ theme, style 
             },
           ]}
         >
-          <BlurView
+          <BlurViewWrapper
             style={StyleSheet.absoluteFill}
-            blurType={theme === 'dark' ? 'dark' : 'light'}
-            blurAmount={20}
-            reducedTransparencyFallbackColor={themeColors.surface}
+            intensity={theme === 'dark' ? 80 : 60}
+            tint={theme === 'dark' ? 'dark' : 'light'}
           />
 
           {/* Drag handle */}
@@ -1127,12 +1120,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = React.memo(({ theme, style 
           onPress={handleMiniPlayerTap}
           style={styles.contentArea}
         >
-          <BlurView
+          <BlurViewWrapper
             style={StyleSheet.absoluteFill}
-            blurType={theme === 'dark' ? 'dark' : 'light'}
-            blurAmount={10}
-            reducedTransparencyFallbackColor={themeColors.surface}
-            pointerEvents="none"
+            intensity={theme === 'dark' ? 40 : 30}
+            tint={theme === 'dark' ? 'dark' : 'light'}
           />
 
           {renderMiniPlayerContent()}

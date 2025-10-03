@@ -1,5 +1,5 @@
 import { NeuralPhysicsEngine } from './NeuralPhysicsEngine';
-import { HybridStorageService } from './HybridStorageService';
+import HybridStorageService from './HybridStorageService';
 import {
   DistractionEvent,
   FocusSession,
@@ -538,7 +538,9 @@ export class FocusTimerService {
         const realTaskId = this.activeSession.taskId.replace('task_', '');
         const outcome =
           options.selfReportFocus >= 4 ? 'completed' : 'interrupted';
-        this.todoistService.stopTaskTimer(realTaskId, outcome);
+        // Map outcome to self-report focus rating
+        const selfReportFocus = outcome === 'completed' ? 4 : 2; // 4 for good focus, 2 for poor focus
+        this.todoistService.stopTaskTimer(realTaskId, selfReportFocus);
 
         if (options.todoistTaskCompleted) {
           await this.todoistService.completeTask(realTaskId);
@@ -673,14 +675,12 @@ export class FocusTimerService {
 
         if (targetCard) {
           const penalty = 0.05 * ((distractionEvent.severity || 3) / 5);
-          targetCard.distractionWeakening =
-            (targetCard.distractionWeakening || 0) + penalty;
+          const enhanced = targetCard as unknown as any;
+          enhanced.distractionWeakening = (enhanced.distractionWeakening || 0) + penalty;
 
           await this.storageService.saveFlashcards(flashcards);
           console.log(
-            `📚 Distraction penalty applied to flashcard ${
-              targetCard.id
-            }: -${penalty.toFixed(3)}`,
+            `📚 Distraction penalty applied to flashcard ${targetCard.id}: -${penalty.toFixed(3)}`,
           );
         }
       }
@@ -758,14 +758,12 @@ export class FocusTimerService {
           reinforcement *= session.completionRate;
           reinforcement -= Math.min(0.1, session.distractionCount * 0.02);
 
-          targetCard.focusSessionStrength =
-            (targetCard.focusSessionStrength || 0) + reinforcement;
+          const enhanced = targetCard as unknown as any;
+          enhanced.focusSessionStrength = (enhanced.focusSessionStrength || 0) + reinforcement;
 
           await this.storageService.saveFlashcards(flashcards);
           console.log(
-            `📚 Neural reinforcement applied to flashcard ${targetCard.id}: ${
-              reinforcement > 0 ? '+' : ''
-            }${reinforcement.toFixed(3)}`,
+            `📚 Neural reinforcement applied to flashcard ${targetCard.id}: ${reinforcement > 0 ? '+' : ''}${reinforcement.toFixed(3)}`,
           );
         }
       }

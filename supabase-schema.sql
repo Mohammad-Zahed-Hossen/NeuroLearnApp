@@ -93,12 +93,31 @@ CREATE TABLE IF NOT EXISTS reading_sessions (
   duration_seconds INTEGER DEFAULT 0,
   source_title TEXT,
   source_text TEXT,
-  words_read INTEGER DEFAULT 0,
+  word_count INTEGER DEFAULT 0,
+  wpm_goal INTEGER DEFAULT 300,
   wpm_achieved INTEGER DEFAULT 0,
+  wpm_peak INTEGER DEFAULT 0,
   comprehension_score REAL DEFAULT 0,
+  total_duration_ms INTEGER DEFAULT 0,
+  reading_duration_ms INTEGER DEFAULT 0,
+  pause_duration_ms INTEGER DEFAULT 0,
+  fixation_accuracy REAL DEFAULT 1.0,
+  regression_count INTEGER DEFAULT 0,
+  sub_vocalization_events INTEGER DEFAULT 0,
+  cognitive_load_start REAL DEFAULT 0.5,
+  cognitive_load_end REAL DEFAULT 0.5,
+  display_mode TEXT DEFAULT 'word',
+  chunk_size INTEGER DEFAULT 3,
+  pause_on_punctuation BOOLEAN DEFAULT true,
+  highlight_vowels BOOLEAN DEFAULT false,
+  concepts_identified TEXT[] DEFAULT '{}',
+  neural_nodes_strengthened TEXT[] DEFAULT '{}',
+  source_links JSONB DEFAULT '[]',
+  text_difficulty TEXT DEFAULT 'medium',
   quiz_id UUID,
   notion_synced_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  modified_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE reading_sessions ENABLE ROW LEVEL SECURITY;
@@ -113,7 +132,34 @@ CREATE INDEX IF NOT EXISTS idx_reading_sessions_user_id ON reading_sessions(user
 CREATE INDEX IF NOT EXISTS idx_reading_sessions_created_at ON reading_sessions(created_at);
 
 -- ==============================
--- 4.5. Quizzes
+-- 4.5. Source Links (for neural map integration)
+-- ==============================
+CREATE TABLE IF NOT EXISTS source_links (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users ON DELETE CASCADE,
+  type TEXT DEFAULT 'source_read',
+  session_id UUID,
+  text_source TEXT,
+  concept_id TEXT NOT NULL,
+  relevance_score REAL DEFAULT 0.8,
+  extracted_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE source_links ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own source links"
+  ON source_links FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Index for performance
+CREATE INDEX IF NOT EXISTS idx_source_links_user_id ON source_links(user_id);
+CREATE INDEX IF NOT EXISTS idx_source_links_session_id ON source_links(session_id);
+CREATE INDEX IF NOT EXISTS idx_source_links_concept_id ON source_links(concept_id);
+
+-- ==============================
+-- 4.6. Quizzes
 -- ==============================
 CREATE TABLE IF NOT EXISTS quizzes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

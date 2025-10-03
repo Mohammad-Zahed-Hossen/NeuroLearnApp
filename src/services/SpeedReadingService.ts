@@ -10,7 +10,7 @@
  */
 
 import EventEmitter from 'eventemitter3';
-import { HybridStorageService } from './HybridStorageService';
+import HybridStorageService from './HybridStorageService';
 import { MindMapGenerator } from './MindMapGeneratorService';
 import { aiCoachingService } from './AICoachingService';
 
@@ -874,7 +874,6 @@ export class SpeedReadingService extends EventEmitter {
       // Optional: Generate AI comprehension quiz
       try {
         const quiz = await aiCoachingService.generateComprehensionQuiz(
-          this.activeSession.textSource,
           this.activeSession.id,
           {
             questionCount: 5,

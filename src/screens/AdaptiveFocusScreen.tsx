@@ -27,7 +27,8 @@ import {
   shadows,
 } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { TodoistService, FocusSession } from '../services/TodoistService';
+import { TodoistService } from '../services/TodoistService';
+import { FocusSession } from '../services/StorageService';
 import {
   MindMapGenerator,
   NeuralNode,

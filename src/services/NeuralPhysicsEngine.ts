@@ -81,10 +81,6 @@ export class NeuralPhysicsEngine {
     this.width = width;
     this.height = height;
     this.theme = theme;
-
-    console.log(
-      '🔬 Neural Physics Engine initialized with Phase 5.5 anti-distraction capabilities',
-    );
   }
 
   /**

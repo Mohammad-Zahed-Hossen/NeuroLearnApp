@@ -14,7 +14,7 @@ import { AppHeader, HamburgerMenu } from '../components/Navigation';
 import { GlassCard, Button, ScreenContainer } from '../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { HybridStorageService } from '../services/StorageService';
+import HybridStorageService from '../services/HybridStorageService';
 import { MemoryPalace, MemoryLocation, MemoryItem } from '../types';
 
 interface MemoryPalaceScreenProps {
