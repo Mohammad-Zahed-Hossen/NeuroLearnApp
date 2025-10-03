@@ -18,7 +18,7 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { StorageService } from '../services/StorageService';
+import { HybridStorageService } from '../services/HybridStorageService';
 import { SpacedRepetitionService } from '../services/SpacedRepetitionService';
 import { FocusTimerService } from '../services/FocusTimerService';
 import { Flashcard, StudySession, ProgressData, Task } from '../types';
@@ -89,7 +89,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const fadeAnim = useState(new Animated.Value(0))[0];
 
   const themeColors = colors[theme];
-  const storage = StorageService.getInstance();
+  const storage = HybridStorageService.getInstance();
   const srs = SpacedRepetitionService.getInstance();
 
   useEffect(() => {

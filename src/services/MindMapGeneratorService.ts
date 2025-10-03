@@ -1,4 +1,4 @@
-import { StorageService } from './StorageService';
+import { HybridStorageService } from './HybridStorageService';
 import { SpacedRepetitionService } from './SpacedRepetitionService';
 import { ReadingSession, SourceLink } from './SpeedReadingService';
 
@@ -186,7 +186,7 @@ export interface NeuralGraph {
  */
 export class MindMapGenerator {
   private static instance: MindMapGenerator;
-  private storage: StorageService;
+  private storage: HybridStorageService;
   private srs: SpacedRepetitionService;
 
   // Enhanced caching for Phase 2 algorithms
@@ -208,7 +208,7 @@ export class MindMapGenerator {
   }
 
   private constructor() {
-    this.storage = StorageService.getInstance();
+    this.storage = HybridStorageService.getInstance();
     this.srs = SpacedRepetitionService.getInstance();
   }
 
@@ -1624,7 +1624,7 @@ export class MindMapGenerator {
         extractedAt: new Date(),
       }));
       // Optionally persist
-      await StorageService.getInstance().saveSourceLinks(links);
+      await HybridStorageService.getInstance().saveSourceLinks(links);
       return links;
     } catch (e) {
       console.error(

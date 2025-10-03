@@ -1,0 +1,44 @@
+# Minimal Supabase Configuration - NeuroLearn
+# This file intentionally keeps the configuration minimal and compatible
+# with the Supabase CLI. Put runtime secrets into environment variables
+# or use `supabase secrets set` for production.
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+
+[db]
+major_version = 15
+
+[studio]
+enabled = true
+
+[analytics]
+enabled = false
+
+# ==================== ENVIRONMENT / SECRETS ====================
+# DO NOT place secrets directly in this file. Use one of these methods:
+# 1) Locally: create a .env file and add it to .gitignore
+# 2) For deployments: use the Supabase CLI to set secrets:
+#    supabase secrets set GEMINI_API_KEY=your-gemini-key
+#    supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+# 3) For per-function environment variables, set them via the Supabase
+#    project dashboard or the 'supabase secrets' mechanism.
+
+# Example variables to set (do NOT hardcode here):
+# SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY,
+# ENCRYPTION_KEY, JWT_SECRET
+
+# ==================== DEPLOYMENT NOTES ====================
+# Edge Functions:
+# - Keep sensitive keys out of source control. The functions should read
+#   secrets from the environment (Deno.env.get(...)) at runtime.
+# - If your functions require decorators or special Deno flags, prefer
+#   a deno.json configuration in the function folder rather than CLI flags.
+
+# Use the Supabase CLI to deploy functions:
+# supabase functions deploy ai-flashcard-creator
+# supabase functions deploy ai-quiz-creator
+# supabase functions deploy ai-logic-evaluator
+# supabase functions deploy notion-sync-manager
+

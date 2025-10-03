@@ -14,7 +14,7 @@ import { AppHeader, HamburgerMenu } from '../components/Navigation';
 import { GlassCard, Button, ScreenContainer } from '../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { StorageService } from '../services/StorageService';
+import { HybridStorageService } from '../services/StorageService';
 import { MemoryPalace, MemoryLocation, MemoryItem } from '../types';
 
 interface MemoryPalaceScreenProps {
@@ -110,7 +110,7 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
   });
 
   const themeColors = colors[theme];
-  const storage = StorageService.getInstance();
+  const storage = HybridStorageService.getInstance();
 
   useEffect(() => {
     loadMemoryPalaces();

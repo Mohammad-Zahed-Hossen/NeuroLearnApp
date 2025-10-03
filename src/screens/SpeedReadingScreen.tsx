@@ -18,7 +18,7 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { StorageService } from '../services/StorageService';
+import { HybridStorageService } from '../services/StorageService';
 import { aiCoachingService } from '../services/AICoachingService';
 import SpeedReadingService from '../services/SpeedReadingService';
 import { useSoundscape } from '../contexts/SoundscapeContext';
@@ -252,7 +252,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   };
 
   const themeColors = colors[theme];
-  const storage = StorageService.getInstance();
+  const storage = HybridStorageService.getInstance();
   const speedReadingService = SpeedReadingService.getInstance();
   const soundscape = useSoundscape();
   

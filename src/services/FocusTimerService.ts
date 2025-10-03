@@ -1,5 +1,6 @@
 import { NeuralPhysicsEngine } from './NeuralPhysicsEngine';
-import StorageService, {
+import { HybridStorageService } from './HybridStorageService';
+import {
   DistractionEvent,
   FocusSession,
   FocusHealthMetrics,
@@ -153,7 +154,7 @@ export class FocusTimerService {
   private static instance: FocusTimerService;
 
   // Core dependencies
-  private storageService: StorageService;
+  private storageService: HybridStorageService;
   private todoistService: TodoistService;
   private mindMapGenerator: MindMapGenerator;
   private physicsEngine: NeuralPhysicsEngine | null = null;
@@ -179,7 +180,7 @@ export class FocusTimerService {
   }
 
   private constructor() {
-    this.storageService = StorageService.getInstance();
+    this.storageService = HybridStorageService.getInstance();
     this.todoistService = TodoistService.getInstance();
     this.mindMapGenerator = MindMapGenerator.getInstance();
 

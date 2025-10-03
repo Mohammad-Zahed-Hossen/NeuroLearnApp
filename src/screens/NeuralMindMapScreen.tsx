@@ -32,7 +32,7 @@ import {
   NeuralGraph,
   NeuralNode,
 } from '../services/MindMapGeneratorService';
-import { StorageService } from '../services/StorageService';
+import { HybridStorageService } from '../services/StorageService';
 import { useFocus } from '../contexts/FocusContext';
 import { useSoundscape } from '../contexts/SoundscapeContext';
 import { SoundscapeType } from '../services/CognitiveSoundscapeEngine';
@@ -150,7 +150,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
   // Memoize services
   const mindMapGenerator = useMemo(() => MindMapGenerator.getInstance(), []);
-  const storage = useMemo(() => StorageService.getInstance(), []);
+  const storage = useMemo(() => HybridStorageService.getInstance(), []);
 
   // Get current view mode configuration
   const currentViewMode = useMemo(

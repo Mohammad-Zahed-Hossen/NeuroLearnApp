@@ -1,6 +1,6 @@
 /**
  * Supabase Storage Service - Cloud Database Integration
- * 
+ *
  * Replaces AsyncStorage with Supabase PostgreSQL backend
  * Maintains same interface as original StorageService for seamless migration
  */
@@ -23,7 +23,7 @@ import {
   LogicNode,
   EnhancedFlashcard,
 } from './StorageService';
-import { ReadingSession } from './SpeedReadingService';
+import { ReadingSession, SourceLink } from './SpeedReadingService';
 
 export class SupabaseStorageService {
   private static instance: SupabaseStorageService;
@@ -50,7 +50,7 @@ export class SupabaseStorageService {
   async getSettings(): Promise<Settings> {
     try {
       const userId = await this.getCurrentUserId();
-      
+
       const { data, error } = await supabase
         .from('user_profiles')
         .select('*')
@@ -437,7 +437,7 @@ export class SupabaseStorageService {
   async getDistractionEvents(sessionId?: string): Promise<DistractionEvent[]> {
     try {
       let query = supabase.from('distraction_events').select('*');
-      
+
       if (sessionId) {
         query = query.eq('session_id', sessionId);
       }
@@ -474,12 +474,33 @@ export class SupabaseStorageService {
 
       return (data || []).map(session => ({
         id: session.id,
-        wpm: session.wpm,
+        textSource: session.text_source,
+        textTitle: session.text_title,
+        textDifficulty: session.text_difficulty,
+        wordCount: session.word_count,
+        wpmGoal: session.wpm_goal,
+        wpmAchieved: session.wpm_achieved,
+        wpmPeak: session.wpm_peak,
         comprehensionScore: session.comprehension_score,
-        sessionText: session.session_text,
-        concepts: session.concepts || {},
-        startTime: new Date(session.created_at),
-        endTime: new Date(session.created_at),
+        startTime: new Date(session.start_time),
+        endTime: new Date(session.end_time),
+        totalDurationMs: session.total_duration_ms,
+        readingDurationMs: session.reading_duration_ms,
+        pauseDurationMs: session.pause_duration_ms,
+        fixationAccuracy: session.fixation_accuracy,
+        regressionCount: session.regression_count,
+        subVocalizationEvents: session.sub_vocalization_events,
+        cognitiveLoadStart: session.cognitive_load_start,
+        cognitiveLoadEnd: session.cognitive_load_end,
+        displayMode: session.display_mode,
+        chunkSize: session.chunk_size,
+        pauseOnPunctuation: session.pause_on_punctuation,
+        highlightVowels: session.highlight_vowels,
+        conceptsIdentified: session.concepts_identified || [],
+        neuralNodesStrengthened: session.neural_nodes_strengthened || [],
+        sourceLinks: session.source_links || [],
+        created: new Date(session.created_at),
+        modified: new Date(session.modified_at),
       }));
     } catch (error) {
       console.error('Error loading reading sessions:', error);
@@ -496,11 +517,33 @@ export class SupabaseStorageService {
         .upsert({
           id: session.id,
           user_id: userId,
-          wpm: session.wpm,
+          text_source: session.textSource,
+          text_title: session.textTitle,
+          text_difficulty: session.textDifficulty,
+          word_count: session.wordCount,
+          wpm_goal: session.wpmGoal,
+          wpm_achieved: session.wpmAchieved,
+          wpm_peak: session.wpmPeak,
           comprehension_score: session.comprehensionScore,
-          session_text: session.sessionText,
-          concepts: session.concepts || {},
-          created_at: session.startTime.toISOString(),
+          start_time: session.startTime.toISOString(),
+          end_time: session.endTime.toISOString(),
+          total_duration_ms: session.totalDurationMs,
+          reading_duration_ms: session.readingDurationMs,
+          pause_duration_ms: session.pauseDurationMs,
+          fixation_accuracy: session.fixationAccuracy,
+          regression_count: session.regressionCount,
+          sub_vocalization_events: session.subVocalizationEvents,
+          cognitive_load_start: session.cognitiveLoadStart,
+          cognitive_load_end: session.cognitiveLoadEnd,
+          display_mode: session.displayMode,
+          chunk_size: session.chunkSize,
+          pause_on_punctuation: session.pauseOnPunctuation,
+          highlight_vowels: session.highlightVowels,
+          concepts_identified: session.conceptsIdentified,
+          neural_nodes_strengthened: session.neuralNodesStrengthened,
+          source_links: session.sourceLinks,
+          created_at: session.created.toISOString(),
+          modified_at: session.modified.toISOString(),
         });
 
       if (error) throw error;
@@ -621,6 +664,59 @@ export class SupabaseStorageService {
     }
   }
 
+  // ==================== SOURCE LINKS ====================
+
+  async getSourceLinks(): Promise<SourceLink[]> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { data, error } = await supabase
+        .from('source_links')
+        .select('*')
+        .eq('user_id', userId)
+        .order('extracted_at', { ascending: false });
+
+      if (error) throw error;
+
+      return (data || []).map(link => ({
+        type: link.type,
+        sessionId: link.session_id,
+        textSource: link.text_source,
+        conceptId: link.concept_id,
+        relevanceScore: link.relevance_score,
+        extractedAt: new Date(link.extracted_at),
+      }));
+    } catch (error) {
+      console.error('Error loading source links:', error);
+      return [];
+    }
+  }
+
+  async saveSourceLinks(links: SourceLink[]): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const linkData = links.map(link => ({
+        user_id: userId,
+        type: link.type,
+        session_id: link.sessionId,
+        text_source: link.textSource,
+        concept_id: link.conceptId,
+        relevance_score: link.relevanceScore,
+        extracted_at: link.extractedAt.toISOString(),
+      }));
+
+      const { error } = await supabase
+        .from('source_links')
+        .upsert(linkData);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving source links:', error);
+      throw new Error(`Failed to save source links: ${error}`);
+    }
+  }
+
   // ==================== UTILITY METHODS ====================
 
   async clearAllData(): Promise<void> {
@@ -670,7 +766,7 @@ export class SupabaseStorageService {
     return {
       streakCount: 0,
       averageFocusRating: 3,
-      distractionPerSession: 0,
+      distractionsPerSession: 0,
       focusEfficiency: 1.0,
       neuralReinforcement: 0,
       dailyFocusTime: 0,

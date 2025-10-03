@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   todoist_token TEXT,
   notion_token TEXT,
   notion_db_id TEXT,
+  notion_db_id_logs TEXT,
   notifications JSONB DEFAULT '{"studyReminders":true,"breakAlerts":true,"reviewNotifications":true}',
   optimal_profile JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -37,10 +38,12 @@ CREATE TABLE IF NOT EXISTS flashcards (
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
   front TEXT NOT NULL,
   back TEXT NOT NULL,
+  source_id UUID,
   category TEXT DEFAULT 'general',
   next_review_date TIMESTAMPTZ DEFAULT NOW(),
-  stability FLOAT,
-  focus_strength FLOAT DEFAULT 0,
+  stability REAL DEFAULT 0.5,
+  difficulty REAL DEFAULT 0.5,
+  created_by_ai BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -86,10 +89,15 @@ CREATE INDEX IF NOT EXISTS idx_logic_nodes_user_id ON logic_nodes(user_id);
 CREATE TABLE IF NOT EXISTS reading_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users ON DELETE CASCADE,
-  wpm INT NOT NULL,
-  comprehension_score FLOAT NOT NULL,
-  session_text TEXT,
-  concepts JSONB DEFAULT '{}',
+  start_time TIMESTAMPTZ DEFAULT NOW(),
+  duration_seconds INTEGER DEFAULT 0,
+  source_title TEXT,
+  source_text TEXT,
+  words_read INTEGER DEFAULT 0,
+  wpm_achieved INTEGER DEFAULT 0,
+  comprehension_score REAL DEFAULT 0,
+  quiz_id UUID,
+  notion_synced_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -103,6 +111,40 @@ CREATE POLICY "Users can manage own reading sessions"
 -- Index for performance
 CREATE INDEX IF NOT EXISTS idx_reading_sessions_user_id ON reading_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_reading_sessions_created_at ON reading_sessions(created_at);
+
+-- ==============================
+-- 4.5. Quizzes
+-- ==============================
+CREATE TABLE IF NOT EXISTS quizzes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID REFERENCES reading_sessions ON DELETE CASCADE,
+  quiz_type TEXT DEFAULT 'MCQ_COMPREHENSION',
+  quiz_data JSONB DEFAULT '{}',
+  completed BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE quizzes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own quizzes"
+  ON quizzes FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM reading_sessions rs
+      WHERE rs.id = quizzes.session_id
+      AND rs.user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM reading_sessions rs
+      WHERE rs.id = quizzes.session_id
+      AND rs.user_id = auth.uid()
+    )
+  );
+
+-- Index for performance
+CREATE INDEX IF NOT EXISTS idx_quizzes_session_id ON quizzes(session_id);
 
 -- ==============================
 -- 5. Focus Sessions

@@ -13,7 +13,7 @@ import {
   SoundscapeType,
   SoundscapeState,
 } from '../services/CognitiveSoundscapeEngine';
-import { StorageService } from '../services/StorageService';
+import { HybridStorageService } from '../services/HybridStorageService';
 import { validatePresetAssets } from '../services/SoundscapeAssetValidator';
 
 // Reuse the implementation from the previous context file but fix TSX/typing issues
@@ -313,7 +313,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
 
   const loadPersistedSettings = useCallback(async () => {
     try {
-      const storage = StorageService.getInstance();
+      const storage = HybridStorageService.getInstance();
       const settings: any = await storage.getSettings();
 
       if (settings?.soundscapeSettings) {
@@ -342,7 +342,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
     if (!persistSettings) return;
 
     try {
-      const storage = StorageService.getInstance();
+      const storage = HybridStorageService.getInstance();
       const settings: any = await storage.getSettings();
 
       await storage.saveSettings({

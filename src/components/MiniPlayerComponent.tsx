@@ -63,7 +63,7 @@ import {
 import { useSoundscape } from '../contexts/SoundscapeContext';
 import { SoundscapeType } from '../services/CognitiveSoundscapeEngine';
 import CognitiveSoundscapeEngine from '../services/CognitiveSoundscapeEngine';
-import StorageService from '../services/StorageService';
+import { HybridStorageService } from '../services/HybridStorageService';
 
 // ==================== TYPES ====================
 
@@ -353,7 +353,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = React.memo(({ theme, style 
   useEffect(() => {
     (async () => {
       try {
-        const ss = await StorageService.getInstance().getSoundSettings();
+        const ss = await HybridStorageService.getInstance().getSoundSettings();
         if (ss) {
           setPersonalizationEnabled(ss.personalizationEnabled !== false);
         }
@@ -1017,8 +1017,8 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = React.memo(({ theme, style 
                   setPersonalizationEnabled(newValue);
                   // Persist the setting
                   try {
-                    const currentSettings = await StorageService.getInstance().getSoundSettings();
-                    await StorageService.getInstance().saveSoundSettings({
+                    const currentSettings = await HybridStorageService.getInstance().getSoundSettings();
+                    await HybridStorageService.getInstance().saveSoundSettings({
                       ...currentSettings,
                       personalizationEnabled: newValue,
                     });

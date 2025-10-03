@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import SupabaseService from './SupabaseService';
+import { HybridStorageService } from './HybridStorageService';
 
 import {
   Flashcard,
@@ -158,6 +160,7 @@ export interface EnhancedFlashcard extends Flashcard {
  */
 export class StorageService {
   private static instance: StorageService;
+  private hybridService: HybridStorageService;
 
   // Storage keys (both new and legacy)
   private static readonly KEYS = {
@@ -204,7 +207,22 @@ export class StorageService {
     return StorageService.instance;
   }
 
-  private constructor() {}
+  private constructor() {
+    this.hybridService = HybridStorageService.getInstance();
+  }
+
+  private async shouldUseSupabase(): Promise<boolean> {
+    try {
+      const supabaseService = SupabaseService.getInstance();
+      return await supabaseService.isAuthenticated();
+    } catch (error) {
+      return false;
+    }
+  }
+
+  private async getSupabaseService(): Promise<SupabaseService> {
+    return SupabaseService.getInstance();
+  }
 
   // ==================== PHASE 5.5: FOCUS SESSION OPERATIONS ====================
 
@@ -1080,43 +1098,11 @@ export class StorageService {
   // ==================== SETTINGS (All screens need this) ====================
 
   async saveSettings(settings: Settings): Promise<void> {
-    try {
-      // Save to both locations for compatibility
-      await Promise.all([
-        AsyncStorage.setItem(
-          StorageService.KEYS.SETTINGS,
-          JSON.stringify(settings),
-        ),
-        AsyncStorage.setItem(
-          StorageService.KEYS.LEGACY_SETTINGS,
-          JSON.stringify(settings),
-        ),
-      ]);
-    } catch (error: any) {
-      console.error('Error saving Settings:', error);
-      if ((error as Error).message) {
-        throw new Error(`Failed to save Settings: ${(error as Error).message}`);
-      }
-    }
+    return this.hybridService.saveSettings(settings);
   }
 
   async getSettings(): Promise<Settings> {
-    try {
-      // Try new location first, then legacy
-      let data = await AsyncStorage.getItem(StorageService.KEYS.SETTINGS);
-      if (!data) {
-        data = await AsyncStorage.getItem(StorageService.KEYS.LEGACY_SETTINGS);
-      }
-
-      if (!data) {
-        return this.getDefaultSettings();
-      }
-
-      return JSON.parse(data);
-    } catch (error) {
-      console.error('Error loading settings:', error);
-      return this.getDefaultSettings();
-    }
+    return this.hybridService.getSettings();
   }
 
   // ==================== SOUNDSCAPE STORAGE HELPERS (Phase 7) ====================

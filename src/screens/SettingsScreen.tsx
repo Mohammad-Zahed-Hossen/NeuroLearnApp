@@ -17,8 +17,9 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import { StorageService } from '../services/StorageService';
+import { HybridStorageService } from '../services/HybridStorageService';
 import { TodoistService } from '../services/TodoistService';
+import { SupabaseService } from '../services/SupabaseService';
 import { Settings } from '../types';
 
 interface SettingsScreenProps {
@@ -57,6 +58,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     notion: '',
   });
 
+  const [notionDbIds, setNotionDbIds] = useState({
+    content: '',
+    logs: '',
+  });
+
+  const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
+
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     todoist: { connected: false, message: 'Not configured', testing: false },
     notion: { connected: false, message: 'Not configured', testing: false },
@@ -64,9 +72,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<string | null>(null);
 
   const themeColors = colors[theme];
-  const storage = StorageService.getInstance();
+  const storage = HybridStorageService.getInstance();
   const todoistService = TodoistService.getInstance();
 
   useEffect(() => {
@@ -172,6 +181,54 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
+  const handleSaveNotionIntegration = async () => {
+    const supabaseService = SupabaseService.getInstance();
+
+    // Validate inputs first
+    if (!tempTokens.notion.trim()) {
+      Alert.alert('Error', 'Notion token is required');
+      return;
+    }
+
+    setConnectionStatus(prev => ({
+      ...prev,
+      notion: { connected: false, message: 'Saving...', testing: true }
+    }));
+
+    // Save to database
+    const { error } = await supabaseService.updateUserProfile({
+      notion_token: tempTokens.notion.trim(),
+      notion_db_id: notionDbIds.content.trim() || null,
+      notion_db_id_logs: notionDbIds.logs.trim() || null,
+    });
+
+    if (error) {
+      Alert.alert('Save Failed', error.message);
+      setConnectionStatus(prev => ({
+        ...prev,
+        notion: { connected: false, message: 'Save failed', testing: false }
+      }));
+      return;
+    }
+
+    // Test connection
+    const { data, error: testError } = await supabaseService.syncNotionData('test-connection');
+
+    if (testError) {
+      Alert.alert('Connection Test Failed', testError.message);
+      setConnectionStatus(prev => ({
+        ...prev,
+        notion: { connected: false, message: 'Test failed', testing: false }
+      }));
+    } else {
+      Alert.alert('Success', 'Notion connected successfully!');
+      setConnectionStatus(prev => ({
+        ...prev,
+        notion: { connected: true, message: 'Connected', testing: false }
+      }));
+    }
+  };
+
   const testNotionConnection = async () => {
     if (!tempTokens.notion.trim()) {
       Alert.alert('Error', 'Please enter a Notion integration token');
@@ -187,18 +244,33 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       },
     }));
 
-    // Notion connection test implementation would go here
-    // For now, simulate the test
-    setTimeout(() => {
+    try {
+      const supabaseService = SupabaseService.getInstance();
+      const result = await supabaseService.syncNotionData('test-connection');
+
       setConnectionStatus((prev) => ({
         ...prev,
         notion: {
-          connected: true,
-          message: 'Connection test not implemented yet',
+          connected: !result.error,
+          message: result.error ? result.error.message : 'Connection successful',
           testing: false,
         },
       }));
-    }, 2000);
+
+      Alert.alert(
+        !result.error ? 'Connection Successful!' : 'Connection Failed',
+        result.error ? result.error.message : 'Notion integration is working correctly',
+        [{ text: 'OK' }],
+      );
+    } catch (error: any) {
+      const message = `Connection failed: ${error.message}`;
+      setConnectionStatus((prev) => ({
+        ...prev,
+        notion: { connected: false, message, testing: false },
+      }));
+
+      Alert.alert('Connection Error', message);
+    }
   };
 
   const clearAllData = () => {
@@ -229,7 +301,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const resetSoundLearning = async () => {
     try {
-      await StorageService.getInstance().resetOptimalProfiles();
+      await HybridStorageService.getInstance().resetOptimalProfiles();
       Alert.alert('Success', 'Sound personalization has been reset.');
     } catch (error) {
       console.error('Failed to reset sound learning:', error);
@@ -602,7 +674,59 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               autoCorrect={false}
             />
 
+            <TextInput
+              style={[
+                styles.tokenInput,
+                {
+                  borderColor: themeColors.border,
+                  color: themeColors.text,
+                  backgroundColor: themeColors.surfaceLight,
+                },
+              ]}
+              placeholder="Content Database ID..."
+              placeholderTextColor={themeColors.textMuted}
+              value={notionDbIds.content}
+              onChangeText={(text) => {
+                setNotionDbIds((prev) => ({ ...prev, content: text }));
+                setHasUnsavedChanges(true);
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TextInput
+              style={[
+                styles.tokenInput,
+                {
+                  borderColor: themeColors.border,
+                  color: themeColors.text,
+                  backgroundColor: themeColors.surfaceLight,
+                },
+              ]}
+              placeholder="Logs Database ID..."
+              placeholderTextColor={themeColors.textMuted}
+              value={notionDbIds.logs}
+              onChangeText={(text) => {
+                setNotionDbIds((prev) => ({ ...prev, logs: text }));
+                setHasUnsavedChanges(true);
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
             <View style={styles.integrationActions}>
+              <Button
+                title="Save Integration"
+                onPress={handleSaveNotionIntegration}
+                variant="primary"
+                size="small"
+                theme={theme}
+                disabled={
+                  connectionStatus.notion.testing || !tempTokens.notion.trim()
+                }
+                style={styles.saveButton}
+              />
+
               <Button
                 title="Test Connection"
                 onPress={testNotionConnection}
@@ -635,6 +759,23 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Sync Progress Overlay */}
+          {syncProgress && (
+            <View style={styles.syncOverlay}>
+              <View style={[styles.syncProgressCard, { backgroundColor: themeColors.surface }]}>
+                <Text style={[styles.syncProgressTitle, { color: themeColors.text }]}>
+                  🔄 Syncing with Notion
+                </Text>
+                <Text style={[styles.syncProgressMessage, { color: themeColors.textSecondary }]}>
+                  {syncProgress}
+                </Text>
+                <View style={styles.syncProgressBar}>
+                  <View style={[styles.syncProgressFill, { backgroundColor: themeColors.primary }]} />
+                </View>
+              </View>
+            </View>
+          )}
         </GlassCard>
 
         {/* Notifications */}
@@ -1076,5 +1217,46 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // Sync Progress Overlay
+  syncOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  syncProgressCard: {
+    padding: spacing.xl,
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+    minWidth: 280,
+  },
+  syncProgressTitle: {
+    ...typography.h4,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  syncProgressMessage: {
+    ...typography.body,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  syncProgressBar: {
+    width: '100%',
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  syncProgressFill: {
+    height: '100%',
+    width: '60%', // Fixed progress for demo
+    borderRadius: 2,
   },
 });

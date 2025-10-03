@@ -1,6 +1,6 @@
 /**
  * Phase 6: Cognitive Efficiency Layer - Speed Reading Service
- * 
+ *
  * Revolutionary RSVP (Rapid Serial Visual Presentation) engine with:
  * - Advanced text segmentation algorithms
  * - Cognitive load-adaptive WPM calculation
@@ -10,7 +10,7 @@
  */
 
 import EventEmitter from 'eventemitter3';
-import { StorageService } from './StorageService';
+import { HybridStorageService } from './HybridStorageService';
 import { MindMapGenerator } from './MindMapGeneratorService';
 import { aiCoachingService } from './AICoachingService';
 
@@ -23,38 +23,38 @@ export interface ReadingSession {
   textTitle?: string;
   textDifficulty?: 'easy' | 'medium' | 'hard' | 'technical';
   wordCount: number;
-  
+
   // Performance metrics
   wpmGoal: number;
   wpmAchieved: number;
   wpmPeak: number;
   comprehensionScore: number;
-  
+
   // Timing data
   startTime: Date;
   endTime: Date;
   totalDurationMs: number;
   readingDurationMs: number; // Excluding pauses
   pauseDurationMs: number;
-  
+
   // Advanced analytics
   fixationAccuracy: number;    // How well user maintained center fixation
   regressionCount: number;     // Number of times user went back
   subVocalizationEvents: number; // Detected sub-vocalization instances
   cognitiveLoadStart: number;  // Mental state at session start
   cognitiveLoadEnd: number;    // Mental state at session end
-  
+
   // RSVP configuration
   displayMode: 'word' | 'chunk' | 'bionic' | 'adaptive';
   chunkSize: number;
   pauseOnPunctuation: boolean;
   highlightVowels: boolean;
-  
+
   // Neural map integration
   conceptsIdentified: string[];
   neuralNodesStrengthened: string[];
   sourceLinks: SourceLink[];
-  
+
   created: Date;
   modified: Date;
 }
@@ -148,7 +148,7 @@ interface SubVocalizationEvent {
 
 export class SpeedReadingService extends EventEmitter {
   private static instance: SpeedReadingService;
-  
+
   // Session state
   private activeSession: ReadingSession | null = null;
   private rsvpTimer: NodeJS.Timeout | null = null;
@@ -156,12 +156,12 @@ export class SpeedReadingService extends EventEmitter {
   private sessionStartTime: Date | null = null;
   private pauseTime: Date | null = null;
   private totalPauseTime = 0;
-  
+
   // Advanced analytics
   private wpmHistory: { timestamp: Date; wpm: number }[] = [];
   private fixationEvents: { timestamp: Date; accuracy: number }[] = [];
   private subVocalizationEvents: SubVocalizationEvent[] = [];
-  
+
   // Text processing
   private processedText: ProcessedText | null = null;
   private config: RSVPConfig;
@@ -201,31 +201,31 @@ export class SpeedReadingService extends EventEmitter {
    * Phase 6: Advanced text processing with cognitive optimization
    */
   public processText(
-    text: string, 
+    text: string,
     difficulty: 'easy' | 'medium' | 'hard' | 'technical' = 'medium'
   ): ProcessedText {
     try {
       // Clean and normalize text
       const cleanText = this.cleanText(text);
-      
+
       // Split into words with advanced tokenization
       const words = this.tokenizeText(cleanText);
-      
+
       // Create optimal chunks for RSVP display
       const chunks = this.createOptimalChunks(words, difficulty);
-      
+
       // Identify punctuation pauses (longer display time)
       const punctuationPauses = this.identifyPunctuationPauses(words);
-      
+
       // Mark difficult words for slower display
       const difficultWords = this.identifyDifficultWords(words, difficulty);
-      
+
       // Extract concept keywords for neural map linking
       const conceptKeywords = this.extractConceptKeywords(words, difficulty);
-      
+
       // Calculate estimated reading time
       const estimatedReadingTime = this.calculateReadingTime(words, this.config.wpm);
-      
+
       this.processedText = {
         words,
         chunks,
@@ -234,7 +234,7 @@ export class SpeedReadingService extends EventEmitter {
         conceptKeywords,
         estimatedReadingTime,
       };
-      
+
       console.log(`📚 Processed text: ${words.length} words, ${chunks.length} chunks, ${conceptKeywords.length} concepts`);
       return this.processedText;
 
@@ -268,13 +268,13 @@ export class SpeedReadingService extends EventEmitter {
   private tokenizeText(text: string): string[] {
     // Split on whitespace but keep hyphenated words together
     const words = text.split(/\s+/).filter(word => word.length > 0);
-    
+
     // Post-process to handle special cases
     const processedWords: string[] = [];
-    
+
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
-      
+
       // Handle contractions properly
       if (word.includes("'") && !word.endsWith("'s")) {
         processedWords.push(word);
@@ -291,7 +291,7 @@ export class SpeedReadingService extends EventEmitter {
         processedWords.push(word);
       }
     }
-    
+
     return processedWords;
   }
 
@@ -299,11 +299,11 @@ export class SpeedReadingService extends EventEmitter {
    * Create optimal word chunks based on cognitive load theory
    */
   private createOptimalChunks(
-    words: string[], 
+    words: string[],
     difficulty: 'easy' | 'medium' | 'hard' | 'technical'
   ): string[][] {
     const chunks: string[][] = [];
-    
+
     // Adjust chunk size based on difficulty
     const baseChunkSize = this.config.chunkSize;
     const chunkSize = {
@@ -317,7 +317,7 @@ export class SpeedReadingService extends EventEmitter {
       const chunk = words.slice(i, i + chunkSize);
       chunks.push(chunk);
     }
-    
+
     return chunks;
   }
 
@@ -326,7 +326,7 @@ export class SpeedReadingService extends EventEmitter {
    */
   private identifyPunctuationPauses(words: string[]): number[] {
     const pauses: number[] = [];
-    
+
     words.forEach((word, index) => {
       // Major punctuation requires longer pause
       if (/[.!?]$/.test(word)) {
@@ -337,7 +337,7 @@ export class SpeedReadingService extends EventEmitter {
         pauses.push(index);
       }
     });
-    
+
     return pauses;
   }
 
@@ -345,32 +345,32 @@ export class SpeedReadingService extends EventEmitter {
    * Identify difficult words that need slower display (anti-sub-vocalization)
    */
   private identifyDifficultWords(
-    words: string[], 
+    words: string[],
     difficulty: 'easy' | 'medium' | 'hard' | 'technical'
   ): number[] {
     const difficultIndices: number[] = [];
-    
+
     words.forEach((word, index) => {
       const cleanWord = word.replace(/[^\w]/g, '').toLowerCase();
-      
+
       // Long words
       if (cleanWord.length > 8) {
         difficultIndices.push(index);
       }
-      
+
       // Technical terms (lots of consonants or unusual patterns)
       if (difficulty === 'technical' || difficulty === 'hard') {
         if (this.isTechnicalTerm(cleanWord)) {
           difficultIndices.push(index);
         }
       }
-      
+
       // Words with complex syllable structure
       if (this.countSyllables(cleanWord) > 3) {
         difficultIndices.push(index);
       }
     });
-    
+
     return difficultIndices;
   }
 
@@ -378,36 +378,36 @@ export class SpeedReadingService extends EventEmitter {
    * Extract concept keywords for neural map integration
    */
   private extractConceptKeywords(
-    words: string[], 
+    words: string[],
     difficulty: 'easy' | 'medium' | 'hard' | 'technical'
   ): string[] {
     const concepts: string[] = [];
     const conceptWords = new Set<string>();
-    
+
     words.forEach(word => {
       const cleanWord = word.replace(/[^\w]/g, '').toLowerCase();
-      
+
       // Skip very short words
       if (cleanWord.length < 4) return;
-      
+
       // Technical and academic terms
       if (difficulty === 'technical' || difficulty === 'hard') {
         if (this.isTechnicalTerm(cleanWord) || this.isAcademicTerm(cleanWord)) {
           conceptWords.add(cleanWord);
         }
       }
-      
+
       // Capitalized words (proper nouns, important terms)
       if (/^[A-Z]/.test(word) && cleanWord.length > 3) {
         conceptWords.add(cleanWord);
       }
-      
+
       // Long, complex words likely to be concepts
       if (cleanWord.length > 7 && this.countSyllables(cleanWord) > 2) {
         conceptWords.add(cleanWord);
       }
     });
-    
+
     return Array.from(conceptWords).slice(0, 20); // Limit to top 20 concepts
   }
 
@@ -420,13 +420,13 @@ export class SpeedReadingService extends EventEmitter {
       'tion', 'sion', 'ment', 'ness', 'ity', 'ism', 'ology', 'graphy',
       'metry', 'scopy', 'pathy', 'phobia', 'philia', 'synthesis'
     ];
-    
+
     // Common technical prefixes
     const technicalPrefixes = [
       'neuro', 'psycho', 'bio', 'geo', 'astro', 'micro', 'macro',
       'multi', 'inter', 'intra', 'trans', 'ultra', 'meta'
     ];
-    
+
     return technicalSuffixes.some(suffix => word.endsWith(suffix)) ||
            technicalPrefixes.some(prefix => word.startsWith(prefix));
   }
@@ -441,7 +441,7 @@ export class SpeedReadingService extends EventEmitter {
       'process', 'mechanism', 'structure', 'function', 'relationship',
       'correlation', 'causation', 'implication', 'significance'
     ];
-    
+
     return academicKeywords.includes(word) || word.length > 10;
   }
 
@@ -451,10 +451,10 @@ export class SpeedReadingService extends EventEmitter {
   private countSyllables(word: string): number {
     word = word.toLowerCase();
     if (word.length <= 3) return 1;
-    
+
     word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
     word = word.replace(/^y/, '');
-    
+
     const matches = word.match(/[aeiouy]{1,2}/g);
     return matches ? matches.length : 1;
   }
@@ -489,11 +489,11 @@ export class SpeedReadingService extends EventEmitter {
       // Process text
       const difficulty = options.difficulty || 'medium';
       this.processedText = this.processText(text, difficulty);
-      
+
       // Update config
       if (options.wpm) this.config.wpm = options.wpm;
       if (options.mode) this.config.mode = options.mode;
-      
+
       // Adapt WPM based on cognitive load
       let adaptiveWPM = this.config.wpm;
       if (options.cognitiveLoad !== undefined) {
@@ -508,33 +508,33 @@ export class SpeedReadingService extends EventEmitter {
         textTitle: options.title || `Reading Session ${new Date().toLocaleTimeString()}`,
         textDifficulty: difficulty,
         wordCount: this.processedText.words.length,
-        
+
         wpmGoal: adaptiveWPM,
         wpmAchieved: 0,
         wpmPeak: 0,
         comprehensionScore: 0,
-        
+
         startTime: new Date(),
         endTime: new Date(), // Will be updated
         totalDurationMs: 0,
         readingDurationMs: 0,
         pauseDurationMs: 0,
-        
+
         fixationAccuracy: 0,
         regressionCount: 0,
         subVocalizationEvents: 0,
         cognitiveLoadStart: options.cognitiveLoad || 0.5,
         cognitiveLoadEnd: 0.5,
-        
+
         displayMode: this.config.mode,
         chunkSize: this.config.chunkSize,
         pauseOnPunctuation: this.config.pauseOnPunctuation,
         highlightVowels: this.config.highlightVowels,
-        
+
         conceptsIdentified: this.processedText.conceptKeywords,
         neuralNodesStrengthened: [],
         sourceLinks: [],
-        
+
         created: new Date(),
         modified: new Date(),
       };
@@ -586,7 +586,7 @@ export class SpeedReadingService extends EventEmitter {
     if (!this.activeSession || !this.processedText) return;
 
     const displayInterval = this.calculateDisplayInterval();
-    
+
     this.rsvpTimer = setInterval(() => {
       this.displayNextWord();
     }, displayInterval);
@@ -601,13 +601,13 @@ export class SpeedReadingService extends EventEmitter {
     if (!this.activeSession || !this.processedText) return 200;
 
     const baseInterval = (60 / this.activeSession.wpmGoal) * 1000;
-    
+
     // Adjust for current word characteristics
     const currentWord = this.processedText.words[this.currentWordIndex];
     if (!currentWord) return baseInterval;
 
     let multiplier = 1.0;
-    
+
     // Longer pause for punctuation
     if (this.processedText.punctuationPauses.includes(this.currentWordIndex)) {
       if (/[.!?]$/.test(currentWord)) {
@@ -616,12 +616,12 @@ export class SpeedReadingService extends EventEmitter {
         multiplier = 1.5; // Comma, semicolon
       }
     }
-    
+
     // Longer pause for difficult words
     if (this.processedText.difficultWords.includes(this.currentWordIndex)) {
       multiplier *= 1.3;
     }
-    
+
     return Math.round(baseInterval * multiplier);
   }
 
@@ -673,19 +673,19 @@ export class SpeedReadingService extends EventEmitter {
 
     const now = new Date();
     const elapsedMinutes = (now.getTime() - this.sessionStartTime.getTime() - this.totalPauseTime) / (1000 * 60);
-    
+
     if (elapsedMinutes > 0) {
       const currentWPM = Math.round(this.currentWordIndex / elapsedMinutes);
-      
+
       // Track WPM history
       this.wpmHistory.push({ timestamp: now, wpm: currentWPM });
-      
+
       // Update session stats
       this.activeSession.wpmAchieved = currentWPM;
       if (currentWPM > this.activeSession.wpmPeak) {
         this.activeSession.wpmPeak = currentWPM;
       }
-      
+
       // Detect potential sub-vocalization (sudden WPM drops)
       if (this.wpmHistory.length > 5) {
         const recentAvg = this.wpmHistory.slice(-5).reduce((sum, h) => sum + h.wpm, 0) / 5;
@@ -759,10 +759,10 @@ export class SpeedReadingService extends EventEmitter {
    */
   private calculateFixationStability(): number {
     if (this.fixationEvents.length < 5) return 1.0;
-    
+
     const recentEvents = this.fixationEvents.slice(-10);
     const avgAccuracy = recentEvents.reduce((sum, e) => sum + e.accuracy, 0) / recentEvents.length;
-    
+
     return Math.max(0, Math.min(1, avgAccuracy));
   }
 
@@ -773,21 +773,21 @@ export class SpeedReadingService extends EventEmitter {
     if (!this.activeSession) return 0.8;
 
     let score = 1.0;
-    
+
     // Reduce score for excessive speed
     const speedRatio = this.activeSession.wpmAchieved / this.activeSession.wpmGoal;
     if (speedRatio > 1.5) {
       score -= 0.2; // Reading too fast may hurt comprehension
     }
-    
+
     // Reduce score for sub-vocalization events
     const subVocalizationRatio = this.activeSession.subVocalizationEvents / this.currentWordIndex;
     score -= subVocalizationRatio * 0.3;
-    
+
     // Reduce score for poor fixation
     const fixationStability = this.calculateFixationStability();
     score *= fixationStability;
-    
+
     return Math.max(0.1, Math.min(1.0, score));
   }
 
@@ -849,7 +849,7 @@ export class SpeedReadingService extends EventEmitter {
       this.activeSession.sourceLinks = this.createSourceLinks();
 
       // Phase 6 Integration: Persist and update neural map
-      const storage = StorageService.getInstance();
+      const storage = HybridStorageService.getInstance();
       const mind = MindMapGenerator.getInstance();
 
       // Generate additional neural links (if any) and persist
@@ -949,7 +949,7 @@ export class SpeedReadingService extends EventEmitter {
    */
   public updateConfig(newConfig: Partial<RSVPConfig>): void {
     this.config = { ...this.config, ...newConfig };
-    
+
     // If session is active, apply changes
     if (this.activeSession && this.rsvpTimer) {
       this.pauseSession();
@@ -1018,7 +1018,7 @@ export class SpeedReadingService extends EventEmitter {
   public async generateNeuralLinksFromReadingSession(session: ReadingSession): Promise<SourceLink[]> {
     try {
       const links: SourceLink[] = [];
-      
+
       // Create source links for each concept identified
       session.conceptsIdentified.forEach(concept => {
         links.push({
@@ -1030,7 +1030,7 @@ export class SpeedReadingService extends EventEmitter {
           extractedAt: new Date(),
         });
       });
-      
+
       console.log(`🔗 Generated ${links.length} neural links from reading session`);
       return links;
     } catch (error) {
@@ -1050,23 +1050,23 @@ export class SpeedReadingService extends EventEmitter {
     try {
       // Calculate health delta based on reading performance
       let healthDelta = 0;
-      
+
       // WPM contribution (higher speed = better health)
       if (wpmAchieved > 300) {
         healthDelta += 0.1;
       } else if (wpmAchieved > 200) {
         healthDelta += 0.05;
       }
-      
+
       // Comprehension contribution
       healthDelta += comprehensionScore * 0.2;
-      
+
       // Concept extraction contribution
       healthDelta += conceptExtractionRate * 0.1;
-      
+
       // Cap the delta
       healthDelta = Math.max(-0.1, Math.min(0.3, healthDelta));
-      
+
       console.log(`🧠 Knowledge health delta from reading: ${healthDelta}`);
       return healthDelta;
     } catch (error) {

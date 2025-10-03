@@ -129,7 +129,7 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
   onNavigate,
 }) => {
   const themeColors = colors[theme];
-  const storage = StorageService.getInstance();
+  const storage = HybridStorageService.getInstance();
   const mindMapGenerator = MindMapGenerator.getInstance();
 
   // Core state

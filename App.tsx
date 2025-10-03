@@ -14,16 +14,14 @@ import { NeuralMindMapScreen } from './src/screens/NeuralMindMapScreen';
 import { LogicTrainerScreen } from './src/screens/LogicTrainerScreen';
 import { AdaptiveFocusScreen } from './src/screens/AdaptiveFocusScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
-import { MigrationScreen } from './src/screens/MigrationScreen';
 import { ThemeType } from './src/theme/colors';
 import { TodoistService } from './src/services/TodoistService';
 import { FocusProvider } from './src/contexts/FocusContext';
 import { SoundscapeProvider } from './src/contexts/SoundscapeContext';
 import { MiniPlayer } from './src/components/MiniPlayerComponent';
 import SupabaseService from './src/services/SupabaseService';
-import MigrationService from './src/services/MigrationService';
 
-type AppState = 'loading' | 'auth' | 'migration' | 'app';
+type AppState = 'loading' | 'auth' | 'app';
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeType>('dark');
@@ -34,7 +32,6 @@ export default function App() {
 
   const currentScreen = navigationStack[navigationStack.length - 1];
   const supabaseService = SupabaseService.getInstance();
-  const migrationService = MigrationService.getInstance();
 
   const handleNavigate = (screen: string) => {
     setNavigationStack((prev) => [...prev, screen]);
@@ -108,13 +105,6 @@ export default function App() {
         return;
       }
       
-      const needsMigration = await migrationService.needsMigration();
-      
-      if (needsMigration) {
-        setAppState('migration');
-        return;
-      }
-      
       setAppState('app');
     } catch (error) {
       console.error('App initialization error:', error);
@@ -126,9 +116,7 @@ export default function App() {
     initializeApp();
   };
 
-  const handleMigrationComplete = () => {
-    setAppState('app');
-  };
+
 
   const handleThemeChange = (newTheme: ThemeType) => {
     setTheme(newTheme);
@@ -192,16 +180,7 @@ export default function App() {
     );
   }
 
-  if (appState === 'migration') {
-    return (
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <MigrationScreen theme={theme} onMigrationComplete={handleMigrationComplete} />
-          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    );
-  }
+
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
