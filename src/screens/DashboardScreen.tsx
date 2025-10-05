@@ -10,7 +10,7 @@ import {
   Modal,
   Animated,
 } from 'react-native';
-import { AppHeader, HamburgerMenu } from '../components/Navigation';
+import { AppHeader, HamburgerMenu } from '../components/navigation/Navigation';
 import {
   GlassCard,
   Button,
@@ -18,14 +18,17 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import HybridStorageService from '../services/HybridStorageService';
-import SpacedRepetitionService from '../services/SpacedRepetitionService';
-import { FocusTimerService } from '../services/FocusTimerService';
+import HybridStorageService from '../services/storage/HybridStorageService';
+import SpacedRepetitionService from '../services/learning/SpacedRepetitionService';
+import { FocusTimerService } from '../services/learning/FocusTimerService';
 import { Flashcard, StudySession, ProgressData, Task } from '../types';
+import FloatingChatBubble from '../components/ai/FloatingChatBubble';
+import AICheckinCard from '../components/ai/AICheckinCard';
 
 interface DashboardScreenProps {
   theme: ThemeType;
   onNavigate: (screen: string) => void;
+  isHubScreen?: boolean;
 }
 
 interface DashboardStats {
@@ -258,7 +261,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       action: () => {
         setSettingsVisible(false);
         onNavigate('tasks');
-      }
+      },
     },
     {
       icon: '🔄',
@@ -274,7 +277,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       action: () => {
         setSettingsVisible(false);
         onNavigate('settings');
-      }
+      },
     },
   ];
 
@@ -311,65 +314,113 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   // Dynamic metric groups configuration - always show all groups but with conditional content
   const getLearningProgressGroup = (): MetricGroup => {
-    const hasData = stats.dueCards > 0 || stats.logicNodesDue > 0 || stats.atRiskCards > 0 || stats.retentionRate > 0;
+    const hasData =
+      stats.dueCards > 0 ||
+      stats.logicNodesDue > 0 ||
+      stats.atRiskCards > 0 ||
+      stats.retentionRate > 0;
     return {
       id: 'learning',
       title: 'Learning Progress',
       icon: '📚',
-      subtitle: hasData ? `${stats.dueCards + stats.logicNodesDue} items due` : 'No learning data yet',
-      metrics: hasData ? [
-        { icon: '📚', value: stats.dueCards, label: 'Due Cards' },
-        { icon: '🧠', value: stats.logicNodesDue, label: 'Logic Nodes' },
-        { icon: '⚠️', value: stats.atRiskCards, label: 'At Risk' },
-        { icon: '📊', value: `${stats.retentionRate}%`, label: 'Retention' },
-      ] : [
-        { icon: '📚', value: '-', label: 'Due Cards' },
-        { icon: '🧠', value: '-', label: 'Logic Nodes' },
-        { icon: '⚠️', value: '-', label: 'At Risk' },
-        { icon: '📊', value: '-', label: 'Retention' },
-      ],
+      subtitle: hasData
+        ? `${stats.dueCards + stats.logicNodesDue} items due`
+        : 'No learning data yet',
+      metrics: hasData
+        ? [
+            { icon: '📚', value: stats.dueCards, label: 'Due Cards' },
+            { icon: '🧠', value: stats.logicNodesDue, label: 'Logic Nodes' },
+            { icon: '⚠️', value: stats.atRiskCards, label: 'At Risk' },
+            {
+              icon: '📊',
+              value: `${stats.retentionRate}%`,
+              label: 'Retention',
+            },
+          ]
+        : [
+            { icon: '📚', value: '-', label: 'Due Cards' },
+            { icon: '🧠', value: '-', label: 'Logic Nodes' },
+            { icon: '⚠️', value: '-', label: 'At Risk' },
+            { icon: '📊', value: '-', label: 'Retention' },
+          ],
     };
   };
 
   const getCognitiveHealthGroup = (): MetricGroup => {
-    const hasData = stats.focusStreak > 0 || stats.averageFocusRating > 0 || stats.distractionsPerSession > 0 || stats.cognitiveLoad > 0;
+    const hasData =
+      stats.focusStreak > 0 ||
+      stats.averageFocusRating > 0 ||
+      stats.distractionsPerSession > 0 ||
+      stats.cognitiveLoad > 0;
     return {
       id: 'cognitive',
       title: 'Cognitive Health',
       icon: '🧠',
       subtitle: hasData ? 'Focus & mental state' : 'No focus data yet',
-      metrics: hasData ? [
-        { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
-        { icon: '⭐', value: stats.averageFocusRating.toFixed(1), label: 'Focus Rating' },
-        { icon: '😬', value: stats.distractionsPerSession.toFixed(1), label: 'Distractions/Session' },
-        { icon: '🧠', value: stats.cognitiveLoad.toFixed(1), label: 'Cognitive Load' },
-      ] : [
-        { icon: '🔥', value: '-', label: 'Focus Streak' },
-        { icon: '⭐', value: '-', label: 'Focus Rating' },
-        { icon: '😬', value: '-', label: 'Distractions/Session' },
-        { icon: '🧠', value: '-', label: 'Cognitive Load' },
-      ],
+      metrics: hasData
+        ? [
+            { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
+            {
+              icon: '⭐',
+              value: stats.averageFocusRating.toFixed(1),
+              label: 'Focus Rating',
+            },
+            {
+              icon: '😬',
+              value: stats.distractionsPerSession.toFixed(1),
+              label: 'Distractions/Session',
+            },
+            {
+              icon: '🧠',
+              value: stats.cognitiveLoad.toFixed(1),
+              label: 'Cognitive Load',
+            },
+          ]
+        : [
+            { icon: '🔥', value: '-', label: 'Focus Streak' },
+            { icon: '⭐', value: '-', label: 'Focus Rating' },
+            { icon: '😬', value: '-', label: 'Distractions/Session' },
+            { icon: '🧠', value: '-', label: 'Cognitive Load' },
+          ],
     };
   };
 
   const getPerformanceGroup = (): MetricGroup => {
-    const hasData = stats.studyStreak > 0 || stats.criticalLogicCount > 0 || stats.weeklyProgress > 0 || stats.todayFocusTime > 0;
+    const hasData =
+      stats.studyStreak > 0 ||
+      stats.criticalLogicCount > 0 ||
+      stats.weeklyProgress > 0 ||
+      stats.todayFocusTime > 0;
     return {
       id: 'performance',
       title: 'Performance',
       icon: '📈',
       subtitle: hasData ? 'Streaks & achievements' : 'No performance data yet',
-      metrics: hasData ? [
-        { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
-        { icon: '🎯', value: stats.criticalLogicCount, label: 'Critical Logic' },
-        { icon: '📈', value: `${stats.weeklyProgress}%`, label: 'Weekly Progress' },
-        { icon: '⏱️', value: stats.todayFocusTime, label: 'Today Focus (min)' },
-      ] : [
-        { icon: '🔥', value: '-', label: 'Day Streak' },
-        { icon: '🎯', value: '-', label: 'Critical Logic' },
-        { icon: '📈', value: '-', label: 'Weekly Progress' },
-        { icon: '⏱️', value: '-', label: 'Today Focus (min)' },
-      ],
+      metrics: hasData
+        ? [
+            { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
+            {
+              icon: '🎯',
+              value: stats.criticalLogicCount,
+              label: 'Critical Logic',
+            },
+            {
+              icon: '📈',
+              value: `${stats.weeklyProgress}%`,
+              label: 'Weekly Progress',
+            },
+            {
+              icon: '⏱️',
+              value: stats.todayFocusTime,
+              label: 'Today Focus (min)',
+            },
+          ]
+        : [
+            { icon: '🔥', value: '-', label: 'Day Streak' },
+            { icon: '🎯', value: '-', label: 'Critical Logic' },
+            { icon: '📈', value: '-', label: 'Weekly Progress' },
+            { icon: '⏱️', value: '-', label: 'Today Focus (min)' },
+          ],
     };
   };
 
@@ -409,6 +460,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         }
       />
 
+      <View style={{ paddingTop: spacing.xl }} />
+
       <ScrollView
         style={styles.content}
         contentContainerStyle={styles.container}
@@ -419,6 +472,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             tintColor={themeColors.primary}
           />
         }
+        showsVerticalScrollIndicator={false}
       >
         {/* Cognitive Load Status */}
         <GlassCard theme={theme} style={styles.cognitiveCard}>
@@ -457,6 +511,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
         </GlassCard>
 
+        {/* AI Check-in Card */}
+        <AICheckinCard theme={theme} />
+
+        {/* Floating Chat Bubble */}
+<FloatingChatBubble theme={theme} />
+
         {/* Metric Group Cards */}
         <View style={styles.groupGrid}>
           {metricGroups.map((group) => (
@@ -471,7 +531,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <Text style={[styles.groupTitle, { color: themeColors.text }]}>
                   {group.title}
                 </Text>
-                <Text style={[styles.groupSubtitle, { color: themeColors.textSecondary }]}>
+                <Text
+                  style={[
+                    styles.groupSubtitle,
+                    { color: themeColors.textSecondary },
+                  ]}
+                >
                   {group.subtitle}
                 </Text>
               </GlassCard>
@@ -581,7 +646,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </View>
 
             <View style={styles.performanceItem}>
-              <Text style={[styles.performanceValue, { color: themeColors.success }]}>
+              <Text
+                style={[
+                  styles.performanceValue,
+                  { color: themeColors.success },
+                ]}
+              >
                 {stats.activeTasks}
               </Text>
               <Text
@@ -744,9 +814,21 @@ const MetricsModal: React.FC<MetricsModalProps> = ({
       subtitle: 'Focus & mental state',
       metrics: [
         { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
-        { icon: '⭐', value: stats.averageFocusRating.toFixed(1), label: 'Focus Rating' },
-        { icon: '😬', value: stats.distractionsPerSession.toFixed(1), label: 'Distractions/Session' },
-        { icon: '🧠', value: stats.cognitiveLoad.toFixed(1), label: 'Cognitive Load' },
+        {
+          icon: '⭐',
+          value: stats.averageFocusRating.toFixed(1),
+          label: 'Focus Rating',
+        },
+        {
+          icon: '😬',
+          value: stats.distractionsPerSession.toFixed(1),
+          label: 'Distractions/Session',
+        },
+        {
+          icon: '🧠',
+          value: stats.cognitiveLoad.toFixed(1),
+          label: 'Cognitive Load',
+        },
       ],
     },
     {
@@ -756,14 +838,24 @@ const MetricsModal: React.FC<MetricsModalProps> = ({
       subtitle: 'Streaks & achievements',
       metrics: [
         { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
-        { icon: '🎯', value: stats.criticalLogicCount, label: 'Critical Logic' },
-        { icon: '📈', value: `${stats.weeklyProgress}%`, label: 'Weekly Progress' },
+        {
+          icon: '🎯',
+          value: stats.criticalLogicCount,
+          label: 'Critical Logic',
+        },
+        {
+          icon: '📈',
+          value: `${stats.weeklyProgress}%`,
+          label: 'Weekly Progress',
+        },
         { icon: '⏱️', value: stats.todayFocusTime, label: 'Today Focus (min)' },
       ],
     },
   ];
 
-  const selectedGroupData = metricGroups.find(group => group.id === selectedGroup);
+  const selectedGroupData = metricGroups.find(
+    (group) => group.id === selectedGroup,
+  );
 
   if (!selectedGroupData) {
     return null;
@@ -799,10 +891,17 @@ const MetricsModal: React.FC<MetricsModalProps> = ({
             {selectedGroupData.metrics.map((metric, index) => (
               <View key={index} style={styles.modalMetricCard}>
                 <Text style={styles.modalMetricIcon}>{metric.icon}</Text>
-                <Text style={[styles.modalMetricValue, { color: themeColors.primary }]}>
+                <Text
+                  style={[
+                    styles.modalMetricValue,
+                    { color: themeColors.primary },
+                  ]}
+                >
                   {metric.value}
                 </Text>
-                <Text style={[styles.modalMetricLabel, { color: themeColors.text }]}>
+                <Text
+                  style={[styles.modalMetricLabel, { color: themeColors.text }]}
+                >
                   {metric.label}
                 </Text>
               </View>
@@ -881,11 +980,11 @@ const styles = StyleSheet.create({
   // Existing Dashboard Styles
   content: {
     flex: 1,
-    paddingTop: 80, // Space for floating nav bar
+    paddingTop: 60, // Space for floating nav bar
   },
   container: {
     padding: spacing.lg,
-    paddingBottom: spacing.xl * 3,
+    paddingBottom: spacing.xl * 4,
   },
   loadingContainer: {
     flex: 1,
@@ -1121,4 +1220,3 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
-

@@ -35,12 +35,14 @@ export const GlassCard: React.FC<GlassCardProps> = ({
   const getGlassProperties = () => {
     if (variant === 'modal') {
       // Use higher opacity for modals to reduce transparency
-      const modalBackground = theme === 'dark'
-        ? 'rgba(17, 24, 39, 0.95)'
-        : 'rgba(255, 255, 255, 0.95)';
-      const modalBorder = theme === 'dark'
-        ? 'rgba(14, 165, 233, 0.25)'
-        : 'rgba(3, 105, 161, 0.20)';
+      const modalBackground =
+        theme === 'dark'
+          ? 'rgba(17, 24, 39, 0.95)'
+          : 'rgba(255, 255, 255, 0.95)';
+      const modalBorder =
+        theme === 'dark'
+          ? 'rgba(14, 165, 233, 0.25)'
+          : 'rgba(3, 105, 161, 0.20)';
       return {
         backgroundColor: modalBackground,
         borderColor: modalBorder,
@@ -90,7 +92,7 @@ export const GlassCard: React.FC<GlassCardProps> = ({
   );
 };
 interface ButtonProps {
-  title: string;
+  title: string | React.ReactNode;
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
   size?: 'small' | 'medium' | 'large';

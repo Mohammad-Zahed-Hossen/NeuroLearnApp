@@ -34,7 +34,7 @@ import {
   TapGestureHandler,
 } from 'react-native-gesture-handler';
 // Use Expo's BlurView which works with Expo Go
-import BlurViewWrapper from './BlurViewWrapper';
+import BlurViewWrapper from './common/BlurViewWrapper';
 
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -55,9 +55,9 @@ import {
   ThemeType,
 } from '../theme/colors';
 import { useSoundscape } from '../contexts/SoundscapeContext';
-import { SoundscapeType } from '../services/CognitiveSoundscapeEngine';
-import CognitiveSoundscapeEngine from '../services/CognitiveSoundscapeEngine';
-import { HybridStorageService } from '../services/HybridStorageService';
+import { SoundscapeType } from '../services/learning/CognitiveSoundscapeEngine';
+import CognitiveSoundscapeEngine from '../services/learning/CognitiveSoundscapeEngine';
+import { HybridStorageService } from '../services/storage/HybridStorageService';
 
 // ==================== TYPES ====================
 

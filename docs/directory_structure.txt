@@ -1,0 +1,627 @@
+Directory Structure for src folder:
+D:\PERPLEXITY\NEUROLEARNAPP\SRC
+├───assets
+│   ├───audio
+│   │   ├───ambient_soundscapes
+│   │   │   ├───environments
+│   │   │   ├───nature
+│   │   │   └───sci-fi
+│   │   ├───binaural_beats
+│   │   │   ├───alpha
+│   │   │   ├───beta
+│   │   │   ├───gamma
+│   │   │   └───theta
+│   │   └───ui_sounds
+│   │           notification-success.mp3
+│   │           notification-warning.mp3
+│   │           achievement-unlock.mp3
+│   │           streak-continue.mp3
+│   │
+│   ├───fonts
+│   │       Inter-Regular.ttf
+│   │       Inter-Medium.ttf
+│   │       Inter-Bold.ttf
+│   │       PTSans-Regular.ttf
+│   │       PTSans-Bold.ttf
+│   │
+│   └───icons
+│           category-icons/
+│               food.svg
+│               transport.svg
+│               bills.svg
+│               health.svg
+│               entertainment.svg
+│               education.svg
+│               shopping.svg
+│               other.svg
+│
+├───components
+│   ├───common
+│   │       AnimatedPath.tsx
+│   │       BlurViewWrapper.tsx
+│   │       Navigation.tsx
+│   │       LoadingSpinner.tsx
+│   │       ErrorBoundary.tsx
+│   │       ModalWrapper.tsx
+│   │
+│   ├───learning (existing)
+│   │       EyeTrackingCamera.tsx
+│   │       NeuralCanvas.tsx
+│   │       MiniPlayerComponent.tsx
+│   │
+│   ├───finance
+│   │   ├───input
+│   │   │       TransactionInput.tsx
+│   │   │       CalculatorInput.tsx
+│   │   │       CategorySelector.tsx
+│   │   │       DatePickerWidget.tsx
+│   │   │       SmartAutocomplete.tsx
+│   │   │
+│   │   ├───budget
+│   │   │       BudgetCard.tsx
+│   │   │       BudgetProgressBar.tsx
+│   │   │       BudgetSetupForm.tsx
+│   │   │       CategoryBudgetItem.tsx
+│   │   │
+│   │   ├───dashboard
+│   │   │       MonthSummaryCard.tsx
+│   │   │       QuickStatsScroll.tsx
+│   │   │       SpendingDonutChart.tsx
+│   │   │       TransactionList.tsx
+│   │   │       SwipeableTransactionItem.tsx
+│   │   │
+│   │   └───insights
+│   │           InsightCard.tsx
+│   │           RecommendationCard.tsx
+│   │           TrendChart.tsx
+│   │           SpendingAnalysis.tsx
+│   │
+│   ├───health
+│   │   ├───sleep
+│   │   │       SleepLogInput.tsx
+│   │   │       SleepChart.tsx
+│   │   │       SleepQualityRating.tsx
+│   │   │       SleepScoreCircle.tsx
+│   │   │       SleepInsightCard.tsx
+│   │   │
+│   │   ├───fitness
+│   │   │       WorkoutLogInput.tsx
+│   │   │       WorkoutTypeSelector.tsx
+│   │   │       WorkoutStreakDisplay.tsx
+│   │   │       QuickActionGrid.tsx
+│   │   │
+│   │   ├───nutrition
+│   │   │       WaterIntakeTracker.tsx
+│   │   │       MealLogger.tsx
+│   │   │       NutritionScoreCard.tsx
+│   │   │
+│   │   └───gamification
+│   │           AchievementCard.tsx
+│   │           StreakCalendar.tsx
+│   │           ProgressRing.tsx
+│   │           LeaderboardList.tsx
+│   │           BadgeDisplay.tsx
+│   │
+│   ├───ai
+│   │       AICheckinCard.tsx
+│   │       AIChatBubble.tsx
+│   │       AIInsightPanel.tsx
+│   │       ContextualTipCard.tsx
+│   │       WeeklyReportCard.tsx
+│   │
+│   └───shared
+│           GlassCard.tsx
+│           GlassPanel.tsx
+│           FloatingActionButton.tsx
+│           AnimatedButton.tsx
+│           GradientBackground.tsx
+│           IconButton.tsx
+│           ChartContainer.tsx
+│
+├───config
+│       analytics.config.ts
+│       notifications.config.ts
+│       app.config.ts
+│       constants.ts
+│       categories.config.ts
+│
+├───contexts
+│       CognitiveSoundscapeEngine.ts (existing)
+│       FocusContext.tsx (existing)
+│       SoundscapeContext.tsx (existing)
+│       FinanceContext.tsx
+│       HealthContext.tsx
+│       AIContext.tsx
+│       NotificationContext.tsx
+│
+├───screens
+│   ├───learning (existing)
+│   │       AdaptiveFocusScreen.tsx
+│   │       AuthScreen.tsx
+│   │       DashboardScreen.tsx
+│   │       FlashcardsScreen.tsx
+│   │       FocusTimerScreen.tsx
+│   │       LogicTrainerScreen.tsx
+│   │       MemoryPalaceScreen.tsx
+│   │       NeuralMindMapScreen.tsx
+│   │       SpeedReadingScreen.tsx
+│   │       SpeedReadingUIComponents.tsx
+│   │       TasksScreen.tsx
+│   │
+│   ├───finance
+│   │       FinanceDashboardScreen.tsx
+│   │       TransactionHistoryScreen.tsx
+│   │       BudgetManagementScreen.tsx
+│   │       CategoryAnalysisScreen.tsx
+│   │       FinancialInsightsScreen.tsx
+│   │       AddTransactionScreen.tsx
+│   │       EditBudgetScreen.tsx
+│   │
+│   ├───health
+│   │       HealthDashboardScreen.tsx
+│   │       SleepTrackerScreen.tsx
+│   │       FitnessTrackerScreen.tsx
+│   │       HealthInsightsScreen.tsx
+│   │       AchievementsScreen.tsx
+│   │       HealthGoalsScreen.tsx
+│   │
+│   ├───ai
+│   │       AIHubScreen.tsx
+│   │       DailyCheckinScreen.tsx
+│   │       WeeklyReportScreen.tsx
+│   │       GoalAlignmentScreen.tsx
+│   │       AIChatScreen.tsx
+│   │
+│   └───shared
+│           MainDashboardScreen.tsx
+│           SettingsScreen.tsx (enhanced)
+│           ProfileScreen.tsx
+│           OnboardingScreen.tsx
+│           NotificationsScreen.tsx
+│
+├───services
+│   ├───learning (existing)
+│   │       AICoachingService.ts
+│   │       CognitiveSoundscapeEngine.ts
+│   │       expoAudioLoader.ts
+│   │       EyeTrackingService.ts
+│   │       FocusTimerService.ts
+│   │       learningHelpers.ts
+│   │       LogicTrainingFSRS.ts
+│   │       MindMapGeneratorService.ts
+│   │       NeuralIntegrationService.ts
+│   │       NeuralPhysicsEngine.ts
+│   │       physicsWorker.js
+│   │       PresetConfiguration.ts
+│   │       SoundscapeAssetValidator.ts
+│   │       SpacedRepetitionService.ts
+│   │       SpeedReadingService.ts
+│   │
+│   ├───finance
+│   │       TransactionService.ts
+│   │       BudgetService.ts
+│   │       CategoryService.ts
+│   │       FinancialAnalyticsService.ts
+│   │       AutocompleteService.ts
+│   │
+│   ├───health
+│   │       SleepTrackerService.ts
+│   │       FitnessTrackerService.ts
+│   │       HealthScoreService.ts
+│   │       SleepReminderService.ts
+│   │       GamificationService.ts
+│   │
+│   ├───ai
+│   │       GeminiInsightsService.ts
+│   │       UnifiedAIService.ts
+│   │       InsightTriggerService.ts
+│   │       AIPromptBuilder.ts
+│   │       AIResponseParser.ts
+│   │
+│   ├───notifications
+│   │       NotificationService.ts
+│   │       BudgetNotificationService.ts
+│   │       HealthReminderService.ts
+│   │       PushNotificationHandler.ts
+│   │
+│   ├───analytics
+│   │       AnalyticsService.ts
+│   │       MixpanelService.ts
+│   │       EventTracker.ts
+│   │
+│   ├───storage
+│   │       HybridStorageService.ts (existing)
+│   │       StorageService.ts (existing)
+│   │       SupabaseService.ts (existing)
+│   │       SupabaseStorageService.ts (existing)
+│   │       MMKVStorageService.ts
+│   │       CacheService.ts
+│   │
+│   └───integrations
+│           TodoistService.ts (existing)
+│           NotionSyncService.ts
+│           GoogleAnalyticsService.ts
+│
+├───algorithms
+│       TransactionAutocomplete.ts
+│       CategorySuggestion.ts
+│       BudgetTracker.ts
+│       SleepAnalyzer.ts
+│       SleepConsistency.ts
+│       HealthScore.ts
+│       StreakCalculator.ts
+│       TrendAnalysis.ts
+│       CorrelationDetector.ts
+│       PatternRecognition.ts
+│
+├───utils
+│       dateHelpers.ts
+│       formatters.ts
+│       validators.ts
+│       mathHelpers.ts
+│       colorHelpers.ts
+│       chartHelpers.ts
+│       notificationHelpers.ts
+│       errorHandlers.ts
+│       performanceMonitor.ts
+│
+├───hooks
+│       useFinance.ts
+│       useHealth.ts
+│       useAI.ts
+│       useSmartCategories.ts
+│       useBudgetTracking.ts
+│       useSleepTracking.ts
+│       useHealthScore.ts
+│       useAchievements.ts
+│       useNotifications.ts
+│       useAnalytics.ts
+│       useAutocomplete.ts
+│       useGlassEffect.ts
+│       useStreaks.ts
+│
+├───navigation
+│       RootNavigator.tsx
+│       FinanceNavigator.tsx
+│       HealthNavigator.tsx
+│       AINavigator.tsx
+│       LearningNavigator.tsx
+│       TabNavigator.tsx
+│       DrawerNavigator.tsx
+│
+├───store (if using Redux/Zustand)
+│       financeStore.ts
+│       healthStore.ts
+│       aiStore.ts
+│       uiStore.ts
+│       notificationStore.ts
+│       index.ts
+│
+├───theme
+│       colors.ts (existing)
+│       typography.ts
+│       spacing.ts
+│       shadows.ts
+│       glassmorphism.ts
+│       animations.ts
+│       chartThemes.ts
+│
+├───types
+│       index.ts (existing)
+│       reanimated.d.ts (existing)
+│       finance.types.ts
+│       health.types.ts
+│       ai.types.ts
+│       analytics.types.ts
+│       notifications.types.ts
+│       common.types.ts
+│
+├───constants
+│       categories.ts
+│       achievements.ts
+│       healthMetrics.ts
+│       financialLimits.ts
+│       timeConstants.ts
+│       errorMessages.ts
+│
+└───__tests__
+    ├───algorithms
+    │       TransactionAutocomplete.test.ts
+    │       CategorySuggestion.test.ts
+    │       BudgetTracker.test.ts
+    │       SleepAnalyzer.test.ts
+    │       HealthScore.test.ts
+    │
+    ├───services
+    │       TransactionService.test.ts
+    │       BudgetService.test.ts
+    │       SleepTrackerService.test.ts
+    │       GeminiInsightsService.test.ts
+    │
+    ├───components
+    │       GlassCard.test.tsx
+    │       TransactionInput.test.tsx
+    │       SleepChart.test.tsx
+    │
+    └───utils
+            formatters.test.ts
+            validators.test.ts
+
+
+SUPABASE FOLDER STRUCTURE:
+
+D:\PERPLEXITY\NEUROLEARNAPP\SUPABASE
+│   .gitignore
+│   config.toml
+│
+├───.branches
+│       _current_branch
+│
+├───.temp
+│       cli-latest
+│       gotrue-version
+│       pooler-url
+│       postgres-version
+│       project-ref
+│       rest-version
+│       storage-version
+│
+├───migrations
+│       20240101000000_initial_schema.sql
+│       20240102000000_finance_tables.sql
+│       20240103000000_health_tables.sql
+│       20240104000000_ai_insights_tables.sql
+│       20240105000000_notifications_tables.sql
+│       20240106000000_analytics_tables.sql
+│       20240107000000_materialized_views.sql
+│       20240108000000_rls_policies.sql
+│       20240109000000_indexes.sql
+│
+├───functions
+│   ├───learning (existing)
+│   │   ├───ai-flashcard-creator
+│   │   │       index.ts
+│   │   ├───ai-logic-evaluator
+│   │   │       index.ts
+│   │   ├───ai-quiz-creator
+│   │   │       index.ts
+│   │   └───notion-sync-manager
+│   │           index.ts
+│   │
+│   ├───finance
+│   │   ├───generate-financial-insights
+│   │   │       index.ts
+│   │   │       gemini-config.ts
+│   │   │
+│   │   ├───process-transaction
+│   │   │       index.ts
+│   │   │
+│   │   ├───check-budget-alerts
+│   │   │       index.ts
+│   │   │
+│   │   └───calculate-spending-trends
+│   │           index.ts
+│   │
+│   ├───health
+│   │   ├───calculate-sleep-score
+│   │   │       index.ts
+│   │   │
+│   │   ├───calculate-health-score
+│   │   │       index.ts
+│   │   │
+│   │   ├───check-achievements
+│   │   │       index.ts
+│   │   │
+│   │   └───generate-sleep-insights
+│   │           index.ts
+│   │
+│   ├───ai
+│   │   ├───daily-checkin-generator
+│   │   │       index.ts
+│   │   │
+│   │   ├───weekly-report-generator
+│   │   │       index.ts
+│   │   │
+│   │   ├───goal-alignment-checker
+│   │   │       index.ts
+│   │   │
+│   │   └───ai-chat-handler
+│   │           index.ts
+│   │
+│   ├───notifications
+│   │   ├───send-budget-alert
+│   │   │       index.ts
+│   │   │
+│   │   ├───send-sleep-reminder
+│   │   │       index.ts
+│   │   │
+│   │   └───send-achievement-notification
+│   │           index.ts
+│   │
+│   └───analytics
+│       ├───aggregate-user-stats
+│       │       index.ts
+│       │
+│       └───generate-reports
+│               index.ts
+│
+├───seed
+│       categories.sql
+│       achievements.sql
+│       test-users.sql
+│       sample-transactions.sql
+│
+└───types
+        database.types.ts
+        functions.types.ts
+
+
+ROOT LEVEL FILES TO ADD:
+
+D:\PERPLEXITY\NEUROLEARNAPP\
+│   package.json (update dependencies)
+│   tsconfig.json
+│   babel.config.js
+│   metro.config.js
+│   app.json
+│   .env (add API keys)
+│   .env.example
+│   .eslintrc.js
+│   .prettierrc
+│   jest.config.js
+│   README.md
+│   CHANGELOG.md
+│
+├───docs
+│       API.md
+│       ARCHITECTURE.md
+│       DEPLOYMENT.md
+│       FEATURES.md
+│       TESTING.md
+│
+└───scripts
+        setup.sh
+        migrate.sh
+        seed-database.sh
+        generate-types.sh
+
+
+
+
+
+
+
+
+
+Previous ..............
+
+Folder PATH listing for volume New Volume
+Volume serial number is DA64-961F
+D:\PERFLEXITY\NEUROLEARNAPP\SRC
+├───assets
+│   │   sounds.mp3
+│   │
+│   └───audio
+│       ├───ambient_soundscapes
+│       │   ├───environments
+│       │   │       forest-fire.mp3
+│       │   │       uplifting-pad-texture.mp3
+│       │   │
+│       │   ├───nature
+│       │   │       ambient_birds_chirping.mp3
+│       │   │       beautiful-birdsong.mp3
+│       │   │       birds-forest-river.mp3
+│       │   │       forest-ambience-morningspring.mp3
+│       │   │       forest-soundscape-night-time.mp3
+│       │   │       mixkit-birds-in-the-jungle.wav
+│       │   │       rain-inside-a-car.mp3
+│       │   │       shallow-river.mp3
+│       │   │       soothing-river-flow.mp3
+│       │   │       water-splashing.mp3
+│       │   │
+│       │   └───sci-fi
+│       │           sci-fi-landscape.mp3
+│       │
+│       ├───binaural_beats
+│       │   ├───alpha
+│       │   │       alpha_8hz_calm.mp3
+│       │   │
+│       │   ├───beta
+│       │   ├───gamma
+│       │   └───theta
+│       │           thetha_428hz_meditation.mp3
+│       │
+│       └───ui_sounds
+│               camera-shutter.mp3
+│
+├───components
+│       AnimatedPath.tsx
+│       BlurViewWrapper.tsx
+│       EyeTrackingCamera.tsx
+│       GlassComponents.tsx
+│       MiniPlayerComponent.tsx
+│       Navigation.tsx
+│       NeuralCanvas.tsx
+│
+├───config
+├───contexts
+│       CognitiveSoundscapeEngine.ts
+│       FocusContext.tsx
+│       SoundscapeContext.tsx
+│
+├───screens
+│       AdaptiveFocusScreen.tsx
+│       AuthScreen.tsx
+│       DashboardScreen.tsx
+│       FlashcardsScreen.tsx
+│       FocusTimerScreen.tsx
+│       LogicTrainerScreen.tsx
+│       MemoryPalaceScreen.tsx
+│       NeuralMindMapScreen.tsx
+│       SettingsScreen.tsx
+│       SpeedReadingScreen.tsx
+│       SpeedReadingUIComponents.tsx
+│       TasksScreen.tsx
+│
+├───services
+│       AICoachingService.ts
+│       CognitiveSoundscapeEngine.ts
+│       expoAudioLoader.ts
+│       EyeTrackingService.ts
+│       FocusTimerService.ts
+│       HybridStorageService.ts
+│       learningHelpers.ts
+│       LogicTrainingFSRS.ts
+│       MindMapGeneratorService.ts
+│       NeuralIntegrationService.ts
+│       NeuralPhysicsEngine.ts
+│       physicsWorker.js
+│       PresetConfiguration.ts
+│       SoundscapeAssetValidator.ts
+│       SpacedRepetitionService.ts
+│       SpeedReadingService.ts
+│       StorageService.ts
+│       SupabaseService.ts
+│       SupabaseStorageService.ts
+│       TodoistService.ts
+│
+├───theme
+│       colors.ts
+│
+└───types
+        index.ts
+        reanimated.d.ts
+
+
+Directory Structure for supabase folder:
+
+Folder PATH listing for volume New Volume
+Volume serial number is DA64-961F
+D:\PERFLEXITY\NEUROLEARNAPP\SUPABASE
+│   .gitignore
+│   config.toml
+│
+├───.branches
+│       _current_branch
+│
+├───.temp
+│       cli-latest
+│       gotrue-version
+│       pooler-url
+│       postgres-version
+│       project-ref
+│       rest-version
+│       storage-version
+│
+└───functions
+    ├───ai-flashcard-creator
+    │       index.ts
+    │
+    ├───ai-logic-evaluator
+    │       index.ts
+    │
+    ├───ai-quiz-creator
+    │       index.ts
+    │
+    └───notion-sync-manager
+            index.ts

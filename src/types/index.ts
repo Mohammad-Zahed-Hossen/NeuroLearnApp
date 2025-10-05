@@ -1,5 +1,171 @@
 import { ThemeType } from '../theme/colors';
 
+// src/types/index.ts
+// Missing type definitions that HybridStorageService needs
+
+export interface Flashcard {
+  id: string;
+  front: string;
+  back: string;
+  // core scheduling fields (align with current screens expectations)
+  difficulty?: number;
+  lastReviewed?: Date; // legacy name
+  // some code uses nextReview (Date) directly — keep as string|Date to be flexible
+  nextReview: string | Date;
+  nextReviewDate?: Date;
+  repetitions?: number;
+  easeFactor?: number;
+  interval?: number;
+  created: Date;
+  modified?: Date;
+  tags?: string[];
+  category?: string;
+  stability?: number;
+  fsrsDifficulty?: number;
+  state?: number;
+  lapses?: number;
+}
+
+export interface Task {
+  id: string;
+  // Align with UI code expectations (content/isCompleted/priority numeric)
+  title?: string;
+  content: string;
+  description?: string;
+  completed?: boolean;
+  // UI code uses isCompleted frequently
+  isCompleted: boolean;
+  // Use numeric priority across screens (1..4 or similar)
+  priority: number;
+  // keep optional due object (string date) used by integrations
+  due?: { date: string; timezone?: string } | null;
+  dueDate?: Date;
+  category?: string;
+  tags?: string[];
+  labels?: string[];
+  created: Date;
+  modified?: Date;
+  todoistId?: string;
+  source?: string; // e.g. 'todoist'
+  projectName?: string;
+  focusTime?: number;
+  estimatedMinutes?: number;
+}
+
+export interface StudySession {
+  id?: string;
+  startTime?: Date;
+  endTime?: Date;
+  duration?: number;
+  // added aliases and optional fields used by different modules
+  type?: 'flashcards' | 'reading' | 'focus' | 'logic' | string;
+  cardsReviewed?: number;
+  cardsStudied?: number; // alias
+  itemsStudied?: number; // for service compatibility
+  correctAnswers?: number;
+  totalAnswers?: number;
+  focusRating?: number;
+  notes?: string;
+  cognitiveLoad?: number;
+  completed?: boolean;
+  // some screens write custom properties
+  mode?: string;
+}
+
+export interface MemoryLocation {
+  id: string;
+  name: string;
+  items?: MemoryItem[];
+  position?: number;
+  imageUrl?: string;
+  description?: string;
+  order: number;
+}
+
+export interface MemoryPalace {
+  id?: string;
+  name?: string;
+  description?: string;
+  rooms?: MemoryRoom[];
+  // legacy code uses `locations` as the primary collection
+  locations?: MemoryLocation[];
+  created?: Date;
+  modified?: Date;
+  isActive?: boolean;
+  totalItems?: number;
+  category?: string;
+  masteredItems?: number;
+  lastStudied?: Date;
+}
+
+export interface MemoryRoom {
+  id?: string;
+  name?: string;
+  items?: MemoryItem[];
+  position?: number;
+  imageUrl?: string;
+  description?: string;
+}
+
+export interface MemoryItem {
+  id?: string;
+  content?: string;
+  position?: number;
+  association?: string;
+  imageUrl?: string;
+  recalled?: boolean;
+  lastRecalled?: Date;
+  visualization?: string;
+  created?: Date;
+  reviewCount?: number;
+  mastered?: boolean;
+}
+
+export interface ProgressData {
+  studyStreak: number;
+  totalFocusTime: number;
+  todayFocusTime: number;
+  lastStudyDate: string;
+  retentionRate: number;
+  masteredCards: number;
+  completedSessions: number;
+  weeklyData: WeeklyData[];
+}
+
+export interface WeeklyData {
+  week: string;
+  focusTime: number;
+  cardsReviewed: number;
+  sessions: number;
+  averageRating: number;
+}
+
+export interface Settings {
+  theme: 'dark' | 'light';
+  dailyGoal: number;
+  defaultSession: string;
+  todoistToken: string;
+  notionToken: string;
+  autoSync: boolean;
+  notifications: {
+    studyReminders: boolean;
+    breakAlerts: boolean;
+    reviewNotifications: boolean;
+  };
+  soundscapeSettings?: {
+    volume: number;
+    adaptiveMode: boolean;
+    learningEnabled: boolean;
+    screenPresets: Record<string, string>;
+  };
+  cognitiveSettings?: {
+    adaptiveComplexity: boolean;
+    autoSimpleMode: boolean;
+    cognitiveLoadThreshold: number;
+    breakSuggestionEnabled: boolean;
+  };
+}
+
 export interface FocusMode {
   id: string;
   name: string;
@@ -18,105 +184,6 @@ export interface Timer {
   startTime?: Date;
 }
 
-export interface Flashcard {
-  id: string;
-  front: string;
-  back: string;
-  category: string;
-  created: Date;
-  nextReview: Date;
-  interval: number;
-  easeFactor: number;
-  repetitions: number;
-  difficulty?: 'again' | 'hard' | 'good' | 'easy' | 'perfect';
-}
-
-export interface Task {
-  id: string;
-  content: string;
-  isCompleted: boolean;
-  priority: 1 | 2 | 3 | 4;
-  due?: {
-    date: string;
-    datetime?: string;
-  };
-  projectName: string;
-  source: 'todoist' | 'local';
-  created: Date;
-  description?: string;
-  labels?: string[];
-}
-
-export interface MemoryPalace {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  created: Date;
-  locations: MemoryLocation[];
-  totalItems: number;
-  masteredItems: number;
-  lastStudied: Date;
-}
-
-export interface MemoryLocation {
-  id: string;
-  name: string;
-  description: string;
-  order: number;
-  items?: MemoryItem[];
-}
-
-export interface MemoryItem {
-  id: string;
-  content: string;
-  association: string;
-  visualization: string;
-  created: Date;
-  reviewCount: number;
-  mastered: boolean;
-}
-
-export interface StudySession {
-  id: string;
-  type: 'focus' | 'flashcards' | 'reading' | 'memory-palace';
-  startTime: Date;
-  endTime?: Date;
-  duration: number; // in minutes
-  mode?: string;
-  cardsStudied?: number;
-  completed: boolean;
-}
-
-export interface ProgressData {
-  studyStreak: number;
-  totalFocusTime: number;
-  todayFocusTime: number;
-  lastStudyDate: string;
-  retentionRate: number;
-  masteredCards: number;
-  completedSessions: number;
-  weeklyData: {
-    day: string;
-    focusTime: number;
-    cardsStudied: number;
-  }[];
-}
-
-export interface Settings {
-  theme: ThemeType;
-  dailyGoal: number; // minutes
-  defaultSession: string;
-  todoistToken: string;
-  notionToken: string;
-  autoSync: boolean;
-  notifications: {
-    studyReminders: boolean;
-    breakAlerts: boolean;
-    reviewNotifications: boolean;
-  };
-}
-
 export interface NotionPage {
   id: string;
   title: string;
@@ -131,6 +198,33 @@ export interface NotionDatabase {
   url: string;
   lastEdited: Date;
   properties: any;
+}
+
+export interface LogicNode {
+  id: string;
+  question: string;
+  premise1: string;
+  premise2: string;
+  conclusion: string;
+  type: 'deductive' | 'inductive' | 'abductive';
+  domain: 'programming' | 'math' | 'english' | 'general';
+  difficulty: 1 | 2 | 3 | 4 | 5;
+  easeFactor: number;
+  interval: number;
+  repetitions: number;
+  nextReviewDate: Date;
+  lastAccessed: Date;
+  totalAttempts: number;
+  correctAttempts: number;
+  accessCount: number;
+  stability?: number;
+  fsrsDifficulty?: number;
+  lastReview?: Date;
+  state?: number;
+  focusSessionStrength?: number;
+  distractionPenalty?: number;
+  created: Date;
+  modified: Date;
 }
 
 

@@ -12,9 +12,9 @@ import {
   cognitiveSoundscapeEngine,
   SoundscapeType,
   SoundscapeState,
-} from '../services/CognitiveSoundscapeEngine';
-import { HybridStorageService } from '../services/HybridStorageService';
-import { validatePresetAssets } from '../services/SoundscapeAssetValidator';
+} from '../services/learning/CognitiveSoundscapeEngine';
+import { HybridStorageService } from '../services/storage/HybridStorageService';
+import { validatePresetAssets } from '../services/learning/SoundscapeAssetValidator';
 
 // Reuse the implementation from the previous context file but fix TSX/typing issues
 export interface SoundscapeContextState {

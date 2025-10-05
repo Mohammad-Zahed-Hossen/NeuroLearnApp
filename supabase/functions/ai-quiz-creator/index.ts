@@ -3,7 +3,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+
+if (!GEMINI_API_KEY) {
+  console.error('Missing GEMINI_API_KEY environment variable in ai-quiz-creator function. Set GEMINI_API_KEY in your Supabase function secrets or environment.');
+}
 
 Deno.serve(async (req: Request) => {
   const { session_id }: { session_id: string } = await req.json();
@@ -64,6 +68,9 @@ Deno.serve(async (req: Request) => {
   let lastError;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (!GEMINI_API_KEY) {
+      return new Response(JSON.stringify({ error: 'Server misconfiguration: GEMINI_API_KEY is not set.' }), { status: 500 });
+    }
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
 

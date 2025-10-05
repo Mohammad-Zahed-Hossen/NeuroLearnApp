@@ -30,6 +30,7 @@ export default {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
     },
+    scheme: 'neurolearn',
     web: {
       favicon: './assets/favicon.png',
     },
