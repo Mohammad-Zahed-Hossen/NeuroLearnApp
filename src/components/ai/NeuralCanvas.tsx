@@ -388,7 +388,7 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
 
         // Safe tick handling with throttling
         let lastTick = 0;
-        physicsEngine.onTick((updatedNodes, updatedLinks) => {
+        physicsEngine.onTick((updatedNodes: NeuralNode[], updatedLinks: NeuralLink[]) => {
           if (!isMountedRef.current || isUpdatingRef.current) return;
 
           const now = Date.now();

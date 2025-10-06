@@ -262,10 +262,10 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
       dispatch({
         type: 'STATE_UPDATE',
         payload: {
-          sessionDuration: data.sessionDuration,
-          effectivenessScore: data.effectivenessScore,
-          entrainmentStrength: data.entrainmentStrength,
-          adaptationCount: data.adaptationCount,
+          sessionDuration: data.sessionDuration || 0,
+          effectivenessScore: data.effectivenessScore || 0,
+          entrainmentStrength: data.entrainmentStrength || 0,
+          adaptationCount: data.adaptationCount || 0,
         },
       });
     });
@@ -380,9 +380,6 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
   const startPreset = useCallback(
     async (preset: SoundscapeType, options: any = {}) => {
       try {
-        if (!state.isInitialized)
-          throw new Error('Soundscape system not initialized');
-
         const effectiveCognitiveLoad =
           options.cognitiveLoad ?? state.cognitiveLoad;
 
@@ -396,7 +393,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
 
         dispatch({
           type: 'PRESET_START',
-          payload: { preset, frequency: engineState.currentFrequency },
+          payload: { preset, frequency: engineState.currentFrequency || 0 },
         });
       } catch (err) {
         const error = err as any;
@@ -407,7 +404,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
         });
       }
     },
-    [state.isInitialized, state.cognitiveLoad, state.adaptiveMode],
+    [state.cognitiveLoad, state.adaptiveMode],
   );
 
   const stopSoundscape = useCallback(async (fadeOut: boolean = true) => {

@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, borderRadius, ThemeType } from '../../theme/colors';
 import { useCognitive } from '../../contexts/CognitiveProvider';
+import { useRegisterFloatingElement } from '../shared/FloatingElementsOrchestrator';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -31,7 +32,9 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
   const themeColors = colors[theme];
   const cognitive = useCognitive();
 
-  const [isVisible, setIsVisible] = useState(true);
+  // Register with the floating elements orchestrator
+  const { isVisible, position, zIndex, cognitiveLoad } = useRegisterFloatingElement('fab');
+
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -101,8 +104,9 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
       style={[
         styles.container,
         {
-          bottom: 240,
-          right: 20,
+          bottom: position.bottom,
+          right: position.right,
+          zIndex: zIndex,
           transform: [{ scale: scaleAnim }, { scale: pulseAnim }],
         },
       ]}

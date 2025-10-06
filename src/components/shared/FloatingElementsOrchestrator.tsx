@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from 'react';
 import { View, Dimensions, Keyboard, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -55,12 +61,15 @@ interface FloatingElementsContextType {
   };
 }
 
-const FloatingElementsContext = createContext<FloatingElementsContextType | null>(null);
+const FloatingElementsContext =
+  createContext<FloatingElementsContextType | null>(null);
 
 export const useFloatingElements = () => {
   const context = useContext(FloatingElementsContext);
   if (!context) {
-    throw new Error('useFloatingElements must be used within FloatingElementsProvider');
+    throw new Error(
+      'useFloatingElements must be used within FloatingElementsProvider',
+    );
   }
   return context;
 };
@@ -72,7 +81,9 @@ interface FloatingElementsOrchestratorProps {
   currentScreen?: string;
 }
 
-export const FloatingElementsOrchestrator: React.FC<FloatingElementsOrchestratorProps> = ({
+export const FloatingElementsOrchestrator: React.FC<
+  FloatingElementsOrchestratorProps
+> = ({
   children,
   cognitiveLoad: externalCognitiveLoad,
   currentScreen: externalCurrentScreen,
@@ -97,11 +108,17 @@ export const FloatingElementsOrchestrator: React.FC<FloatingElementsOrchestrator
 
     return {
       aiChat: {
-        bottom: baseBottom + POSITION_CONSTANTS.MINI_PLAYER_HEIGHT + POSITION_CONSTANTS.ELEMENT_SPACING,
+        bottom:
+          baseBottom +
+          POSITION_CONSTANTS.MINI_PLAYER_HEIGHT +
+          POSITION_CONSTANTS.ELEMENT_SPACING,
         right: POSITION_CONSTANTS.RIGHT_OFFSET,
       },
       fab: {
-        bottom: baseBottom + POSITION_CONSTANTS.MINI_PLAYER_HEIGHT + POSITION_CONSTANTS.ELEMENT_SPACING * 2,
+        bottom:
+          baseBottom +
+          POSITION_CONSTANTS.MINI_PLAYER_HEIGHT +
+          POSITION_CONSTANTS.ELEMENT_SPACING * 2,
         right: POSITION_CONSTANTS.RIGHT_OFFSET,
       },
       miniPlayer: {
@@ -116,7 +133,7 @@ export const FloatingElementsOrchestrator: React.FC<FloatingElementsOrchestrator
     const baseVisibility = {
       aiChat: true, // Always visible (primary element)
       fab: true,
-      miniPlayer: isMiniPlayerActive,
+      miniPlayer: isMiniPlayerActive || effectiveCurrentScreen === 'dashboard', // Show on dashboard by default
     };
 
     // Adjust based on cognitive load
@@ -143,18 +160,18 @@ export const FloatingElementsOrchestrator: React.FC<FloatingElementsOrchestrator
       default:
         return baseVisibility;
     }
-  }, [effectiveCognitiveLoad, isMiniPlayerActive]);
+  }, [effectiveCognitiveLoad, isMiniPlayerActive, effectiveCurrentScreen]);
 
   // Keyboard visibility handling
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => setKeyboardVisible(true)
+      () => setKeyboardVisible(true),
     );
 
     const keyboardDidHideListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => setKeyboardVisible(false)
+      () => setKeyboardVisible(false),
     );
 
     return () => {
@@ -203,13 +220,16 @@ export const useRegisterFloatingElement = (
   options?: {
     priority?: number;
     canHide?: boolean;
-  }
+  },
 ) => {
   const context = useFloatingElements();
 
   const isVisible = context.visibility[elementType];
   const position = context.positions[elementType];
-  const zIndex = POSITION_CONSTANTS.Z_INDEX[elementType.toUpperCase() as keyof typeof POSITION_CONSTANTS.Z_INDEX];
+  const zIndex =
+    POSITION_CONSTANTS.Z_INDEX[
+      elementType.toUpperCase() as keyof typeof POSITION_CONSTANTS.Z_INDEX
+    ];
 
   return {
     isVisible,

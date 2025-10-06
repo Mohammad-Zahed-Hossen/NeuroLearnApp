@@ -22,7 +22,6 @@ import HybridStorageService from '../services/storage/HybridStorageService';
 import SpacedRepetitionService from '../services/learning/SpacedRepetitionService';
 import { FocusTimerService } from '../services/learning/FocusTimerService';
 import { Flashcard, StudySession, ProgressData, Task } from '../types';
-import FloatingChatBubble from '../components/ai/FloatingChatBubble';
 import AICheckinCard from '../components/ai/AICheckinCard';
 
 interface DashboardScreenProps {
@@ -513,9 +512,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
         {/* AI Check-in Card */}
         <AICheckinCard theme={theme} />
-
-        {/* Floating Chat Bubble */}
-<FloatingChatBubble theme={theme} />
 
         {/* Metric Group Cards */}
         <View style={styles.groupGrid}>

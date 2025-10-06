@@ -30,6 +30,8 @@ import { MiniPlayer } from './src/components/MiniPlayerComponent';
 import { CommandPalette } from './src/components/navigation/CommandPalette';
 import { FloatingActionButton } from './src/components/shared/FloatingActionButton';
 import { QuickActionBottomSheet } from './src/components/navigation/QuickActionBottomSheet';
+import FloatingChatBubble from './src/components/ai/FloatingChatBubble';
+import FloatingElementsOrchestrator from './src/components/shared/FloatingElementsOrchestrator';
 
 // Contexts
 import { FocusProvider } from './src/contexts/FocusContext';
@@ -75,7 +77,12 @@ export default function App() {
   const [user, setUser] = React.useState<any>(null);
 
   const handleNavigate = (screen: string, params?: any) => {
-    console.log('handleNavigate called with screen:', screen, 'params:', params); // Debug log
+    console.log(
+      'handleNavigate called with screen:',
+      screen,
+      'params:',
+      params,
+    ); // Debug log
     setNavigationStack((prev) => [...prev, screen]);
     setMenuVisible(false);
     setCommandPaletteVisible(false);
@@ -187,17 +194,41 @@ export default function App() {
       case 'finance':
         return <FinanceDashboardScreen onNavigate={handleNavigate} />;
       case 'wellness':
-        return <WellnessDashboardScreen theme={theme} onNavigate={handleNavigate} />;
-case 'add-transaction':
-  return <AddTransactionScreen onBack={() => setNavigationStack(prev => prev.slice(0, -1))} />;
+        return (
+          <WellnessDashboardScreen theme={theme} onNavigate={handleNavigate} />
+        );
+      case 'add-transaction':
+        return (
+          <AddTransactionScreen
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       case 'budget-manager':
-        return <BudgetManagerScreen theme={theme} onBack={() => setNavigationStack(prev => prev.slice(0, -1))} />;
+        return (
+          <BudgetManagerScreen
+            theme={theme}
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       case 'transaction-history':
-        return <TransactionHistoryScreen onBack={() => setNavigationStack(prev => prev.slice(0, -1))} />;
+        return (
+          <TransactionHistoryScreen
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       case 'sleep-tracker':
-        return <SleepTrackerScreen onBack={() => setNavigationStack(prev => prev.slice(0, -1))} />;
+        return (
+          <SleepTrackerScreen
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       case 'workout-logger':
-        return <WorkoutLoggerScreen theme={theme} onBack={() => setNavigationStack(prev => prev.slice(0, -1))} />;
+        return (
+          <WorkoutLoggerScreen
+            theme={theme}
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       case 'smart-sleep-tracker':
         return (
           <SmartSleepTracker
@@ -215,7 +246,11 @@ case 'add-transaction':
           />
         );
       case 'ai-assistant':
-        return <AIAssistantScreen onBack={() => setNavigationStack(prev => prev.slice(0, -1))} />;
+        return (
+          <AIAssistantScreen
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       case 'user-profile':
         return <ProfileScreen onNavigate={handleNavigate} />;
       default:
@@ -269,7 +304,9 @@ case 'add-transaction':
     'advanced-workout-logger',
   ];
 
-  const shouldHideTabBar = coreLearningScreens.includes(currentScreen) || financeAndHealthScreens.includes(currentScreen);
+  const shouldHideTabBar =
+    coreLearningScreens.includes(currentScreen) ||
+    financeAndHealthScreens.includes(currentScreen);
 
   const renderNavigation = () => {
     switch (navigationMode) {
@@ -348,34 +385,50 @@ case 'add-transaction':
           <FocusProvider>
             <SoundscapeProvider>
               <CognitiveProvider>
-                {renderNavigation()}
-
-                {quickActionVisible && (
-                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10000 }}>
-                    <QuickActionBottomSheet
-                      theme={theme}
-                      currentScreen={currentScreen}
-                      visible={quickActionVisible}
-                      onAction={handleQuickAction}
-                      onClose={() => setQuickActionVisible(false)}
-                    />
-                  </View>
-                )}
-
-                <MiniPlayer theme={theme} />
-
-                <FloatingActionButton
-                  theme={theme}
-                  onPress={() => setQuickActionVisible(true)}
+                <FloatingElementsOrchestrator
+                  cognitiveLoad="low"
                   currentScreen={currentScreen}
-                />
+                >
+                  {renderNavigation()}
 
-                <CommandPalette
-                  theme={theme}
-                  visible={commandPaletteVisible}
-                  onClose={() => setCommandPaletteVisible(false)}
-                  onNavigate={handleNavigate}
-                />
+                  {quickActionVisible && (
+                    <View
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: 10000,
+                      }}
+                    >
+                      <QuickActionBottomSheet
+                        theme={theme}
+                        currentScreen={currentScreen}
+                        visible={quickActionVisible}
+                        onAction={handleQuickAction}
+                        onClose={() => setQuickActionVisible(false)}
+                      />
+                    </View>
+                  )}
+
+                  <MiniPlayer theme={theme} />
+
+                  <FloatingActionButton
+                    theme={theme}
+                    onPress={() => setQuickActionVisible(true)}
+                    currentScreen={currentScreen}
+                  />
+
+                  <FloatingChatBubble theme={theme} userId={user?.id} />
+
+                  <CommandPalette
+                    theme={theme}
+                    visible={commandPaletteVisible}
+                    onClose={() => setCommandPaletteVisible(false)}
+                    onNavigate={handleNavigate}
+                  />
+                </FloatingElementsOrchestrator>
               </CognitiveProvider>
             </SoundscapeProvider>
           </FocusProvider>

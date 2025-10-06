@@ -28,6 +28,7 @@ import { GlassCard } from '../GlassComponents';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../services/storage/SupabaseService';
 import AdvancedGeminiService from '../../services/ai/AdvancedGeminiService';
+import { useRegisterFloatingElement } from '../shared/FloatingElementsOrchestrator';
 
 interface Message {
   id: string;
@@ -54,6 +55,9 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
   const [isFetchingSessions, setIsFetchingSessions] = useState(false);
   const [recentSessions, setRecentSessions] = useState<Array<{ id: string; last: string }>>([]);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+
+  // Register with the floating elements orchestrator
+  const { isVisible: isBubbleVisible, position, zIndex } = useRegisterFloatingElement('aiChat');
 
   // Resolve a valid UUID for user_id. Fallback to Supabase auth if prop is invalid.
   const [resolvedUserId, setResolvedUserId] = useState<string | null>(null);
@@ -536,7 +540,7 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
         onPress={openChat}
         onPressIn={() => bubbleScale.value = withSpring(0.95)}
         onPressOut={() => bubbleScale.value = withSpring(1)}
-        style={styles.floatingBubble}
+        style={[styles.floatingBubble, { bottom: position.bottom, right: position.right, zIndex: zIndex }]}
       >
         <View style={styles.bubbleWrapper}>
           {/* Glow effect */}
@@ -747,9 +751,6 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
 const styles = StyleSheet.create({
   floatingBubble: {
     position: 'absolute',
-    bottom: 160,
-    right: 20,
-    zIndex: 1000,
   },
   bubbleWrapper: {
     position: 'relative',

@@ -16,7 +16,7 @@ import Reanimated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
-  interpolateColor
+  interpolate
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -118,7 +118,7 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
         cognitiveLoad: holisticInsights.dailyCheckIn.cognitiveLoad,
         crdiScore: healthMetrics.crdiScore * 100,
         sleepPressure: (await circadianService.calculateSleepPressure(userId)).currentPressure,
-        budgetAdherence: budgetAnalysis.analysis.overBudgetCategories.length === 0 ? 100 : 
+        budgetAdherence: budgetAnalysis.analysis.overBudgetCategories.length === 0 ? 100 :
           Math.max(0, 100 - (budgetAnalysis.analysis.overBudgetCategories.length * 25)),
         achievements: achievements.newAchievements,
         correlations: holisticInsights.crossModuleCorrelations,
@@ -152,30 +152,37 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
     loadDashboardData();
   };
 
+  // Helper function for color interpolation
+  const getInterpolatedColor = (value: number, colors: string[]) => {
+    if (value <= 0) return colors[0];
+    if (value >= 1) return colors[colors.length - 1];
+
+    const segment = (colors.length - 1) * value;
+    const index = Math.floor(segment);
+    const fraction = segment - index;
+
+    if (index >= colors.length - 1) return colors[colors.length - 1];
+
+    // Simple interpolation between two colors
+    const color1 = colors[index];
+    const color2 = colors[index + 1];
+
+    // For simplicity, return the closer color
+    return fraction < 0.5 ? color1 : color2;
+  };
+
   // Animated styles
   const healthScoreStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      healthScoreAnimation.value,
-      [0, 0.5, 1],
-      ['#EF4444', '#F59E0B', '#10B981']
-    ),
+    backgroundColor: getInterpolatedColor(healthScoreAnimation.value, ['#EF4444', '#F59E0B', '#10B981']),
     transform: [{ scale: withSpring(0.9 + healthScoreAnimation.value * 0.1) }]
   }));
 
   const financialScoreStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      financialScoreAnimation.value,
-      [0, 0.5, 1],
-      ['#EF4444', '#F59E0B', '#10B981']
-    )
+    backgroundColor: getInterpolatedColor(financialScoreAnimation.value, ['#EF4444', '#F59E0B', '#10B981'])
   }));
 
   const cognitiveLoadStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      cognitiveLoadAnimation.value,
-      [0, 0.5, 1],
-      ['#10B981', '#F59E0B', '#EF4444']
-    )
+    backgroundColor: getInterpolatedColor(cognitiveLoadAnimation.value, ['#10B981', '#F59E0B', '#EF4444'])
   }));
 
   const cardEntranceStyle = useAnimatedStyle(() => ({
@@ -254,7 +261,7 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
       <Reanimated.View style={cardEntranceStyle}>
         <GlassCard theme={theme} style={styles.metricsCard}>
           <Text style={styles.metricsTitle}>🧬 Advanced Biometrics</Text>
-          
+
           <View style={styles.metricsGrid}>
             <View style={styles.metricItem}>
               <View style={[styles.metricCircle, { borderColor: dashboardData.adaptiveColors.primary }]}>
@@ -462,9 +469,6 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
       <FloatingChatBubble
         userId={userId}
         theme={theme}
-        onInsightGenerated={(insight) => {
-          console.log('New insight generated:', insight);
-        }}
       />
     </View>
   );
