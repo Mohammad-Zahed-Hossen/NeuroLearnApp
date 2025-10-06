@@ -99,10 +99,8 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
   const mindMapGenerator = MindMapGenerator.getInstance();
   const focusTimerService = FocusTimerService.getInstance();
 
-  // Physics engine for focus lock
-  const physicsEngine = useRef(
-    new NeuralPhysicsEngine(width, height, theme),
-  ).current;
+  // Physics engine for focus lock (singleton)
+  const physicsEngine = useRef(NeuralPhysicsEngine.getInstance()).current;
   useEffect(() => {
     focusTimerService.setPhysicsEngine(physicsEngine);
   }, [focusTimerService]);

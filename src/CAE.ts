@@ -5,7 +5,7 @@
  * the implementation for production readiness.
  */
 
-import { CognitiveAuraService } from './services/learning/CognitiveAuraService';
+import { CognitiveAuraService } from './services/ai/CognitiveAuraService';
 import { cognitiveSoundscapeEngine } from './services/learning/CognitiveSoundscapeEngine';
 import { NeuralPhysicsEngine } from './services/learning/NeuralPhysicsEngine';
 import { useAuraStore, initializeAuraStore } from './store/useAuraStore';
@@ -95,7 +95,7 @@ export class CAEQualityAssurance {
    */
   private async testCoreEngine(): Promise<void> {
     try {
-      const currentState = this.cognitiveAuraService.getCurrentState();
+      const currentState = this.cognitiveAuraService.getCurrentAuraState();
 
       this.addTestResult(
         'Core Engine Initialization',
@@ -145,11 +145,9 @@ export class CAEQualityAssurance {
         { name: 'High Load', expectedRange: [0.6, 1.0] },
       ];
 
-      for (const scenario of scenarios) {
+      // Run scenarios in parallel for better performance
+      const scenarioPromises = scenarios.map(async (scenario) => {
         const testGraph = this.modifyGraphForScenario(mockGraph, scenario.name);
-
-        // Direct CCS calculation test (would need to access private method)
-        // This is a simplified version - in practice you'd test with actual service calls
         const state = await this.cognitiveAuraService.getAuraState(true);
         const ccs = state.compositeCognitiveScore;
 
@@ -166,7 +164,9 @@ export class CAEQualityAssurance {
             `Invalid CCS: ${ccs}`
           );
         }
-      }
+      });
+
+      await Promise.all(scenarioPromises);
 
     } catch (error) {
       this.addTestResult(
@@ -183,9 +183,9 @@ export class CAEQualityAssurance {
   private async testContextDerivation(): Promise<void> {
     try {
       const testCases = [
-        { ccs: 0.1, expectedContext: 'RECOVERY' },
-        { ccs: 0.5, expectedContext: 'FOCUS' },
-        { ccs: 0.9, expectedContext: 'OVERLOAD' },
+        { ccs: 0.1, expectedContext: 'DeepFocus' as const },
+        { ccs: 0.5, expectedContext: 'FragmentedAttention' as const },
+        { ccs: 0.9, expectedContext: 'CognitiveOverload' as const },
       ];
 
       for (const testCase of testCases) {
@@ -272,9 +272,10 @@ export class CAEQualityAssurance {
       if (state.microTask && state.microTask.length > 10) {
         // Check for context-specific keywords
         const contextKeywords = {
-          RECOVERY: ['gentle', 'gently', 'take your time', 'rest'],
-          FOCUS: ['focus', 'concentrate', 'deep', 'seize'],
-          OVERLOAD: ['quick', 'simple', 'break down', 'small steps'],
+          DeepFocus: ['focus', 'concentrate', 'deep', 'seize'],
+          FragmentedAttention: ['gentle', 'gently', 'take your time', 'rest'],
+          CognitiveOverload: ['quick', 'simple', 'break down', 'small steps'],
+          CreativeFlow: ['creative', 'flow', 'inspire', 'innovate'],
         };
 
         const relevantKeywords = contextKeywords[state.context];
@@ -668,7 +669,9 @@ export class CAEQualityAssurance {
     });
 
     const emoji = status === 'PASS' ? '✅' : status === 'FAIL' ? '❌' : '⚠️';
-    console.log(`${emoji} ${test}: ${message}`);
+    const sanitizedTest = test.replace(/[\r\n\t]/g, ' ');
+    const sanitizedMessage = message.replace(/[\r\n\t]/g, ' ');
+    console.log(`${emoji} ${sanitizedTest}: ${sanitizedMessage}`);
   }
 
   private generateSummary() {

@@ -12,10 +12,11 @@
  * - Cross-module synchronization
  */
 
-import { AuraContext, AuraState } from './CognitiveAuraService';
+import { AuraContext, AuraState } from '../ai/CognitiveAuraService';
 import { EventEmitter } from 'eventemitter3';
 import HybridStorageService from '../storage/HybridStorageService';
 import CrossModuleBridgeService from '../integrations/CrossModuleBridgeService';
+import SupabaseService from '../storage/SupabaseService';
 
 // Define SoundscapeType since base engine doesn't exist
 export type SoundscapeType =
@@ -28,6 +29,8 @@ export type SoundscapeType =
   | 'visualization'
   | 'deep_rest'
   | 'auto';
+
+// Direct integration with new AuraContext types
 
 /**
  * Enhanced soundscape configuration with aura context mapping
@@ -76,11 +79,28 @@ interface HealthModulation {
 /**
  * Enhanced Cognitive Soundscape Engine with Aura Integration
  */
+export type SoundscapePreset = {
+  id: string;
+  label: string;
+  description: string;
+  binauralFrequency: number;
+  carrierFrequency: number;
+  waveformType: string;
+  ambientTrack: string;
+  ambientVolume: number;
+  modulationDepth: number;
+  adaptiveRange: [number, number];
+  fadeInDuration: number;
+  fadeOutDuration: number;
+  cognitiveLoadSensitive: boolean;
+  timeOfDaySensitive: boolean;
+  performanceBased: boolean;
+};
+
 export class CognitiveSoundscapeEngine extends EventEmitter {
   private static instance: CognitiveSoundscapeEngine;
 
-  // Base engine
-  private baseEngine: CognitiveSoundscapeEngine;
+
 
   // Services
   private storage: HybridStorageService;
@@ -88,6 +108,7 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
 
   // Configuration
   private auraConfigurations!: Map<AuraContext, AuraSoundscapeConfig>;
+  private legacyConfigurations!: Map<string, AuraSoundscapeConfig>; // For backwards compatibility
   private currentAuraContext: AuraContext | null = null;
   private currentAuraState: AuraState | null = null;
 
@@ -119,9 +140,6 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
   private constructor() {
     super();
 
-    // Initialize base engine
-    this.baseEngine = CognitiveSoundscapeEngine.getInstance();
-
     // Initialize services
     this.storage = HybridStorageService.getInstance();
     this.crossModuleBridge = CrossModuleBridgeService.getInstance();
@@ -141,28 +159,9 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
   private initializeAuraConfigurations(): void {
     this.auraConfigurations = new Map([
       [
-        'RECOVERY',
+        'DeepFocus',
         {
-          context: 'RECOVERY',
-          primaryPreset: 'calm_readiness',
-          adaptivePresets: {
-            lowLoad: 'deep_rest',
-            mediumLoad: 'calm_readiness',
-            highLoad: 'deep_rest',
-          },
-          frequencyModulation: {
-            baseFrequency: 40, // Alpha waves
-            modulationDepth: 0.3,
-            adaptiveRange: [30, 50],
-          },
-          transitionDuration: 4.0,
-          effectivenessWeight: 1.0,
-        },
-      ],
-      [
-        'FOCUS',
-        {
-          context: 'FOCUS',
+          context: 'DeepFocus',
           primaryPreset: 'deep_focus',
           adaptivePresets: {
             lowLoad: 'calm_readiness',
@@ -179,10 +178,48 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
         },
       ],
       [
-        'OVERLOAD',
+        'CreativeFlow',
         {
-          context: 'OVERLOAD',
+          context: 'CreativeFlow',
           primaryPreset: 'reasoning_boost',
+          adaptivePresets: {
+            lowLoad: 'calm_readiness',
+            mediumLoad: 'reasoning_boost',
+            highLoad: 'visualization',
+          },
+          frequencyModulation: {
+            baseFrequency: 50, // Mixed alpha-beta for creativity
+            modulationDepth: 0.35,
+            adaptiveRange: [40, 70],
+          },
+          transitionDuration: 3.0,
+          effectivenessWeight: 1.1,
+        },
+      ],
+      [
+        'FragmentedAttention',
+        {
+          context: 'FragmentedAttention',
+          primaryPreset: 'calm_readiness',
+          adaptivePresets: {
+            lowLoad: 'deep_rest',
+            mediumLoad: 'calm_readiness',
+            highLoad: 'memory_flow',
+          },
+          frequencyModulation: {
+            baseFrequency: 40, // Alpha waves
+            modulationDepth: 0.3,
+            adaptiveRange: [30, 50],
+          },
+          transitionDuration: 4.0,
+          effectivenessWeight: 1.0,
+        },
+      ],
+      [
+        'CognitiveOverload',
+        {
+          context: 'CognitiveOverload',
+          primaryPreset: 'deep_rest',
           adaptivePresets: {
             lowLoad: 'deep_focus',
             mediumLoad: 'reasoning_boost',
@@ -190,6 +227,67 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
           },
           frequencyModulation: {
             baseFrequency: 30, // Theta waves for cognitive processing
+            modulationDepth: 0.5,
+            adaptiveRange: [25, 45],
+          },
+          transitionDuration: 1.5,
+          effectivenessWeight: 1.1,
+        },
+      ],
+    ]);
+
+    // Initialize legacy configurations for backwards compatibility
+    this.legacyConfigurations = new Map([
+      [
+        'RECOVERY',
+        {
+          context: 'FragmentedAttention',
+          primaryPreset: 'calm_readiness',
+          adaptivePresets: {
+            lowLoad: 'deep_rest',
+            mediumLoad: 'calm_readiness',
+            highLoad: 'deep_rest',
+          },
+          frequencyModulation: {
+            baseFrequency: 40,
+            modulationDepth: 0.3,
+            adaptiveRange: [30, 50],
+          },
+          transitionDuration: 4.0,
+          effectivenessWeight: 1.0,
+        },
+      ],
+      [
+        'FOCUS',
+        {
+          context: 'DeepFocus',
+          primaryPreset: 'deep_focus',
+          adaptivePresets: {
+            lowLoad: 'calm_readiness',
+            mediumLoad: 'deep_focus',
+            highLoad: 'memory_flow',
+          },
+          frequencyModulation: {
+            baseFrequency: 60,
+            modulationDepth: 0.4,
+            adaptiveRange: [50, 80],
+          },
+          transitionDuration: 2.0,
+          effectivenessWeight: 1.2,
+        },
+      ],
+      [
+        'OVERLOAD',
+        {
+          context: 'CognitiveOverload',
+          primaryPreset: 'reasoning_boost',
+          adaptivePresets: {
+            lowLoad: 'deep_focus',
+            mediumLoad: 'reasoning_boost',
+            highLoad: 'deep_rest',
+          },
+          frequencyModulation: {
+            baseFrequency: 30,
             modulationDepth: 0.5,
             adaptiveRange: [25, 45],
           },
@@ -207,7 +305,16 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
     // Update health factors every 5 minutes
     setInterval(async () => {
       try {
-        const healthMetrics = await this.crossModuleBridge.getHealthMetrics('currentUser');
+        const supabase = SupabaseService.getInstance();
+        const currentUser = supabase.getCurrentUser();
+        const userId = currentUser?.id;
+
+        if (!userId) {
+          console.warn('⚠️ setupHealthMonitoring: no authenticated user available, skipping health update');
+          return;
+        }
+
+        const healthMetrics = await this.crossModuleBridge.getHealthMetrics(userId);
         this.updateHealthModulation(healthMetrics);
       } catch (error) {
         console.warn('⚠️ Health monitoring update failed:', error);
@@ -371,7 +478,7 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
     console.log(`🎛️ Health-adjusted frequency: ${baseFreq}Hz → ${finalFreq.toFixed(1)}Hz`);
 
     // Start the soundscape with enhanced parameters
-    await this.baseEngine.startSoundscape(soundscape, {
+    await this.startSoundscape(soundscape, {
       cognitiveLoad: auraState.compositeCognitiveScore,
       adaptiveMode: true,
       fadeIn: true,
@@ -458,10 +565,10 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
   }
 
   /**
-   * Get current soundscape type from base engine
+   * Get current soundscape type
    */
   private getCurrentSoundscape(): SoundscapeType {
-    const state = this.baseEngine.getState();
+    const state = this.getState();
     return state.currentPreset || 'calm_readiness';
   }
 
@@ -497,13 +604,78 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
         targetNode: null,
         targetNodePriority: null,
         microTask: '',
+        environmentalContext: {
+          timestamp: new Date(),
+          sessionId: 'manual_' + Date.now(),
+          timeIntelligence: {
+            circadianHour: new Date().getHours(),
+            timeOfDay: 'morning',
+            dayOfWeek: 'monday',
+            isOptimalLearningWindow: true,
+            energyLevel: 'high',
+            historicalPerformance: 0.8,
+            nextOptimalWindow: null,
+          },
+          locationContext: {
+            environment: 'home',
+            noiseLevel: 'quiet',
+            socialSetting: 'alone',
+            stabilityScore: 0.9,
+            privacyLevel: 0.8,
+            distractionRisk: 'low',
+            coordinates: null,
+            isKnownLocation: true,
+            locationConfidence: 0.9,
+          },
+          digitalBodyLanguage: {
+            state: 'focused',
+            appSwitchFrequency: 0.5,
+            scrollingVelocity: 0.2,
+            typingSpeed: 0.7,
+            typingAccuracy: 0.95,
+            touchPressure: 0.5,
+            interactionPauses: [],
+            deviceOrientation: 'portrait',
+            attentionSpan: 25,
+            cognitiveLoadIndicator: 0.4,
+            stressIndicators: 0.2,
+          },
+          batteryLevel: 0.8,
+          isCharging: true,
+          networkQuality: 'good',
+          deviceTemperature: null,
+          overallOptimality: 0.85,
+          recommendedAction: 'proceed',
+          contextQualityScore: 0.9,
+          anticipatedChanges: [],
+        },
+        capacityForecast: {
+          mentalClarityScore: 0.8,
+          anticipatedCapacityChange: 0.1,
+          optimalWindowRemaining: 120,
+          nextOptimalWindow: null,
+        },
+        learningPrescription: {
+          primary: 'Context-based learning',
+          duration: 25,
+          intensity: 'medium',
+          environment: ['optimal'],
+        },
         recommendedSoundscape: 'calm_readiness',
         adaptivePhysicsMode: 'focus',
+        memoryPalaceMode: 'familiar',
+        graphVisualizationMode: 'full',
+        anticipatedStateChanges: [],
         timestamp: new Date(),
         sessionId: 'manual_' + Date.now(),
         confidence: 1.0,
+        accuracyScore: 0.9,
         previousStates: [],
         adaptationCount: 0,
+        contextStability: 0.9,
+        predictionAccuracy: 0.8,
+        environmentOptimality: 0.85,
+        biologicalAlignment: 0.8,
       };
 
       await this.applyAuraState(mockAuraState);
@@ -537,7 +709,12 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
         totalSessions: 0,
         averageSatisfaction: 0,
         averageTaskCompletion: 0,
-        contextBreakdown: { RECOVERY: 0, FOCUS: 0, OVERLOAD: 0 },
+        contextBreakdown: {
+          DeepFocus: 0,
+          CreativeFlow: 0,
+          FragmentedAttention: 0,
+          CognitiveOverload: 0
+        },
         mostEffectiveContext: null,
       };
     }
@@ -547,14 +724,23 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
     const averageTaskCompletion = this.performanceHistory.reduce((sum, p) => sum + p.taskCompletion, 0) / totalSessions;
 
     // Context breakdown
-    const contextBreakdown = { RECOVERY: 0, FOCUS: 0, OVERLOAD: 0 };
+    const contextBreakdown: Record<AuraContext, number> = {
+      DeepFocus: 0,
+      CreativeFlow: 0,
+      FragmentedAttention: 0,
+      CognitiveOverload: 0
+    };
     this.performanceHistory.forEach(p => {
-      contextBreakdown[p.auraContext]++;
+      // Map legacy contexts to new contexts for breakdown
+      const mappedContext = this.mapLegacyToNewContext(p.auraContext as any);
+      if (mappedContext && contextBreakdown[mappedContext] !== undefined) {
+        contextBreakdown[mappedContext]++;
+      }
     });
 
     // Most effective context (highest average task completion)
     const contextPerformance = new Map<AuraContext, number>();
-    (['RECOVERY', 'FOCUS', 'OVERLOAD'] as AuraContext[]).forEach((context) => {
+    (['DeepFocus', 'CreativeFlow', 'FragmentedAttention', 'CognitiveOverload'] as AuraContext[]).forEach((context) => {
       const contextData = this.performanceHistory.filter(p => p.auraContext === context);
       if (contextData.length > 0) {
         const avgPerformance = contextData.reduce((sum, p) => sum + p.taskCompletion, 0) / contextData.length;
@@ -583,36 +769,192 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
   // ==================== DELEGATE METHODS TO BASE ENGINE ====================
 
   /**
-   * Delegate methods to base engine for backward compatibility
+   * Core soundscape methods - implement basic functionality
    */
 
   public async startSoundscape(preset: SoundscapeType, options?: any): Promise<void> {
-    return this.baseEngine.startSoundscape(preset, options);
+    // Basic implementation - would integrate with actual audio system
+    console.log(`🎵 Starting soundscape: ${preset}`);
   }
 
   public async stopSoundscape(): Promise<void> {
     this.sessionStartTime = null;
-    return this.baseEngine.stopSoundscape();
+    console.log('⏹️ Stopping soundscape');
   }
 
   public getState(): any {
-    return this.baseEngine.getState();
+    return {
+      isActive: this.sessionStartTime !== null,
+      currentPreset: 'calm_readiness',
+    };
   }
 
   public updateCognitiveLoad(cognitiveLoad: number): void {
-    return this.baseEngine.updateCognitiveLoad(cognitiveLoad);
+    console.log(`🧠 Cognitive load updated: ${cognitiveLoad}`);
   }
 
   public setVolume(volume: number): void {
-    return this.baseEngine.setVolume(volume);
+    console.log(`🔊 Volume set: ${volume}`);
   }
 
   public isActive(): boolean {
-    return this.baseEngine.isActive();
+    return this.sessionStartTime !== null;
   }
 
   public getAvailablePresets(): SoundscapeType[] {
-    return this.baseEngine.getAvailablePresets();
+    return ['none', 'calm_readiness', 'deep_focus', 'reasoning_boost', 'memory_flow', 'deep_rest'];
+  }
+
+  /**
+   * Play soundscape based on context from Cognitive Aura Service
+   * Maps CognitiveAuraService contexts to appropriate soundscapes
+   */
+  public async playContextSound(context: string): Promise<void> {
+    try {
+      console.log(`🎵 Playing context sound for: ${context}`);
+
+      // Map CognitiveAuraService contexts to CognitiveSoundscapeEngine contexts
+      const mappedContext = this.mapAuraContext(context);
+
+      // Create a mock AuraState for the context with all required properties
+      const mockAuraState: AuraState = {
+        compositeCognitiveScore: this.getDefaultCognitiveScoreForContext(mappedContext),
+        context: mappedContext as any, // Cast to match AuraState interface
+        targetNode: null,
+        targetNodePriority: null,
+        microTask: '',
+        environmentalContext: {
+          timestamp: new Date(),
+          sessionId: 'context_play_' + Date.now(),
+          timeIntelligence: {
+            circadianHour: new Date().getHours(),
+            timeOfDay: 'morning',
+            dayOfWeek: 'monday',
+            isOptimalLearningWindow: true,
+            energyLevel: 'high',
+            historicalPerformance: 0.8,
+            nextOptimalWindow: null,
+          },
+          locationContext: {
+            environment: 'home',
+            noiseLevel: 'quiet',
+            socialSetting: 'alone',
+            stabilityScore: 0.9,
+            privacyLevel: 0.8,
+            distractionRisk: 'low',
+            coordinates: null,
+            isKnownLocation: true,
+            locationConfidence: 0.9,
+          },
+          digitalBodyLanguage: {
+            state: 'focused',
+            appSwitchFrequency: 0.5,
+            scrollingVelocity: 0.2,
+            typingSpeed: 0.7,
+            typingAccuracy: 0.95,
+            touchPressure: 0.5,
+            interactionPauses: [],
+            deviceOrientation: 'portrait',
+            attentionSpan: 25,
+            cognitiveLoadIndicator: 0.4,
+            stressIndicators: 0.2,
+          },
+          batteryLevel: 0.8,
+          isCharging: true,
+          networkQuality: 'good',
+          deviceTemperature: null,
+          overallOptimality: 0.85,
+          recommendedAction: 'proceed',
+          contextQualityScore: 0.9,
+          anticipatedChanges: [],
+        },
+        capacityForecast: {
+          mentalClarityScore: 0.8,
+          anticipatedCapacityChange: 0.1,
+          optimalWindowRemaining: 120,
+          nextOptimalWindow: null,
+        },
+        learningPrescription: {
+          primary: 'Context-based learning',
+          duration: 25,
+          intensity: 'medium',
+          environment: ['optimal'],
+        },
+        recommendedSoundscape: 'calm_readiness',
+        adaptivePhysicsMode: 'focus',
+        memoryPalaceMode: 'familiar',
+        graphVisualizationMode: 'full',
+        anticipatedStateChanges: [],
+        timestamp: new Date(),
+        sessionId: 'context_play_' + Date.now(),
+        confidence: 1.0,
+        accuracyScore: 0.9,
+        previousStates: [],
+        adaptationCount: 0,
+        contextStability: 0.9,
+        predictionAccuracy: 0.8,
+        environmentOptimality: 0.85,
+        biologicalAlignment: 0.8,
+      };
+
+      // Apply the aura state to trigger soundscape adaptation
+      await this.applyAuraState(mockAuraState);
+
+    } catch (error) {
+      console.error('❌ Failed to play context sound:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Map CognitiveAuraService context strings to CognitiveSoundscapeEngine AuraContext
+   */
+  private mapAuraContext(context: string): string {
+    switch (context) {
+      case 'DeepFocus':
+        return 'FOCUS';
+      case 'CreativeFlow':
+        return 'FOCUS'; // Creative flow often benefits from focused soundscapes
+      case 'FragmentedAttention':
+        return 'RECOVERY'; // Recovery soundscapes for fragmented attention
+      case 'CognitiveOverload':
+        return 'OVERLOAD';
+      default:
+        console.warn(`⚠️ Unknown context: ${context}, defaulting to FOCUS`);
+        return 'FOCUS';
+    }
+  }
+
+  /**
+   * Get default cognitive score for context mapping
+   */
+  private getDefaultCognitiveScoreForContext(context: string): number {
+    switch (context) {
+      case 'FOCUS':
+        return 0.75; // High cognitive load for focus
+      case 'RECOVERY':
+        return 0.3; // Low cognitive load for recovery
+      case 'OVERLOAD':
+        return 0.85; // Very high cognitive load for overload
+      default:
+        return 0.5;
+    }
+  }
+
+  /**
+   * Map legacy context to new AuraContext for backwards compatibility
+   */
+  private mapLegacyToNewContext(legacyContext: string): AuraContext {
+    switch (legacyContext) {
+      case 'FOCUS':
+        return 'DeepFocus';
+      case 'RECOVERY':
+        return 'FragmentedAttention';
+      case 'OVERLOAD':
+        return 'CognitiveOverload';
+      default:
+        return 'FragmentedAttention';
+    }
   }
 
   public dispose(): void {
@@ -620,7 +962,6 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
     this.performanceHistory = [];
     this.currentAuraContext = null;
     this.currentAuraState = null;
-    this.baseEngine.dispose();
     console.log('🧹 Enhanced Cognitive Soundscape Engine disposed');
   }
 }
@@ -628,6 +969,19 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
 // Export singleton instance
 export const cognitiveSoundscapeEngine = CognitiveSoundscapeEngine.getInstance();
 export default cognitiveSoundscapeEngine;
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -68,6 +68,9 @@ export interface NeuralNode {
 
   // Performance optimization
   index?: number;
+
+  // Connection references (populated during graph generation)
+  connections?: string[]; // Array of connected node IDs
 }
 
 export interface NeuralLink {
@@ -485,7 +488,7 @@ export class MindMapGenerator {
       // Convert to enhanced clusters
       const clusters: KnowledgeCluster[] = [];
 
-      for (const [category, clusterNodes] of categoryGroups.entries()) {
+      for (const [category, clusterNodes] of Array.from(categoryGroups.entries())) {
         if (clusterNodes.length === 0) continue;
 
         const cluster = await this.createKnowledgeCluster(
@@ -694,8 +697,7 @@ export class MindMapGenerator {
         // Find unvisited node with minimum distance
         let currentNodeId = '';
         let minDistance = Infinity;
-
-        for (const nodeId of unvisited) {
+        for (const nodeId of Array.from(unvisited)) {
           const distance = distances.get(nodeId) || Infinity;
           if (distance < minDistance) {
             minDistance = distance;
@@ -1253,7 +1255,7 @@ export class MindMapGenerator {
       });
 
       let idx = 0;
-      for (const [cat, cards] of categories.entries()) {
+      for (const [cat, cards] of Array.from(categories.entries())) {
         const mastery =
           cards.reduce(
             (s: number, c: any) =>

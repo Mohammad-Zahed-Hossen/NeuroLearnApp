@@ -160,15 +160,20 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   // Safe physics engine initialization
   const physicsEngine = useMemo(() => {
     try {
-      const engine = new NeuralPhysicsEngine(width, height, theme);
-      // Set initial focus lock state
-      engine.setFocusLock(focusLock, focusLockSessionId ?? undefined);
+      const engine = NeuralPhysicsEngine.getInstance();
+      // optional: if engine supports dimension/config updates, call them here
+      // Set initial focus lock state (stubbed safely on the singleton)
+      engine.setFocusLock?.(focusLock, focusLockSessionId ?? undefined);
+      // Try to set focus node if provided
+      if (focusNodeId) {
+        engine.setFocusNode?.(focusNodeId);
+      }
       return engine;
     } catch (error) {
       console.warn('Physics engine initialization failed:', error);
       return null;
     }
-  }, [width, height, theme]);
+  }, [width, height, theme, focusLock, focusLockSessionId, focusNodeId]);
 
   // Update focus lock state in physics engine when props change
   useEffect(() => {
@@ -388,28 +393,30 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
 
         // Safe tick handling with throttling
         let lastTick = 0;
-        physicsEngine.onTick((updatedNodes: NeuralNode[], updatedLinks: NeuralLink[]) => {
-          if (!isMountedRef.current || isUpdatingRef.current) return;
+        physicsEngine.onTick(
+          (updatedNodes: NeuralNode[], updatedLinks: NeuralLink[]) => {
+            if (!isMountedRef.current || isUpdatingRef.current) return;
 
-          const now = Date.now();
-          if (now - lastTick < PERFORMANCE_CONFIG.FRAME_TIME_MS) return;
+            const now = Date.now();
+            if (now - lastTick < PERFORMANCE_CONFIG.FRAME_TIME_MS) return;
 
-          lastTick = now;
-          isUpdatingRef.current = true;
+            lastTick = now;
+            isUpdatingRef.current = true;
 
-          try {
-            if (Array.isArray(updatedNodes) && updatedNodes.length > 0) {
-              runOnJS(setNodes)(updatedNodes);
+            try {
+              if (Array.isArray(updatedNodes) && updatedNodes.length > 0) {
+                runOnJS(setNodes)(updatedNodes);
+              }
+              if (Array.isArray(updatedLinks)) {
+                runOnJS(setLinks)(updatedLinks);
+              }
+            } catch (error) {
+              console.warn('Tick update failed:', error);
+            } finally {
+              isUpdatingRef.current = false;
             }
-            if (Array.isArray(updatedLinks)) {
-              runOnJS(setLinks)(updatedLinks);
-            }
-          } catch (error) {
-            console.warn('Tick update failed:', error);
-          } finally {
-            isUpdatingRef.current = false;
-          }
-        });
+          },
+        );
 
         // Start the physics simulation
         physicsEngine.start();

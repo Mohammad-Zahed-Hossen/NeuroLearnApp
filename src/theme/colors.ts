@@ -180,6 +180,26 @@ export const shadows = {
 
 // Enhanced typography with better readability
 export const typography = {
+  // Size definitions
+  sizes: {
+    xxxl: 32,
+    xxl: 28,
+    xl: 24,
+    lg: 20,
+    md: 16,
+    sm: 14,
+    xs: 12,
+  },
+  // Weight definitions
+  weights: {
+    light: '300' as const,
+    regular: '400' as const,
+    medium: '500' as const,
+    semibold: '600' as const,
+    bold: '700' as const,
+    extrabold: '800' as const,
+  },
+  // Predefined text styles
   h1: {
     fontSize: 32,
     fontWeight: 'bold' as const,

@@ -11,15 +11,16 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import MMKVStorageService from './MMKVStorageService';
 import { SupabaseStorageService } from './SupabaseStorageService';
 import SpacedRepetitionService from '../learning/SpacedRepetitionService';
 import {
-  Flashcard,
   Task,
   StudySession,
   MemoryPalace,
   ProgressData,
   Settings,
+  Flashcard,
 } from '../../types';
 import {
   SoundSettings,
@@ -28,7 +29,6 @@ import {
   FocusSession,
   FocusHealthMetrics,
   LogicNode,
-  EnhancedFlashcard,
 } from './StorageService';
 import { ReadingSession, SourceLink } from '../learning/SpeedReadingService';
 
@@ -53,6 +53,12 @@ export class HybridStorageService {
     HEALTH_METRICS: '@neurolearn/cache_health_metrics',
     SLEEP_ENTRIES: '@neurolearn/cache_sleep_entries',
     BUDGET_ANALYSIS: '@neurolearn/cache_budget_analysis',
+  };
+
+  // Keys we keep in hot cache (MMKV) for ultra-fast access
+  private static readonly HOT_KEYS = {
+    CONTEXT_SNAPSHOT_PREFIX: 'ctx:',
+    CONTEXT_CACHE: '@neurolearn/cache_context_snapshots',
   };
 
   public static getInstance(): HybridStorageService {
@@ -137,7 +143,12 @@ export class HybridStorageService {
 
   private async silentCache<T>(key: string, data: T): Promise<void> {
     try {
-      await AsyncStorage.setItem(key, JSON.stringify(data));
+      // Use MMKV for hot cache when available for fast writes
+      if (MMKVStorageService.isAvailable() && key.startsWith(HybridStorageService.HOT_KEYS.CONTEXT_CACHE)) {
+        await MMKVStorageService.setItem(key, JSON.stringify(data));
+      } else {
+        await AsyncStorage.setItem(key, JSON.stringify(data));
+      }
     } catch (error) {
       console.error('Silent cache failed:', error);
       // Don't throw - caching is optional
@@ -325,7 +336,7 @@ export class HybridStorageService {
 
   // ==================== FLASHCARDS ====================
 
-  async getFlashcards(): Promise<(Flashcard | EnhancedFlashcard)[]> {
+  async getFlashcards(): Promise<(Flashcard | Flashcard)[]> {
     return this.hybridGet(
       () => this.supabaseService.getFlashcards(),
       HybridStorageService.CACHE_KEYS.FLASHCARDS,
@@ -333,7 +344,7 @@ export class HybridStorageService {
     );
   }
 
-  async saveFlashcards(flashcards: (Flashcard | EnhancedFlashcard)[]): Promise<void> {
+  async saveFlashcards(flashcards: (Flashcard | Flashcard)[]): Promise<void> {
     return this.hybridSet(
       (data) => this.supabaseService.saveFlashcards(data),
       HybridStorageService.CACHE_KEYS.FLASHCARDS,
@@ -626,7 +637,7 @@ export class HybridStorageService {
   // ==================== DASHBOARD METHODS ====================
 
   async getCardsDueToday(): Promise<{
-    flashcards: (Flashcard | EnhancedFlashcard)[];
+    flashcards: (Flashcard | Flashcard)[];
     logicNodes: LogicNode[];
     criticalLogicCount: number;
   }> {
@@ -763,11 +774,19 @@ export class HybridStorageService {
       const queueSize = syncQueue ? JSON.parse(syncQueue).length : 0;
 
       // Estimate cache size
+      // Prefer MMKV for hot keys
+      const hotPrefix = HybridStorageService.HOT_KEYS.CONTEXT_CACHE;
+      let cacheSize = 0;
+      if (MMKVStorageService.isAvailable()) {
+        const hotKeys = await MMKVStorageService.getKeysWithPrefix(hotPrefix);
+        cacheSize += hotKeys.length;
+      }
+
       const cacheKeys = Object.values(HybridStorageService.CACHE_KEYS);
       const cacheItems = await Promise.all(
         cacheKeys.map(key => AsyncStorage.getItem(key))
       );
-      const cacheSize = cacheItems.filter(item => item !== null).length;
+      cacheSize += cacheItems.filter(item => item !== null).length;
 
       return {
         isOnline: this.isOnline,
@@ -998,6 +1017,88 @@ export class HybridStorageService {
     } catch (error) {
       console.error('Error setting item in storage:', error);
     }
+  }
+
+  // ==================== CAE 2.0: CONTEXT STORAGE METHODS ====================
+
+  async saveContextSnapshot(snapshot: any): Promise<void> {
+    return this.hybridSet(
+      (data) => this.supabaseService.saveContextSnapshot(data),
+      '@neurolearn/cache_context_snapshots',
+      snapshot
+    );
+  }
+
+  async getContextSnapshots(startDate?: Date, endDate?: Date, limit?: number): Promise<any[]> {
+    return this.hybridGet(
+      () => this.supabaseService.getContextSnapshots(startDate, endDate, limit),
+      '@neurolearn/cache_context_snapshots',
+      []
+    );
+  }
+
+  async saveLearnedPattern(pattern: any): Promise<void> {
+    return this.hybridSet(
+      (data) => this.supabaseService.saveLearnedPattern(data),
+      '@neurolearn/cache_learned_patterns',
+      pattern
+    );
+  }
+
+  async getLearnedPatterns(): Promise<any[]> {
+    return this.hybridGet(
+      () => this.supabaseService.getLearnedPatterns(),
+      '@neurolearn/cache_learned_patterns',
+      []
+    );
+  }
+
+  async saveOptimalLearningWindow(window: any): Promise<void> {
+    return this.hybridSet(
+      (data) => this.supabaseService.saveOptimalLearningWindow(data),
+      '@neurolearn/cache_optimal_learning_windows',
+      window
+    );
+  }
+
+  async getOptimalLearningWindows(): Promise<any[]> {
+    return this.hybridGet(
+      () => this.supabaseService.getOptimalLearningWindows(),
+      '@neurolearn/cache_optimal_learning_windows',
+      []
+    );
+  }
+
+  async saveKnownLocation(location: any): Promise<void> {
+    return this.hybridSet(
+      (data) => this.supabaseService.saveKnownLocation(data),
+      '@neurolearn/cache_known_locations',
+      location
+    );
+  }
+
+  async getKnownLocations(): Promise<any[]> {
+    return this.hybridGet(
+      () => this.supabaseService.getKnownLocations(),
+      '@neurolearn/cache_known_locations',
+      []
+    );
+  }
+
+  async saveCognitiveForecast(forecast: any): Promise<void> {
+    return this.hybridSet(
+      (data) => this.supabaseService.saveCognitiveForecast(data),
+      '@neurolearn/cache_cognitive_forecasts',
+      forecast
+    );
+  }
+
+  async getCognitiveForecasts(): Promise<any[]> {
+    return this.hybridGet(
+      () => this.supabaseService.getCognitiveForecasts(),
+      '@neurolearn/cache_cognitive_forecasts',
+      []
+    );
   }
 
   // ==================== ADDITIONAL UTILITIES (implemented) ====================

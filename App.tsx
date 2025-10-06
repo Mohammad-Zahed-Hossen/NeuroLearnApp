@@ -32,6 +32,7 @@ import { FloatingActionButton } from './src/components/shared/FloatingActionButt
 import { QuickActionBottomSheet } from './src/components/navigation/QuickActionBottomSheet';
 import FloatingChatBubble from './src/components/ai/FloatingChatBubble';
 import FloatingElementsOrchestrator from './src/components/shared/FloatingElementsOrchestrator';
+import { MicroTaskCard } from './src/components/shared/MicroTaskCard';
 
 // Contexts
 import { FocusProvider } from './src/contexts/FocusContext';
@@ -40,6 +41,12 @@ import { CognitiveProvider } from './src/contexts/CognitiveProvider';
 
 // Services
 import SupabaseService from './src/services/storage/SupabaseService';
+
+// Cognitive Aura Engine Integration
+import {
+  initializeAuraStore,
+  useCurrentAuraState,
+} from './src/store/useAuraStore';
 
 // New screens
 import FinanceDashboardScreen from './src/screens/finance/FinanceDashboardScreen';
@@ -75,6 +82,8 @@ export default function App() {
   const supabaseService = SupabaseService.getInstance();
 
   const [user, setUser] = React.useState<any>(null);
+  // Ensure hooks run in stable order: call aura hook at top-level of component
+  const auraState = useCurrentAuraState();
 
   const handleNavigate = (screen: string, params?: any) => {
     console.log(
@@ -118,6 +127,9 @@ export default function App() {
         setAppState('auth');
         return;
       }
+
+      // Initialize Cognitive Aura Engine
+      await initializeAuraStore();
 
       setAppState('app');
     } catch (error) {
@@ -321,6 +333,13 @@ export default function App() {
               currentScreen={currentScreen}
               theme={theme}
             />
+            {auraState && auraState.microTask && (
+              <MicroTaskCard
+                auraState={auraState}
+                theme={theme}
+                position="floating"
+              />
+            )}
           </>
         );
 
@@ -337,6 +356,13 @@ export default function App() {
               />
             )}
             {renderCurrentScreen()}
+            {auraState && auraState.microTask && (
+              <MicroTaskCard
+                auraState={auraState}
+                theme={theme}
+                position="floating"
+              />
+            )}
           </>
         );
 
@@ -362,6 +388,13 @@ export default function App() {
               currentScreen={currentScreen}
               theme={theme}
             />
+            {auraState && auraState.microTask && (
+              <MicroTaskCard
+                auraState={auraState}
+                theme={theme}
+                position="floating"
+              />
+            )}
           </>
         );
 

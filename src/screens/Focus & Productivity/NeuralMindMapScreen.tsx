@@ -1,20 +1,22 @@
 /**
- * Enhanced NeuralMindMapScreen with Cognitive Aura Engine Integration
+ *  Neural Mind Map Screen with CAE 2.0 Integration
  *
- * This updated screen integrates the Cognitive Aura Engine as the central
- * intelligence layer, providing real-time cognitive state analysis and
- * adaptive UI responses.
- *
- * Key Enhancements:
- * - Cognitive Aura Service integration
- * - Real-time micro-task display
- * - Adaptive physics based on cognitive context
- * - Performance tracking and feedback
- * - Health-integrated cognitive load calculation
+ * This  screen integrates the complete Cognitive Aura Engine 2.0 stack:
+ * - Environmental & Biometric Context Sensing
+ * - Neural Capacity Forecasting &  States
+ * - Adaptive Physics with 4  cognitive contexts
+ * - Context-aware micro-task generation
+ * - Predictive intelligence and anticipatory adjustments
+ * - Multi-modal system integration
  */
 
-// Enhanced imports for CAE integration
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
 import {
   View,
   Text,
@@ -27,8 +29,20 @@ import {
   ActivityIndicator,
   RefreshControl,
   SafeAreaView,
+  StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import LinearGradient from 'react-native-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  interpolate,
+  runOnJS,
+} from 'react-native-reanimated';
+
+// Core components
 import {
   AppHeader,
   HamburgerMenu,
@@ -40,7 +54,14 @@ import {
 } from '../../components/GlassComponents';
 import { NeuralMindMap } from '../../components/ai/NeuralCanvas';
 import { MiniPlayer } from '../../components/MiniPlayerComponent';
-import MicroTaskCard from '../../components/shared/MicroTaskCard'; // New import
+
+//  CAE 2.0 imports
+import MicroTaskCard from '../../components/shared/MicroTaskCard'; // New  component
+import ContextInsightsPanel from '../../components/ai/ContextInsightsPanel'; // New context panel
+import { CapacityForecastWidget } from '../../components/ai/CapacityForecastWidget'; // New forecast widget
+import AdaptiveControlPanel from '../../components/ai/AdaptiveControlPanel'; // New adaptive controls
+
+// Theme and styling
 import {
   colors,
   spacing,
@@ -49,6 +70,8 @@ import {
   shadows,
 } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
+
+// Services - CAE 2.0 Stack
 import {
   MindMapGenerator,
   NeuralGraph,
@@ -58,31 +81,50 @@ import HybridStorageService from '../../services/storage/HybridStorageService';
 import {
   CognitiveAuraService,
   AuraState,
-  cognitiveAuraService
-} from '../../services/learning/CognitiveAuraService'; // New import
+  AuraContext,
+} from '../../services/ai/CognitiveAuraService';
+import {
+  ContextSensorService,
+  ContextSnapshot,
+  DigitalBodyLanguage,
+} from '../../services/ai/ContextSensorService';
+import {
+  NeuralPhysicsEngine,
+  PhysicsState,
+} from '../../services/learning/NeuralPhysicsEngine';
+
+// Context and hooks
 import { useFocus } from '../../contexts/FocusContext';
 import { useSoundscape } from '../../contexts/SoundscapeContext';
 import { SoundscapeType } from '../../services/learning/CognitiveSoundscapeEngine';
 import CrossModuleBridgeService from '../../services/integrations/CrossModuleBridgeService';
-import { CircadianIntelligenceService } from '../../services/health/CircadianIntelligenceService';
+
+// ====================  INTERFACES ====================
 
 interface NeuralMindMapScreenProps {
   theme: ThemeType;
   onNavigate: (screen: string) => void;
-  // Phase 5: Focus lock prop
   focusNodeId?: string | null;
 }
 
 /**
- * Phase 3: Enhanced ViewMode Interface with Health Analytics
+ *  view modes with CAE 2.0 context awareness
  */
 interface ViewMode {
-  id: 'network' | 'clusters' | 'paths' | 'health';
+  id:
+    | 'context_adaptive'
+    | 'network'
+    | 'clusters'
+    | 'paths'
+    | 'health'
+    | 'forecast';
   name: string;
   description: string;
   icon: string;
   color: string;
   shortName: string;
+  contextOptimized: AuraContext[];
+  ai: boolean;
 }
 
 interface NodeDetail {
@@ -91,300 +133,385 @@ interface NodeDetail {
   centrality: number;
   recommendations: string[];
   networkPosition: 'central' | 'peripheral' | 'bridge';
-  healthInsights?: string[];
-  pathRecommendations?: string[];
+  healthInsights: string[];
+  pathRecommendations: string[];
+  contextRelevance: Record<AuraContext, number>;
+  cognitiveLoad: number;
+  masteryLevel: number;
+  optimalContexts: AuraContext[];
 }
 
 interface LoadingState {
   isGenerating: boolean;
   isCalculating: boolean;
   isRefreshing: boolean;
-  isGeneratingAura: boolean; // New loading state
+  isGeneratingAura: boolean;
+  isContextSensing: boolean;
+  isForecasting: boolean;
   progress?: number;
+  stage?: string;
 }
 
 /**
- * Phase 3: Enhanced VIEW_MODES with Color Coding and Analytics
+ *  view modes with CAE 2.0 features
  */
-const VIEW_MODES: ViewMode[] = [
+const _VIEW_MODES: ViewMode[] = [
+  {
+    id: 'context_adaptive',
+    name: 'Context Adaptive',
+    shortName: 'Adaptive',
+    description:
+      'AI-powered view that adapts to your current cognitive context',
+    icon: '🧠',
+    color: '#6366F1',
+    contextOptimized: [
+      'DeepFocus',
+      'CreativeFlow',
+      'FragmentedAttention',
+      'CognitiveOverload',
+    ],
+    ai: true,
+  },
+  {
+    id: 'forecast',
+    name: 'Cognitive Forecast',
+    shortName: 'Forecast',
+    description: 'Predictive view showing anticipated learning opportunities',
+    icon: '🔮',
+    color: '#8B5CF6',
+    contextOptimized: ['DeepFocus', 'CreativeFlow'],
+    ai: true,
+  },
   {
     id: 'network',
     name: 'Neural Network',
     shortName: 'Network',
     description: 'Full brain-like visualization of all connections',
-    icon: '🧠',
-    color: '#6366F1',
+    icon: '🕸️',
+    color: '#10B981',
+    contextOptimized: ['CreativeFlow'],
+    ai: false,
   },
   {
     id: 'health',
     name: 'Cognitive Health',
     shortName: 'Health',
-    description: 'Highlight weak areas needing immediate attention',
-    icon: '❤️🩹',
+    description: 'Context-aware highlighting of areas needing attention',
+    icon: '❤️‍🩹',
     color: '#EF4444',
+    contextOptimized: ['CognitiveOverload', 'FragmentedAttention'],
+    ai: true,
   },
   {
     id: 'clusters',
     name: 'Knowledge Clusters',
     shortName: 'Clusters',
-    description: 'Group related concepts by knowledge domain',
+    description: 'Adaptive grouping based on current learning context',
     icon: '🔗',
-    color: '#10B981',
+    color: '#F59E0B',
+    contextOptimized: ['DeepFocus', 'FragmentedAttention'],
+    ai: true,
   },
   {
     id: 'paths',
     name: 'Learning Paths',
     shortName: 'Paths',
-    description: 'Show optimal learning sequences and prerequisites',
+    description: 'Context-optimized learning sequences',
     icon: '🛤️',
-    color: '#F59E0B',
+    color: '#06B6D4',
+    contextOptimized: ['DeepFocus', 'FragmentedAttention'],
+    ai: true,
   },
 ];
 
-const COGNITIVE_LOAD_THRESHOLDS = {
-  LOW: 0.3,
-  MODERATE: 0.6,
-  HIGH: 0.8,
+const COGNITIVE_CONTEXT_COLORS = {
+  DeepFocus: '#4338CA',
+  CreativeFlow: '#7C3AED',
+  FragmentedAttention: '#DC2626',
+  CognitiveOverload: '#EA580C',
 } as const;
+
+// ====================  COMPONENT ====================
 
 export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   theme,
   onNavigate,
   focusNodeId,
 }) => {
+  // ==================== STATE MANAGEMENT ====================
+
   const [menuVisible, setMenuVisible] = useState(false);
   const [loadingState, setLoadingState] = useState<LoadingState>({
     isGenerating: true,
     isCalculating: false,
     isRefreshing: false,
     isGeneratingAura: false,
+    isContextSensing: false,
+    isForecasting: false,
+    stage: 'Initializing...',
   });
+
+  // Core data state
   const [neuralGraph, setNeuralGraph] = useState<NeuralGraph | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode['id']>('network');
+  const [viewMode, setViewMode] = useState<string>('context_adaptive');
   const [selectedNode, setSelectedNode] = useState<NeuralNode | null>(null);
   const [nodeDetailVisible, setNodeDetailVisible] = useState(false);
   const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
-  const [cognitiveLoad, setCognitiveLoad] = useState(0.5);
-  const [cognitiveLoadFactor, setCognitiveLoadFactor] = useState(1.0);
 
-  // CAE Integration State
+  // CAE 2.0  state
   const [auraState, setAuraState] = useState<AuraState | null>(null);
+  const [contextSnapshot, setContextSnapshot] =
+    useState<ContextSnapshot | null>(null);
+  const [physicsState, setPhysicsState] = useState<PhysicsState | null>(null);
+
+  // UI state
   const [microTaskVisible, setMicroTaskVisible] = useState(true);
   const [microTaskMinimized, setMicroTaskMinimized] = useState(false);
+  const [contextInsightsVisible, setContextInsightsVisible] = useState(false);
+  const [capacityForecastVisible, setCapacityForecastVisible] = useState(true);
+  const [adaptiveControlsVisible, setAdaptiveControlsVisible] = useState(false);
+
+  // Performance tracking
   const [performanceTracking, setPerformanceTracking] = useState<{
     taskStartTime: Date | null;
     completionCount: number;
     skipCount: number;
+    contextSwitchCount: number;
+    accuracyScore: number;
   }>({
     taskStartTime: null,
     completionCount: 0,
     skipCount: 0,
+    contextSwitchCount: 0,
+    accuracyScore: 0.75,
   });
 
+  // Adaptive UI state
   const [adaptiveColors, setAdaptiveColors] = useState<{
     primary: string;
+    secondary: string;
     background: string;
     text: string;
+    accent: string;
   } | null>(null);
+
   const [error, setError] = useState<string | null>(null);
 
+  // Contexts and services
   const { focusState, startFocusSession } = useFocus();
+  const { startPreset } = useSoundscape();
 
-  // Services
-  const crossModuleBridge = CrossModuleBridgeService.getInstance();
+  // Service instances (memoized)
+  const mindMapGenerator = useMemo(() => MindMapGenerator.getInstance(), []);
+  const storage = useMemo(() => HybridStorageService.getInstance(), []);
+  const CAE = useMemo(() => CognitiveAuraService.getInstance(), []);
+  const contextSensorService = useMemo(
+    () => ContextSensorService.getInstance(),
+    [],
+  );
+  const PhysicsEngine = useMemo(() => NeuralPhysicsEngine.getInstance(), []);
+  const crossModuleBridge = useMemo(
+    () => CrossModuleBridgeService.getInstance(),
+    [],
+  );
+
+  // Screen dimensions
   const { width, height } = Dimensions.get('window');
   const themeColors = colors[theme];
 
-  // Memoize services
-  const mindMapGenerator = useMemo(() => MindMapGenerator.getInstance(), []);
-  const storage = useMemo(() => HybridStorageService.getInstance(), []);
+  // Animation values
+  const contextTransitionProgress = useSharedValue(0);
+  const capacityForecastScale = useSharedValue(1);
+  const microTaskPulse = useSharedValue(1);
 
-  // Timer ref for automatic aura updates
+  // Timers and refs
   const auraUpdateTimer = useRef<NodeJS.Timeout | null>(null);
+  const contextUpdateTimer = useRef<NodeJS.Timeout | null>(null);
+  const performanceTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // Get current view mode configuration
+  // ==================== COMPUTED VALUES ====================
+
   const currentViewMode = useMemo(
-    () => VIEW_MODES.find((mode) => mode.id === viewMode) || VIEW_MODES[0],
+    () => _VIEW_MODES.find((mode) => mode.id === viewMode) || _VIEW_MODES[0],
     [viewMode],
   );
 
-  /**
-   * Phase 3 Enhancement: View Mode Analytics
-   */
-  const viewModeAnalytics = useMemo(() => {
-    if (!neuralGraph) return null;
+  // Map viewMode to supported NeuralMindMap view modes
+  const effectiveViewMode = useMemo(() => {
+    if (viewMode === 'context_adaptive') {
+      return getOptimalViewModeForContext(auraState?.context || 'DeepFocus') as
+        | 'clusters'
+        | 'paths'
+        | 'network'
+        | 'health';
+    }
+    if (viewMode === 'forecast') {
+      return 'network'; // Default for forecast mode
+    }
+    return viewMode as 'clusters' | 'paths' | 'network' | 'health';
+  }, [viewMode, auraState?.context]);
 
-    const analytics = {
-      network: {
-        totalNodes: neuralGraph.nodes.length,
-        totalLinks: neuralGraph.links.length,
-        density: neuralGraph.metrics?.density || 0,
-        insight: `${neuralGraph.nodes.length} concepts connected`,
-      },
-      health: {
-        overallHealth: neuralGraph.healthMetrics?.overallHealth || 0,
-        criticalNodes: neuralGraph.healthMetrics?.criticalNodes.length || 0,
-        healthyNodes: neuralGraph.healthMetrics?.healthyNodes.length || 0,
-        insight: `${
-          neuralGraph.healthMetrics?.criticalNodes.length || 0
-        } critical concepts need attention`,
-      },
-      clusters: {
-        clusterCount: neuralGraph.clusters?.length || 0,
-        averageClusterHealth:
-          neuralGraph.clusters && neuralGraph.clusters.length > 0
-            ? neuralGraph.clusters.reduce((sum, c) => sum + c.health, 0) /
-              neuralGraph.clusters.length
-            : 0,
-        weakestCluster:
-          neuralGraph.clusters?.sort((a, b) => a.health - b.health)[0]?.name ||
-          'None',
-        insight: `${
-          neuralGraph.clusters?.length || 0
-        } knowledge domains identified`,
-      },
-      paths: {
-        pathCount: neuralGraph.learningPaths?.length || 0,
-        shortestPath:
-          neuralGraph.learningPaths && neuralGraph.learningPaths.length > 0
-            ? neuralGraph.learningPaths.reduce(
-                (min, path) =>
-                  path.estimatedTimeMinutes < min
-                    ? path.estimatedTimeMinutes
-                    : min,
-                Infinity,
-              )
-            : 0,
-        averagePathTime:
-          neuralGraph.learningPaths && neuralGraph.learningPaths.length > 0
-            ? neuralGraph.learningPaths.reduce(
-                (sum, p) => sum + p.estimatedTimeMinutes,
-                0,
-              ) / neuralGraph.learningPaths.length
-            : 0,
-        insight: `${
-          neuralGraph.learningPaths?.length || 0
-        } optimal learning sequences available`,
-      },
-    };
+  const contextColor = useMemo(() => {
+    if (!auraState) return themeColors.primary;
+    return COGNITIVE_CONTEXT_COLORS[auraState.context] || themeColors.primary;
+  }, [auraState, themeColors.primary]);
 
-    return analytics[viewMode] || analytics.network;
-  }, [neuralGraph, viewMode]);
+  const isContextOptimized = useMemo(() => {
+    if (!auraState) return false;
+    return currentViewMode.contextOptimized.includes(auraState.context);
+  }, [currentViewMode, auraState]);
 
-  // Initialize screen with CAE
+  const adaptiveRecommendations = useMemo(() => {
+    if (!auraState || !contextSnapshot) return [];
+
+    const recommendations: string[] = [];
+
+    // Context-specific recommendations
+    switch (auraState.context) {
+      case 'DeepFocus':
+        if (contextSnapshot.locationContext.distractionRisk === 'high') {
+          recommendations.push(
+            'Consider finding a quieter environment for optimal deep focus',
+          );
+        }
+        if (auraState.capacityForecast.optimalWindowRemaining < 30) {
+          recommendations.push(
+            `Deep focus window ending in ${auraState.capacityForecast.optimalWindowRemaining} minutes`,
+          );
+        }
+        break;
+
+      case 'CreativeFlow':
+        recommendations.push(
+          'Perfect time for conceptual exploration and creative connections',
+        );
+        if (viewMode !== 'network') {
+          recommendations.push('Try Network view to see creative connections');
+        }
+        break;
+
+      case 'FragmentedAttention':
+        recommendations.push('Focus on quick wins and review items');
+        if (auraState.capacityForecast.nextOptimalWindow) {
+          const timeToNext = Math.ceil(
+            (auraState.capacityForecast.nextOptimalWindow.getTime() -
+              Date.now()) /
+              (1000 * 60),
+          );
+          recommendations.push(
+            `Optimal learning window in ${timeToNext} minutes`,
+          );
+        }
+        break;
+
+      case 'CognitiveOverload':
+        recommendations.push('Take breaks and focus on familiar concepts');
+        if (contextSnapshot.digitalBodyLanguage.state === 'overwhelmed') {
+          recommendations.push('Consider taking a longer break to recover');
+        }
+        break;
+    }
+
+    // Environmental recommendations
+    if (contextSnapshot.overallOptimality < 0.6) {
+      recommendations.push(
+        `Environment optimality: ${(
+          contextSnapshot.overallOptimality * 100
+        ).toFixed(0)}% - consider optimizing`,
+      );
+    }
+
+    return recommendations;
+  }, [auraState, contextSnapshot, viewMode]);
+
+  // ====================  INITIALIZATION ====================
+
   useEffect(() => {
     let mounted = true;
 
-    const initialize = async () => {
+    const initializeSystem = async () => {
       try {
-        setLoadingState(prev => ({ ...prev, isGenerating: true, isGeneratingAura: true }));
+        console.log('🚀 Initializing  Neural Mind Map with CAE 2.0...');
 
-        // Initialize in parallel
-        await Promise.all([
-          generateNeuralGraph(),
-          calculateCognitiveLoad(),
-          generateAuraState(),
-        ]);
+        setLoadingState((prev) => ({
+          ...prev,
+          isGenerating: true,
+          isContextSensing: true,
+          stage: 'Starting context sensing...',
+        }));
 
-        // Set up automatic aura updates every 60 seconds
+        // Step 1: Initialize context sensing
+        await contextSensorService.startMonitoring(1); // 1-minute intervals for high responsiveness
+
+        setLoadingState((prev) => ({
+          ...prev,
+          isGenerating: true,
+          stage: 'Generating neural graph...',
+        }));
+
+        // Step 2: Generate neural graph
+        await generateNeuralGraph();
+
+        setLoadingState((prev) => ({
+          ...prev,
+          isGeneratingAura: true,
+          stage: 'Initializing Cognitive Aura Engine 2.0...',
+        }));
+
+        // Step 3: Initialize CAE 2.0
+        await initializeCognitiveAuraEngine();
+
+        setLoadingState((prev) => ({
+          ...prev,
+          isForecasting: true,
+          stage: 'Setting up predictive intelligence...',
+        }));
+
+        // Step 4: Set up physics engine integration
+        await initializePhysicsIntegration();
+
+        // Step 5: Set up real-time monitoring
         if (mounted) {
-          auraUpdateTimer.current = setInterval(() => {
-            generateAuraState();
-          }, 60000);
+          setupMonitoring();
+          setLoadingState((prev) => ({
+            ...prev,
+            isGenerating: false,
+            isContextSensing: false,
+            isGeneratingAura: false,
+            isForecasting: false,
+            stage: 'Ready',
+          }));
         }
 
+        console.log('✅  Neural Mind Map system initialized successfully');
       } catch (error) {
         if (mounted) {
-          console.error('Initialization error:', error);
-          setError('Failed to initialize neural map with cognitive aura');
+          console.error('❌  system initialization failed:', error);
+          setError('Failed to initialize  learning system');
+          setLoadingState((prev) => ({
+            ...prev,
+            isGenerating: false,
+            isContextSensing: false,
+            isGeneratingAura: false,
+            isForecasting: false,
+            stage: 'Error',
+          }));
         }
       }
     };
 
-    initialize();
+    initializeSystem();
 
     return () => {
       mounted = false;
-      if (auraUpdateTimer.current) {
-        clearInterval(auraUpdateTimer.current);
-      }
+      cleanup();
     };
   }, []);
 
-  // Health integration useEffect (enhanced for CAE)
-  useEffect(() => {
-    const updateHealthIntegration = async () => {
-      try {
-        const healthData = await crossModuleBridge.getHealthMetrics('currentUser');
-        if (healthData) {
-          const healthScore = healthData.overallHealth || 0.8;
-          const circadianPhase = healthData.circadianPhase || 'optimal';
-
-          let loadFactor = 1.0;
-          if (healthScore < 0.6) loadFactor = 0.7;
-          else if (healthScore > 0.9) loadFactor = 1.2;
-
-          if (circadianPhase === 'low') loadFactor *= 0.8;
-          else if (circadianPhase === 'peak') loadFactor *= 1.1;
-
-          setCognitiveLoadFactor(loadFactor);
-
-          const adaptiveColors = {
-            primary: healthScore < 0.5 ? '#EF4444' : healthScore < 0.7 ? '#F59E0B' : '#10B981',
-            background: healthScore < 0.5 ? '#FEF2F2' : healthScore < 0.7 ? '#FFFBEB' : '#F0FDF4',
-            text: healthScore < 0.5 ? '#991B1B' : healthScore < 0.7 ? '#92400E' : '#166534',
-          };
-          setAdaptiveColors(adaptiveColors);
-
-          // Regenerate aura state when health changes significantly
-          const currentAura = auraState;
-          if (currentAura && Math.abs(healthScore - 0.8) > 0.2) {
-            console.log('🏥 Health change detected, updating aura state');
-            generateAuraState();
-          }
-        }
-      } catch (error) {
-        console.error('Health integration error:', error);
-        setCognitiveLoadFactor(1.0);
-        setAdaptiveColors(null);
-      }
-    };
-
-    updateHealthIntegration();
-    const healthInterval = setInterval(updateHealthIntegration, 5 * 60 * 1000);
-    return () => clearInterval(healthInterval);
-  }, [crossModuleBridge, auraState]);
+  // ====================  CORE METHODS ====================
 
   /**
-   * CAE Integration: Generate aura state
-   */
-  const generateAuraState = useCallback(async (forceRefresh = false) => {
-    try {
-      setLoadingState(prev => ({ ...prev, isGeneratingAura: true }));
-
-      const newAuraState = await cognitiveAuraService.getAuraState(forceRefresh);
-      setAuraState(newAuraState);
-
-      console.log('🔮 Cognitive Aura State updated:', {
-        context: newAuraState.context,
-        score: (newAuraState.compositeCognitiveScore * 100).toFixed(1) + '%',
-        targetNode: newAuraState.targetNode?.label || 'None',
-        confidence: (newAuraState.confidence * 100).toFixed(0) + '%'
-      });
-
-      // Update cognitive load based on aura state
-      setCognitiveLoad(newAuraState.compositeCognitiveScore);
-
-    } catch (error) {
-      console.error('❌ Failed to generate aura state:', error);
-      setError('Cognitive aura analysis failed');
-    } finally {
-      setLoadingState(prev => ({ ...prev, isGeneratingAura: false }));
-    }
-  }, []);
-
-  /**
-   * Enhanced neural graph generation with CAE integration
+   * Generate neural graph with  error handling
    */
   const generateNeuralGraph = useCallback(
     async (forceRefresh = false) => {
@@ -395,694 +522,1340 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         const graph = await mindMapGenerator.generateNeuralGraph(forceRefresh);
         setNeuralGraph(graph);
 
-        // Trigger aura state update after graph update
+        // Integrate with physics engine
         if (graph && graph.nodes.length > 0) {
-          generateAuraState(true);
+          const nodeData = graph.nodes.map((node) => ({
+            id: node.id,
+            label: node.label,
+            cognitiveLoad: node.cognitiveLoad || Math.random(),
+            masteryLevel: node.masteryLevel || Math.random(),
+            size: 12 + (node.cognitiveLoad || 0.5) * 12,
+          }));
+
+          const linkData = graph.links.map((link) => ({
+            source:
+              typeof link.source === 'string' ? link.source : link.source.id,
+            target:
+              typeof link.target === 'string' ? link.target : link.target.id,
+            strength: link.strength || 0.5,
+            type: link.type || 'similarity',
+          }));
+
+          PhysicsEngine.setGraphData(nodeData, linkData);
         }
 
-        console.log('🧠 Phase 3 Neural Graph Generated:', {
+        console.log('🧠  Neural Graph Generated:', {
           nodes: graph.nodes.length,
           links: graph.links.length,
           health: graph.knowledgeHealth,
           clusters: graph.clusters?.length || 0,
           paths: graph.learningPaths?.length || 0,
         });
-
       } catch (error: unknown) {
-        console.error('Error generating neural graph:', error);
-        setError((error as Error)?.message || 'Failed to generate brain map');
+        console.error('❌  neural graph generation failed:', error);
+        setError((error as Error)?.message || 'Failed to generate  brain map');
+
         Alert.alert(
-          'Neural Map Error',
-          'Failed to generate your brain map. Make sure you have some learning data first.',
+          ' Neural Map Error',
+          'Failed to generate your  brain map. The system will fall back to basic mode.',
           [
             {
               text: 'Go to Flashcards',
               onPress: () => onNavigate('flashcards'),
             },
-            { text: 'Try Again', onPress: () => generateNeuralGraph(true) },
-            { text: 'Cancel', style: 'cancel' },
+            { text: 'Retry ', onPress: () => generateNeuralGraph(true) },
+            { text: 'Continue Basic', style: 'cancel' },
           ],
         );
       } finally {
         setLoadingState((prev) => ({ ...prev, isGenerating: false }));
       }
     },
-    [mindMapGenerator, onNavigate, generateAuraState],
+    [mindMapGenerator, onNavigate, PhysicsEngine],
   );
 
   /**
-   * Calculate current cognitive load with health integration
+   * Initialize Cognitive Aura Engine 2.0
    */
-  const calculateCognitiveLoad = useCallback(async () => {
+  const initializeCognitiveAuraEngine = useCallback(async () => {
     try {
-      setLoadingState((prev) => ({ ...prev, isCalculating: true }));
+      console.log('🔮 Initializing  Cognitive Aura Engine...');
 
-      const [flashcards, tasks, sessions] = await Promise.all([
-        storage.getFlashcards(),
-        storage.getTasks(),
-        storage.getStudySessions(),
-      ]);
+      // Generate initial  aura state
+      const initialAuraState = await CAE.getAuraState(true);
+      setAuraState(initialAuraState);
 
-      const dueFlashcards = flashcards.filter(
-        (card) => new Date(card.nextReview) <= new Date(),
-      ).length;
+      // Set up aura state listeners
+      CAE.on('_aura_updated', (auraState: AuraState) => {
+        console.log(
+          `🧠  aura updated: ${auraState.context} (${(
+            auraState.compositeCognitiveScore * 100
+          ).toFixed(1)}%)`,
+        );
+        setAuraState(auraState);
+        updateAdaptiveUI(auraState);
+        triggerContextTransitionAnimation(auraState.context);
 
-      const urgentTasks = tasks.filter(
-        (task) => !task.isCompleted && task.priority >= 3,
-      ).length;
+        // Track context switches
+        setPerformanceTracking((prev) => ({
+          ...prev,
+          contextSwitchCount: prev.contextSwitchCount + 1,
+        }));
+      });
 
-      const recentFailures = sessions
-        .filter((s) => s.type === 'flashcards' && !s.completed)
-        .filter(
-          (s) =>
-            s.startTime !== undefined &&
-            Date.now() - s.startTime.getTime() < 24 * 60 * 60 * 1000,
-        ).length;
+      CAE.on('context_change', (context: AuraContext) => {
+        console.log(`🔄 Context changed to: ${context}`);
+        updateViewModeForContext(context);
+      });
 
-      const baseLoad = Math.min(
-        1,
-        (dueFlashcards * 0.1 + urgentTasks * 0.2) / 10,
+      // Set up context sensor listeners
+      contextSensorService.on(
+        'context_updated',
+        (snapshot: ContextSnapshot) => {
+          setContextSnapshot(snapshot);
+          updateEnvironmentalUI(snapshot);
+        },
       );
-      const stressLoad = Math.min(0.3, recentFailures * 0.05);
-      const totalLoad = Math.min(1, baseLoad + stressLoad);
 
-      // Apply health adjustment factor
-      const healthAdjustedLoad = totalLoad * cognitiveLoadFactor;
-      setCognitiveLoad(healthAdjustedLoad);
+      contextSensorService.on('dbl_updated', (dbl: DigitalBodyLanguage) => {
+        // Update UI based on digital body language changes
+        updateDBLIndicators(dbl);
+      });
 
+      console.log('✅  Cognitive Aura Engine initialized');
     } catch (error) {
-      console.error('Error calculating cognitive load:', error);
-      setCognitiveLoad(0.5);
-    } finally {
-      setLoadingState((prev) => ({ ...prev, isCalculating: false }));
+      console.error('❌ CAE 2.0 initialization failed:', error);
+      throw error;
     }
-  }, [storage, cognitiveLoadFactor]);
+  }, [CAE, contextSensorService]);
 
   /**
-   * CAE Integration: Handle micro-task completion
+   * Initialize physics engine integration
    */
-  const handleMicroTaskComplete = useCallback(async (completed: boolean, timeSpent: number) => {
+  const initializePhysicsIntegration = useCallback(async () => {
     try {
-      // Record performance metrics
-      const performanceMetrics = {
-        accuracy: completed ? 1.0 : 0.0,
-        taskCompletion: completed ? 1.0 : 0.0,
-        timeToComplete: timeSpent / 1000, // Convert to seconds
-        userSatisfaction: 3.0, // Default neutral rating
-        contextRelevance: 0.8, // Assume good relevance for now
-      };
+      console.log('🎯 Initializing  Physics Integration...');
 
-      await cognitiveAuraService.recordPerformance(performanceMetrics);
+      // Set up physics engine listeners
+      PhysicsEngine.on('physics_updated', (update: any) => {
+        console.log(
+          `🎯 Physics updated: ${update.context} (Load: ${(
+            update.cognitiveLoad * 100
+          ).toFixed(1)}%)`,
+        );
+      });
 
-      // Update local tracking
-      setPerformanceTracking(prev => ({
-        ...prev,
-        taskStartTime: null,
-        completionCount: completed ? prev.completionCount + 1 : prev.completionCount,
-        skipCount: !completed ? prev.skipCount + 1 : prev.skipCount,
-      }));
+      PhysicsEngine.on('transition_complete', (event: any) => {
+        console.log(`✅ Physics transition complete: ${event.context}`);
+      });
 
-      // Generate new aura state
-      await generateAuraState(true);
+      PhysicsEngine.on('node_interaction', (event: any) => {
+        // Handle node interactions
+        handleNodeInteraction(event.nodeId, event.type);
+      });
 
-      console.log(`✅ Micro-task ${completed ? 'completed' : 'skipped'} in ${(timeSpent / 1000).toFixed(1)}s`);
+      // Start physics simulation
+      PhysicsEngine.startSimulation();
 
+      // Get initial physics state
+      const initialPhysicsState = PhysicsEngine.getPhysicsState();
+      setPhysicsState(initialPhysicsState);
+
+      console.log('✅  Physics Integration initialized');
     } catch (error) {
-      console.error('❌ Error handling micro-task completion:', error);
+      console.error('❌ Physics integration initialization failed:', error);
+      throw error;
     }
-  }, [generateAuraState]);
+  }, [PhysicsEngine]);
 
   /**
-   * CAE Integration: Handle micro-task skip
+   * Set up  monitoring systems
    */
-  const handleMicroTaskSkip = useCallback(async () => {
-    try {
-      await generateAuraState(true);
-      console.log('⏭️ Micro-task skipped, generating new task');
-    } catch (error) {
-      console.error('❌ Error handling micro-task skip:', error);
-    }
-  }, [generateAuraState]);
+  const setupMonitoring = useCallback(() => {
+    //  aura state updates (every 90 seconds for balance)
+    auraUpdateTimer.current = setInterval(async () => {
+      try {
+        const freshAuraState = await CAE.getAuraState();
+
+        // Update physics engine with new aura state
+        await PhysicsEngine.updateFromAuraState(freshAuraState);
+      } catch (error) {
+        console.warn('⚠️ Periodic aura update failed:', error);
+      }
+    }, 90000); // 90 seconds
+
+    // Context monitoring (every 30 seconds for responsiveness)
+    contextUpdateTimer.current = setInterval(async () => {
+      try {
+        const currentContext = await contextSensorService.getCurrentContext();
+
+        // Check for significant context changes
+        if (
+          contextSnapshot &&
+          isSignificantContextChange(currentContext, contextSnapshot)
+        ) {
+          console.log(
+            '🌍 Significant context change detected, refreshing aura state',
+          );
+          await CAE.getAuraState(true);
+        }
+      } catch (error) {
+        console.warn('⚠️ Context monitoring failed:', error);
+      }
+    }, 30000); // 30 seconds
+
+    // Performance monitoring (every 10 seconds)
+    performanceTimer.current = setInterval(() => {
+      updatePerformanceMetrics();
+    }, 10000); // 10 seconds
+
+    console.log('📊  monitoring systems active');
+  }, [CAE, contextSensorService, PhysicsEngine, contextSnapshot]);
 
   /**
-   * Enhanced node press handler with CAE integration
+   * Update adaptive UI based on aura state
+   */
+  const updateAdaptiveUI = useCallback(
+    (auraState: AuraState) => {
+      const contextColor = COGNITIVE_CONTEXT_COLORS[auraState.context];
+
+      // Update adaptive color scheme
+      setAdaptiveColors({
+        primary: contextColor,
+        secondary: adjustColorBrightness(contextColor, 20),
+        background: adjustColorBrightness(contextColor, -80),
+        text: adjustColorBrightness(contextColor, 40),
+        accent: adjustColorBrightness(contextColor, 60),
+      });
+
+      // Update capacity forecast widget
+      capacityForecastScale.value = withSpring(
+        auraState.capacityForecast.mentalClarityScore > 0.7
+          ? 1.1
+          : auraState.capacityForecast.mentalClarityScore < 0.4
+          ? 0.9
+          : 1.0,
+        { damping: 15, stiffness: 150 },
+      );
+
+      // Update micro-task pulse based on urgency
+      const urgency =
+        auraState.context === 'CognitiveOverload'
+          ? 0.7
+          : auraState.context === 'DeepFocus'
+          ? 1.2
+          : 1.0;
+
+      microTaskPulse.value = withTiming(urgency, { duration: 1000 });
+    },
+    [capacityForecastScale, microTaskPulse],
+  );
+
+  /**
+   * Update environmental UI indicators
+   */
+  const updateEnvironmentalUI = useCallback((snapshot: ContextSnapshot) => {
+    // Could update environment-specific UI elements
+    // For now, just log the update
+    console.log(
+      `🌍 Environmental UI updated: ${
+        snapshot.locationContext.environment
+      }, Optimality: ${(snapshot.overallOptimality * 100).toFixed(1)}%`,
+    );
+  }, []);
+
+  /**
+   * Update digital body language indicators
+   */
+  const updateDBLIndicators = useCallback((dbl: DigitalBodyLanguage) => {
+    // Could update DBL-specific UI indicators
+    console.log(
+      `📱 DBL updated: ${dbl.state}, Load: ${(
+        dbl.cognitiveLoadIndicator * 100
+      ).toFixed(1)}%`,
+    );
+  }, []);
+
+  /**
+   * Trigger context transition animation
+   */
+  const triggerContextTransitionAnimation = useCallback(
+    (newContext: AuraContext) => {
+      contextTransitionProgress.value = 0;
+      contextTransitionProgress.value = withTiming(
+        1,
+        { duration: 2000 },
+        (finished) => {
+          if (finished) {
+            runOnJS(() => {
+              console.log(
+                `✅ Context transition animation complete: ${newContext}`,
+              );
+            })();
+          }
+        },
+      );
+    },
+    [contextTransitionProgress],
+  );
+
+  /**
+   * Update view mode based on context
+   */
+  const updateViewModeForContext = useCallback(
+    (context: AuraContext) => {
+      // Auto-switch to optimal view mode for context if in adaptive mode
+      if (viewMode === 'context_adaptive') {
+        const optimalMode = getOptimalViewModeForContext(context);
+        if (optimalMode && optimalMode !== viewMode) {
+          console.log(
+            `🔄 Auto-switching to optimal view mode: ${optimalMode} for ${context}`,
+          );
+          setViewMode(optimalMode);
+        }
+      }
+    },
+    [viewMode],
+  );
+
+  /**
+   * Get optimal view mode for context
+   */
+  const getOptimalViewModeForContext = useCallback(
+    (context: AuraContext): string => {
+      switch (context) {
+        case 'DeepFocus':
+          return 'clusters'; // Focused clustering for deep work
+        case 'CreativeFlow':
+          return 'network'; // Full network for creative exploration
+        case 'FragmentedAttention':
+          return 'paths'; // Clear paths for fragmented attention
+        case 'CognitiveOverload':
+          return 'health'; // Health view for recovery guidance
+        default:
+          return 'context_adaptive';
+      }
+    },
+    [],
+  );
+
+  // ====================  INTERACTION HANDLERS ====================
+
+  /**
+   * Handle  node interaction
+   */
+  const handleNodeInteraction = useCallback(
+    (node: NeuralNode, interactionType: 'hover' | 'click' | 'drag') => {
+      // Record interaction with context sensor
+      contextSensorService.recordInteraction({
+        timestamp: new Date(),
+        type: interactionType === 'click' ? 'touch' : 'scroll',
+        metadata: {
+          nodeId: node.id,
+          interactionType,
+          currentContext: auraState?.context,
+          cognitiveLoad: auraState?.compositeCognitiveScore,
+        },
+      });
+
+      if (interactionType === 'click') {
+        setSelectedNode(node);
+        generateNodeDetail(node);
+      }
+
+      console.log(`🎯  node interaction: ${interactionType} on ${node.label}`);
+    },
+    [contextSensorService, auraState],
+  );
+
+  /**
+   * Handle node press (wrapper for NeuralMindMap onNodePress)
    */
   const handleNodePress = useCallback(
     (node: NeuralNode) => {
-      setSelectedNode(node);
-      generateNodeDetail(node);
-
-      // CAE Integration: Check if this is the target node
-      if (auraState?.targetNode?.id === node.id) {
-        console.log('🎯 Target node selected! Optimal learning opportunity.');
-
-        // Optional: Start focus session for target node
-        if (startFocusSession && node.id && node.label) {
-          startFocusSession(node.id, node.label, 'node');
-        }
-      }
-
-      console.log(`Node selected in ${viewMode} mode:`, {
-        id: node.id,
-        type: node.type,
-        health: node.healthScore,
-        mastery: node.masteryLevel,
-        isActive: node.isActive,
-        isTarget: auraState?.targetNode?.id === node.id,
-        mode: viewMode,
-      });
+      handleNodeInteraction(node, 'click');
     },
-    [viewMode, auraState, startFocusSession],
+    [handleNodeInteraction],
   );
 
-  // ... [Previous methods remain the same: generateNodeDetail, handleViewModeChange, etc.]
-
   /**
-   * Enhanced node detail generation with CAE insights
+   * Generate  node detail with context awareness
    */
   const generateNodeDetail = useCallback(
-    (node: NeuralNode) => {
-      if (!neuralGraph) return;
-
+    async (node: NeuralNode) => {
       try {
-        const connections = neuralGraph.links.filter(
-          (link) => link.source === node.id || link.target === node.id,
-        ).length;
+        setLoadingState((prev) => ({ ...prev, isCalculating: true }));
 
-        const centrality =
-          connections / Math.max(1, neuralGraph.nodes.length - 1);
+        const connections =
+          neuralGraph?.links.filter(
+            (link) => link.source === node.id || link.target === node.id,
+          ).length || 0;
 
-        const networkPosition: NodeDetail['networkPosition'] =
-          centrality > 0.7
-            ? 'central'
-            : centrality > 0.3
-            ? 'bridge'
-            : 'peripheral';
+        // Calculate  metrics
+        const cognitiveLoad = node.cognitiveLoad ?? 0.5;
+        const masteryLevel = node.masteryLevel ?? 0.5;
 
-        const recommendations = generateEnhancedRecommendations(
+        // Generate context relevance scores
+        const contextRelevance: Record<AuraContext, number> = {
+          DeepFocus: Math.max(0, cognitiveLoad - masteryLevel + 0.5),
+          CreativeFlow: Math.max(0, connections / 10 + Math.random() * 0.3),
+          FragmentedAttention: Math.max(0, masteryLevel - cognitiveLoad + 0.3),
+          CognitiveOverload: Math.max(0, 1 - cognitiveLoad),
+        };
+
+        // Determine optimal contexts
+        const optimalContexts = (
+          Object.entries(contextRelevance) as [AuraContext, number][]
+        )
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 2)
+          .map(([context]) => context);
+
+        // Generate context-aware recommendations
+        const recommendations = generateContextAwareRecommendations(
           node,
-          networkPosition,
+          contextRelevance,
+          auraState?.context,
+        );
+        const healthInsights = generateHealthInsights(node, contextRelevance);
+        const pathRecommendations = generatePathRecommendations(
+          node,
+          neuralGraph,
         );
 
-        const healthInsights = generateHealthInsights(node);
-        const pathRecommendations = generatePathRecommendations(node);
-
-        // CAE Enhancement: Add aura-specific insights
-        const auraInsights = generateAuraInsights(node);
-
-        setNodeDetail({
+        const Detail: NodeDetail = {
           node,
           connections,
-          centrality,
-          recommendations: [...recommendations, ...auraInsights],
-          networkPosition,
+          centrality: connections / Math.max(1, neuralGraph?.nodes.length || 1),
+          recommendations,
+          networkPosition: determineNetworkPosition(node, connections),
           healthInsights,
           pathRecommendations,
-        });
+          contextRelevance,
+          cognitiveLoad,
+          masteryLevel,
+          optimalContexts,
+        };
 
+        setNodeDetail(Detail);
+        setNodeDetailVisible(true);
+
+        console.log(`📊  node detail generated for: ${node.label}`);
       } catch (error) {
-        console.error('Error generating node detail:', error);
+        console.error('❌  node detail generation failed:', error);
+      } finally {
+        setLoadingState((prev) => ({ ...prev, isCalculating: false }));
       }
     },
     [neuralGraph, auraState],
   );
 
   /**
-   * Generate aura-specific insights for node detail
+   * Handle  micro-task completion
    */
-  const generateAuraInsights = useCallback((node: NeuralNode): string[] => {
-    if (!auraState) return [];
+  const handleMicroTaskComplete = useCallback(
+    async (completed: boolean, timeSpent: number, satisfaction: number = 3) => {
+      try {
+        if (!auraState) return;
 
-    const insights: string[] = [];
+        // Record  performance metrics
+        const Metrics = {
+          accuracy: completed ? 1.0 : 0.0,
+          taskCompletion: completed ? 1.0 : 0.0,
+          timeToComplete: timeSpent / 1000, // Convert to seconds
+          userSatisfaction: satisfaction,
+          contextRelevance:
+            auraState.environmentalContext?.contextQualityScore ?? 0,
+          environmentOptimality: auraState.environmentOptimality ?? 0,
+          predictiveAccuracy: auraState.predictionAccuracy ?? 0,
+          adaptationEffectiveness: auraState.biologicalAlignment ?? 0,
+        };
 
-    // Check if this is the current target node
-    if (auraState.targetNode?.id === node.id) {
-      insights.push(`🎯 This is your current cognitive target (${auraState.targetNodePriority})`);
-      insights.push(`💡 Recommended action: ${auraState.microTask.substring(0, 100)}...`);
-    }
+        await CAE.recordPerformance(Metrics);
 
-    // Context-specific insights
-    if (auraState.context === 'OVERLOAD' && node.cognitiveLoad > 0.7) {
-      insights.push('⚡ High cognitive load detected - consider breaking this into smaller parts');
-    } else if (auraState.context === 'RECOVERY' && node.healthScore && node.healthScore < 0.3) {
-      insights.push('🏥 This concept needs gentle rehabilitation - avoid intensive study');
-    } else if (auraState.context === 'FOCUS' && node.masteryLevel < 0.5) {
-      insights.push('🚀 Perfect focus window for mastering this concept');
-    }
+        // Update local tracking
+        setPerformanceTracking((prev) => ({
+          ...prev,
+          taskStartTime: null,
+          completionCount: completed
+            ? prev.completionCount + 1
+            : prev.completionCount,
+          skipCount: !completed ? prev.skipCount + 1 : prev.skipCount,
+          accuracyScore:
+            prev.accuracyScore * 0.8 + (completed ? 1.0 : 0.0) * 0.2, // Moving average
+        }));
 
-    return insights;
-  }, [auraState]);
+        // Generate new aura state
+        await CAE.refreshAuraState();
 
-  // Render loading state
-  const renderLoadingState = () => (
-    <ScreenContainer theme={theme} style={styles.container}>
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator
-          size="large"
-          color={adaptiveColors?.primary || themeColors.primary}
-        />
-        <Text style={[styles.loadingText, { color: themeColors.text }]}>
-          {loadingState.isGeneratingAura ?
-            'Analyzing cognitive aura...' :
-            'Generating neural map...'}
-        </Text>
-        {auraState && (
-          <Text style={[styles.loadingSubtext, { color: themeColors.textSecondary }]}>
-            Current context: {auraState.context}
-          </Text>
-        )}
-      </View>
-    </ScreenContainer>
+        console.log(
+          `✅  micro-task ${completed ? 'completed' : 'skipped'} in ${(
+            timeSpent / 1000
+          ).toFixed(1)}s`,
+        );
+      } catch (error) {
+        console.error('❌  micro-task completion handling failed:', error);
+      }
+    },
+    [auraState, CAE],
   );
 
-  // Render empty state
-  const renderEmptyState = () => (
-    <ScreenContainer theme={theme} style={styles.container}>
-      <View style={styles.emptyContainer}>
-        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>
-          Ready for Cognitive Analysis
-        </Text>
-        <Text style={[styles.emptySubtitle, { color: themeColors.textSecondary }]}>
-          Add some flashcards or study materials to begin building your neural network
-          and unlock the power of cognitive aura analysis.
-        </Text>
-        <Button
-          title="Add Learning Content"
-          onPress={() => onNavigate('flashcards')}
-          variant="primary"
-          theme={theme}
-          style={styles.emptyButton}
-        />
-      </View>
-    </ScreenContainer>
+  /**
+   * Handle view mode change with context awareness
+   */
+  const handleViewModeChange = useCallback(
+    (newMode: string) => {
+      const mode = _VIEW_MODES.find((m) => m.id === newMode);
+      if (!mode) return;
+
+      // Check if mode is optimized for current context
+      if (auraState && !mode.contextOptimized.includes(auraState.context)) {
+        Alert.alert(
+          'View Mode Context Mismatch',
+          `${mode.name} is not optimized for your current ${auraState.context} state. Continue anyway?`,
+          [
+            {
+              text: 'Use Adaptive Mode',
+              onPress: () => setViewMode('context_adaptive'),
+            },
+            { text: 'Continue', onPress: () => setViewMode(newMode) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+      } else {
+        setViewMode(newMode);
+      }
+
+      console.log(`🔄 View mode changed to: ${newMode}`);
+    },
+    [auraState],
   );
 
-  // Loading state
-  if (loadingState.isGenerating && !neuralGraph) {
-    return renderLoadingState();
-  }
+  // ==================== UTILITY FUNCTIONS ====================
 
-  // Empty state
-  if (!neuralGraph || neuralGraph.nodes.length === 0) {
-    return renderEmptyState();
+  const isSignificantContextChange = useCallback(
+    (newSnapshot: ContextSnapshot, oldSnapshot: ContextSnapshot): boolean => {
+      // Check for significant changes in context
+      if (
+        newSnapshot.digitalBodyLanguage.state !==
+        oldSnapshot.digitalBodyLanguage.state
+      )
+        return true;
+
+      const loadChange = Math.abs(
+        newSnapshot.digitalBodyLanguage.cognitiveLoadIndicator -
+          oldSnapshot.digitalBodyLanguage.cognitiveLoadIndicator,
+      );
+      if (loadChange > 0.3) return true;
+
+      const optimalityChange = Math.abs(
+        newSnapshot.overallOptimality - oldSnapshot.overallOptimality,
+      );
+      if (optimalityChange > 0.2) return true;
+
+      return false;
+    },
+    [],
+  );
+
+  const adjustColorBrightness = useCallback(
+    (color: string, amount: number): string => {
+      // Simple color brightness adjustment
+      const hex = color.replace('#', '');
+      const r = Math.max(
+        0,
+        Math.min(255, parseInt(hex.substr(0, 2), 16) + amount),
+      );
+      const g = Math.max(
+        0,
+        Math.min(255, parseInt(hex.substr(2, 2), 16) + amount),
+      );
+      const b = Math.max(
+        0,
+        Math.min(255, parseInt(hex.substr(4, 2), 16) + amount),
+      );
+
+      return `#${r.toString(16).padStart(2, '0')}${g
+        .toString(16)
+        .padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    },
+    [],
+  );
+
+  const updatePerformanceMetrics = useCallback(() => {
+    // Update performance metrics
+    setPerformanceTracking((prev) => ({
+      ...prev,
+      // Add any periodic performance updates here
+    }));
+  }, []);
+
+  const generateContextAwareRecommendations = useCallback(
+    (
+      node: NeuralNode,
+      contextRelevance: Record<AuraContext, number>,
+      currentContext?: AuraContext,
+    ): string[] => {
+      const recommendations: string[] = [];
+
+      if (currentContext && contextRelevance[currentContext] > 0.7) {
+        recommendations.push(`Excellent choice for ${currentContext} context`);
+      } else if (currentContext && contextRelevance[currentContext] < 0.3) {
+        recommendations.push(
+          `Consider reviewing in ${
+            Object.entries(contextRelevance).sort(([, a], [, b]) => b - a)[0][0]
+          } context`,
+        );
+      }
+
+      // Add cognitive load recommendations
+      if (node.cognitiveLoad && node.cognitiveLoad > 0.8) {
+        recommendations.push('High complexity - break into smaller chunks');
+      } else if (node.cognitiveLoad && node.cognitiveLoad < 0.3) {
+        recommendations.push('Good for quick review sessions');
+      }
+
+      return recommendations;
+    },
+    [],
+  );
+
+  const generateHealthInsights = useCallback(
+    (
+      node: NeuralNode,
+      contextRelevance: Record<AuraContext, number>,
+    ): string[] => {
+      const insights: string[] = [];
+
+      if (node.masteryLevel && node.masteryLevel < 0.3) {
+        insights.push('Needs reinforcement - schedule regular reviews');
+      }
+
+      if (contextRelevance.CognitiveOverload > 0.6) {
+        insights.push(
+          'May contribute to cognitive overload - approach carefully',
+        );
+      }
+
+      return insights;
+    },
+    [],
+  );
+
+  const generatePathRecommendations = useCallback(
+    (node: NeuralNode, graph: NeuralGraph | null): string[] => {
+      const recommendations: string[] = [];
+
+      if (!graph) return recommendations;
+
+      // Find prerequisite nodes
+      const prerequisites = graph.links
+        .filter(
+          (link) => link.target === node.id && link.type === 'prerequisite',
+        )
+        .map((link) => graph.nodes.find((n) => n.id === link.source))
+        .filter(Boolean);
+
+      if (prerequisites.length > 0) {
+        recommendations.push(
+          `Review prerequisites: ${prerequisites
+            .map((p) => p?.label)
+            .join(', ')}`,
+        );
+      }
+
+      return recommendations;
+    },
+    [],
+  );
+
+  const determineNetworkPosition = useCallback(
+    (
+      node: NeuralNode,
+      connections: number,
+    ): 'central' | 'peripheral' | 'bridge' => {
+      if (connections > 5) return 'central';
+      if (connections < 2) return 'peripheral';
+      return 'bridge';
+    },
+    [],
+  );
+
+  const cleanup = useCallback(() => {
+    if (auraUpdateTimer.current) {
+      clearInterval(auraUpdateTimer.current);
+      auraUpdateTimer.current = null;
+    }
+
+    if (contextUpdateTimer.current) {
+      clearInterval(contextUpdateTimer.current);
+      contextUpdateTimer.current = null;
+    }
+
+    if (performanceTimer.current) {
+      clearInterval(performanceTimer.current);
+      performanceTimer.current = null;
+    }
+
+    // Dispose services
+    CAE.removeAllListeners();
+    contextSensorService.removeAllListeners();
+    PhysicsEngine.removeAllListeners();
+
+    console.log('🧹  Neural Mind Map cleanup complete');
+  }, [CAE, contextSensorService, PhysicsEngine]);
+
+  // ==================== ANIMATION STYLES ====================
+
+  const contextTransitionStyle = useAnimatedStyle(() => ({
+    // interpolate supports multiple stops but type definitions may expect tuples; cast to any to satisfy compiler
+    opacity: (interpolate as any)(
+      contextTransitionProgress.value,
+      [0, 0.5, 1],
+      [1, 0.7, 1],
+    ),
+    transform: [
+      {
+        scale: (interpolate as any)(
+          contextTransitionProgress.value,
+          [0, 0.5, 1],
+          [1, 0.98, 1],
+        ),
+      },
+    ],
+  }));
+
+  const capacityForecastStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: capacityForecastScale.value }],
+  }));
+
+  const microTaskStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: microTaskPulse.value }],
+  }));
+
+  // ==================== RENDER ====================
+
+  if (loadingState.isGenerating || loadingState.isContextSensing) {
+    return (
+      <ScreenContainer
+        theme={theme}
+        style={[styles.container, { backgroundColor: themeColors.background }]}
+      >
+        <StatusBar backgroundColor={contextColor} barStyle="light-content" />
+
+        <View style={styles.loadingContainer}>
+          <LinearGradient
+            colors={[contextColor, adjustColorBrightness(contextColor, -20)]}
+            style={styles.loadingGradient}
+          >
+            <ActivityIndicator size="large" color="white" />
+            <Text style={[styles.loadingTitle, { color: 'white' }]}>
+              Cognitive Aura Engine 2.0
+            </Text>
+            <Text
+              style={[styles.loadingStage, { color: 'rgba(255,255,255,0.8)' }]}
+            >
+              {loadingState.stage}
+            </Text>
+
+            {loadingState.progress !== undefined && (
+              <View style={styles.progressContainer}>
+                <View
+                  style={[
+                    styles.progressBar,
+                    { width: `${loadingState.progress * 100}%` },
+                  ]}
+                />
+              </View>
+            )}
+          </LinearGradient>
+        </View>
+      </ScreenContainer>
+    );
   }
 
   return (
-    <ScreenContainer theme={theme} style={styles.container}>
+    <ScreenContainer
+      theme={theme}
+      style={[styles.container, { backgroundColor: themeColors.background }]}
+    >
+      <StatusBar backgroundColor={contextColor} barStyle="light-content" />
+
+      {/*  Header */}
       <AppHeader
-        title="Neural Mind Map"
-        subtitle={auraState ? `${auraState.context} Mode` : 'Cognitive Analysis'}
+        title=" Neural Map"
+        subtitle={auraState ? `${auraState.context} Context` : undefined}
         theme={theme}
         onMenuPress={() => setMenuVisible(true)}
-        cognitiveLoad={cognitiveLoad}
-        rightComponent={
-          <TouchableOpacity
-            onPress={() => {
-              setLoadingState(prev => ({ ...prev, isRefreshing: true }));
-              Promise.all([generateNeuralGraph(true), generateAuraState(true)])
-                .finally(() => setLoadingState(prev => ({ ...prev, isRefreshing: false })));
-            }}
-            style={styles.refreshButton}
-          >
-            <Text style={styles.refreshButtonText}>
-              {loadingState.isRefreshing ? '⟳' : '↻'}
-            </Text>
-          </TouchableOpacity>
-        }
-        floating={true}
+        backgroundColor={contextColor}
+        rightActions={[
+          {
+            icon: 'brain',
+            onPress: () => setContextInsightsVisible(true),
+            badge: auraState?.anticipatedStateChanges.length || 0,
+          },
+          {
+            icon: 'tune',
+            onPress: () => setAdaptiveControlsVisible(true),
+          },
+        ]}
       />
 
-      {/* CAE Integration: Micro Task Card */}
-      {auraState && microTaskVisible && (
-        <MicroTaskCard
-          auraState={auraState}
-          theme={theme}
-          onTaskComplete={handleMicroTaskComplete}
-          onTaskSkip={handleMicroTaskSkip}
-          position="top"
-          minimized={microTaskMinimized}
-          onMinimizeToggle={setMicroTaskMinimized}
-        />
-      )}
+      {/* Context Transition Overlay */}
+      <Animated.View
+        style={[styles.contextTransitionOverlay, contextTransitionStyle]}
+      >
+        {/*  View Mode Selector */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.viewModeSelector}
+          contentContainerStyle={styles.viewModeSelectorContent}
+        >
+          {_VIEW_MODES.map((mode) => {
+            const isActive = viewMode === mode.id;
+            const isOptimized = auraState
+              ? mode.contextOptimized.includes(auraState.context)
+              : false;
 
-      <View style={styles.mainContent}>
-        {/* Enhanced Status Dashboard with CAE Integration */}
-        <View style={styles.topSection}>
-          <GlassCard theme={theme} style={styles.statusCard}>
-            <View style={styles.statusRow}>
-              <View style={styles.statusItem}>
-                <Text style={[styles.statusLabel, { color: themeColors.textSecondary }]}>
-                  Cognitive Aura
-                </Text>
-                <Text style={[
-                  styles.statusValue,
-                  {
-                    color: auraState ?
-                      CONTEXT_STYLES[auraState.context]?.primaryColor || themeColors.primary :
-                      themeColors.primary
-                  }
-                ]}>
-                  {auraState?.context || 'ANALYZING'}
-                </Text>
-                <Text style={[styles.statusDescription, { color: themeColors.textSecondary }]}>
-                  {auraState ?
-                    `${(auraState.compositeCognitiveScore * 100).toFixed(0)}% load` :
-                    'Generating aura state...'
-                  }
-                </Text>
-              </View>
-
-              <View style={styles.statusItem}>
-                <Text style={[styles.statusLabel, { color: themeColors.textSecondary }]}>
-                  Knowledge Health
-                </Text>
-                <Text style={[styles.statusValue, { color: themeColors.primary }]}>
-                  {Math.round(neuralGraph.knowledgeHealth)}%
-                </Text>
-                <Text style={[styles.statusDescription, { color: themeColors.textSecondary }]}>
-                  Network connectivity score
-                </Text>
-              </View>
-
-              <View style={styles.statusItem}>
-                <Text style={[styles.statusLabel, { color: themeColors.textSecondary }]}>
-                  Focus Target
-                </Text>
-                <Text style={[styles.statusValue, { color: themeColors.primary }]}>
-                  {auraState?.targetNode?.label.substring(0, 10) + '...' || 'None'}
-                </Text>
-                <Text style={[styles.statusDescription, { color: themeColors.textSecondary }]}>
-                  {auraState?.targetNodePriority || 'No priority'}
-                </Text>
-              </View>
-            </View>
-          </GlassCard>
-
-          {/* Enhanced View Mode Selector */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.viewModeScroll}
-          >
-            {VIEW_MODES.map((mode) => (
+            return (
               <TouchableOpacity
                 key={mode.id}
-                onPress={() => setViewMode(mode.id)}
                 style={[
                   styles.viewModeButton,
-                  viewMode === mode.id && [
-                    styles.viewModeButtonActive,
-                    { backgroundColor: mode.color + '20', borderColor: mode.color },
-                  ],
-                  { borderColor: themeColors.border },
+                  {
+                    backgroundColor: isActive
+                      ? adaptiveColors?.primary || mode.color
+                      : themeColors.surface,
+                    borderColor: isOptimized
+                      ? adaptiveColors?.accent || mode.color
+                      : 'transparent',
+                    borderWidth: isOptimized ? 2 : 0,
+                  },
                 ]}
+                onPress={() => handleViewModeChange(mode.id)}
               >
-                <Text style={styles.viewModeIcon}>{mode.icon}</Text>
-                <Text style={[styles.viewModeLabel, { color: themeColors.text }]}>
+                <Text style={[styles.viewModeIcon]}>{mode.icon}</Text>
+                <Text
+                  style={[
+                    styles.viewModeText,
+                    { color: isActive ? 'white' : themeColors.textSecondary },
+                  ]}
+                >
                   {mode.shortName}
                 </Text>
-                <Text style={[styles.viewModeDescription, { color: themeColors.textSecondary }]}>
-                  {mode.description}
-                </Text>
+                {mode.ai && (
+                  <View
+                    style={[
+                      styles.aiBadge,
+                      { backgroundColor: adaptiveColors?.accent || '#8B5CF6' },
+                    ]}
+                  >
+                    <Text style={styles.aiText}>AI</Text>
+                  </View>
+                )}
               </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+            );
+          })}
+        </ScrollView>
 
-        {/* Neural Canvas with CAE Integration */}
-        <View style={styles.canvasContainer}>
-          <NeuralMindMap
-            graph={neuralGraph}
-            theme={theme}
-            width={width}
-            height={height - 200}
-            onNodePress={(node) => {
-              setSelectedNode(node);
-              generateNodeDetail(node);
-              setNodeDetailVisible(true);
-              handleNodePress(node);
-            }}
-            cognitiveLoad={cognitiveLoad}
-            showControls={false}
-            viewMode={viewMode}
-            focusNodeId={auraState?.targetNode?.id || focusState.focusNodeId}
-            focusLock={!!auraState?.targetNode || !!focusState.focusNodeId}
-            adaptivePhysicsMode={auraState?.adaptivePhysicsMode}
-          />
-        </View>
-
-        {/* Enhanced Selected Node Panel with CAE Insights */}
-        {selectedNode && (
-          <GlassCard theme={theme} style={styles.selectedNodeCard}>
-            <View style={styles.selectedNodeHeader}>
-              <View style={styles.selectedNodeInfo}>
-                <Text style={[styles.selectedNodeTitle, { color: themeColors.text }]}>
-                  {selectedNode.label}
-                </Text>
-                <Text style={[styles.selectedNodeMeta, { color: themeColors.textSecondary }]}>
-                  {selectedNode.type} • {selectedNode.category}
-                  {auraState?.targetNode?.id === selectedNode.id && ' • 🎯 TARGET'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => setNodeDetailVisible(true)}
+        {/* Main Content Area */}
+        <View style={styles.mainContent}>
+          {/* Left Panel - Controls & Insights */}
+          <View style={styles.leftPanel}>
+            {/* Capacity Forecast Widget */}
+            {capacityForecastVisible && auraState && (
+              <Animated.View
                 style={[
-                  styles.detailButton,
-                  { backgroundColor: currentViewMode.color },
+                  styles.capacityForecastContainer,
+                  capacityForecastStyle,
                 ]}
               >
-                <Text style={styles.detailButtonText}>Full Analysis</Text>
+                <CapacityForecastWidget
+                  theme={theme}
+                  contextColor={contextColor}
+                  onToggleVisibility={() =>
+                    setCapacityForecastVisible(!capacityForecastVisible)
+                  }
+                />
+              </Animated.View>
+            )}
+            {/* Context Insights */}
+            {adaptiveRecommendations.length > 0 && (
+              <GlassCard
+                theme={theme}
+                style={[styles.insightsCard, { borderLeftColor: contextColor }]}
+              >
+                <Text style={[styles.insightsTitle, { color: contextColor }]}>
+                  Context Insights
+                </Text>
+                {adaptiveRecommendations
+                  .slice(0, 3)
+                  .map((recommendation, index) => (
+                    <Text
+                      key={index}
+                      style={[
+                        styles.insightText,
+                        { color: themeColors.textSecondary },
+                      ]}
+                    >
+                      • {recommendation}
+                    </Text>
+                  ))}
+              </GlassCard>
+            )}
+
+            {/* Performance Metrics */}
+            <GlassCard theme={theme} style={styles.metricsCard}>
+              <Text style={[styles.metricsTitle, { color: themeColors.text }]}>
+                Session Performance
+              </Text>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricItem}>
+                  <Text style={[styles.metricValue, { color: contextColor }]}>
+                    {performanceTracking.completionCount}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.metricLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Completed
+                  </Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Text style={[styles.metricValue, { color: contextColor }]}>
+                    {(performanceTracking.accuracyScore * 100).toFixed(0)}%
+                  </Text>
+                  <Text
+                    style={[
+                      styles.metricLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Accuracy
+                  </Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Text style={[styles.metricValue, { color: contextColor }]}>
+                    {performanceTracking.contextSwitchCount}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.metricLabel,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Switches
+                  </Text>
+                </View>
+              </View>
+            </GlassCard>
+          </View>
+
+          {/* Center Panel - Neural Map */}
+          <View style={styles.centerPanel}>
+            <GlassCard theme={theme} style={styles.neuralMapContainer}>
+              {error ? (
+                <View style={styles.errorContainer}>
+                  <Icon
+                    name="alert-circle"
+                    size={48}
+                    color={themeColors.error}
+                  />
+                  <Text
+                    style={[styles.errorTitle, { color: themeColors.error }]}
+                  >
+                    Neural Map Error
+                  </Text>
+                  <Text
+                    style={[
+                      styles.errorMessage,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    {error}
+                  </Text>
+                  <Button
+                    title="Retry"
+                    onPress={() => generateNeuralGraph(true)}
+                    theme={theme}
+                    style={[
+                      styles.retryButton,
+                      { backgroundColor: contextColor },
+                    ]}
+                  />
+                </View>
+              ) : neuralGraph ? (
+                <>
+                  <NeuralMindMap
+                    graph={neuralGraph}
+                    viewMode={
+                      effectiveViewMode as
+                        | 'network'
+                        | 'clusters'
+                        | 'paths'
+                        | 'health'
+                    }
+                    onNodePress={handleNodePress}
+                    theme={theme}
+                    cognitiveLoad={auraState?.compositeCognitiveScore || 0.5}
+                    focusNodeId={focusState.focusNodeId}
+                  />
+
+                  {/* Context Overlay */}
+                  {auraState && (
+                    <View style={[styles.contextOverlay]}>
+                      <LinearGradient
+                        colors={[`${contextColor}20`, 'transparent']}
+                        style={styles.contextGradient}
+                      >
+                        <Text
+                          style={[styles.contextLabel, { color: contextColor }]}
+                        >
+                          {auraState.context}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.contextScore,
+                            { color: themeColors.textSecondary },
+                          ]}
+                        >
+                          {(auraState.compositeCognitiveScore * 100).toFixed(0)}
+                          % Cognitive Score
+                        </Text>
+                      </LinearGradient>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.emptyMapContainer}>
+                  <Icon
+                    name="brain"
+                    size={64}
+                    color={themeColors.textSecondary}
+                  />
+                  <Text
+                    style={[styles.emptyMapTitle, { color: themeColors.text }]}
+                  >
+                    No Neural Data
+                  </Text>
+                  <Text
+                    style={[
+                      styles.emptyMapMessage,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    Add some learning content to generate your brain map
+                  </Text>
+                  <Button
+                    title="Add Content"
+                    onPress={() => onNavigate('flashcards')}
+                    theme={theme}
+                    style={[
+                      styles.addContentButton,
+                      { backgroundColor: contextColor },
+                    ]}
+                  />
+                </View>
+              )}
+            </GlassCard>
+          </View>
+
+          {/* Right Panel - Micro Task & Actions */}
+          <View style={styles.rightPanel}>
+            {/*  Micro Task Card */}
+            {microTaskVisible && auraState && (
+              <Animated.View
+                style={[styles.microTaskContainer, microTaskStyle]}
+              >
+                <MicroTaskCard
+                  auraState={auraState}
+                  onTaskComplete={handleMicroTaskComplete}
+                  onTaskSkip={() => handleMicroTaskComplete(false, 0, 2)}
+                  onMinimizeToggle={() =>
+                    setMicroTaskMinimized(!microTaskMinimized)
+                  }
+                  minimized={microTaskMinimized}
+                  theme={theme}
+                />
+              </Animated.View>
+            )}
+
+            {/* Quick Actions */}
+            <GlassCard theme={theme} style={styles.actionsCard}>
+              <Text style={[styles.actionsTitle, { color: themeColors.text }]}>
+                Quick Actions
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: `${contextColor}20` },
+                ]}
+                onPress={() => CAE.refreshAuraState()}
+              >
+                <Icon name="refresh" size={16} color={contextColor} />
+                <Text style={[styles.actionText, { color: contextColor }]}>
+                  Refresh Aura
+                </Text>
               </TouchableOpacity>
-            </View>
 
-            <View style={styles.selectedNodeStats}>
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, { color: themeColors.primary }]}>
-                  {Math.round(selectedNode.masteryLevel * 100)}%
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: `${contextColor}20` },
+                ]}
+                onPress={() => generateNeuralGraph(true)}
+              >
+                <Icon name="brain" size={16} color={contextColor} />
+                <Text style={[styles.actionText, { color: contextColor }]}>
+                  Rebuild Map
                 </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Mastered
-                </Text>
-              </View>
+              </TouchableOpacity>
 
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, { color: themeColors.primary }]}>
-                  {Math.round(selectedNode.cognitiveLoad * 100)}%
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: `${contextColor}20` },
+                ]}
+                onPress={() => setContextInsightsVisible(true)}
+              >
+                <Icon name="lightbulb" size={16} color={contextColor} />
+                <Text style={[styles.actionText, { color: contextColor }]}>
+                  View Insights
                 </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Load
-                </Text>
-              </View>
+              </TouchableOpacity>
+            </GlassCard>
+          </View>
+        </View>
+      </Animated.View>
 
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, { color: themeColors.primary }]}>
-                  {selectedNode.accessCount}
-                </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Reviews
-                </Text>
-              </View>
-
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, { color: themeColors.primary }]}>
-                  {nodeDetail?.connections || 0}
-                </Text>
-                <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>
-                  Links
-                </Text>
-              </View>
-            </View>
-          </GlassCard>
-        )}
-      </View>
-
-      {/* MiniPlayer Component Integration */}
-      <MiniPlayer />
-
-      {/* Enhanced Node Detail Modal with CAE Insights */}
+      {/*  Node Detail Modal */}
       <Modal
         visible={nodeDetailVisible}
-        transparent={true}
         animationType="slide"
+        transparent={true}
         onRequestClose={() => setNodeDetailVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          {nodeDetail && (
-            <GlassCard theme={theme} style={styles.modalCard}>
-              <ScrollView style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <Text style={[styles.modalTitle, { color: themeColors.text }]}>
-                    🧠 Neural Analysis
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setNodeDetailVisible(false)}
-                    style={styles.closeButton}
-                  >
-                    <Icon name="close" size={24} color={themeColors.text} />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={[styles.modalNodeTitle, { color: themeColors.text }]}>
+        {nodeDetail && (
+          <View style={styles.modalOverlay}>
+            <GlassCard theme={theme} style={styles.nodeDetailModal}>
+              <View
+                style={[
+                  styles.nodeDetailHeader,
+                  { borderBottomColor: contextColor },
+                ]}
+              >
+                <Text
+                  style={[styles.nodeDetailTitle, { color: themeColors.text }]}
+                >
                   {nodeDetail.node.label}
                 </Text>
-                <Text style={[styles.modalNodePosition, { color: themeColors.primary }]}>
-                  {nodeDetail.networkPosition.toUpperCase()}
-                </Text>
-                <Text style={[styles.modalNodeMeta, { color: themeColors.textSecondary }]}>
-                  {nodeDetail.node.type} • {nodeDetail.node.category}
-                </Text>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => setNodeDetailVisible(false)}
+                >
+                  <Icon
+                    name="close"
+                    size={24}
+                    color={themeColors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
 
-                {/* CAE Integration: Aura-specific insights */}
-                {auraState?.targetNode?.id === nodeDetail.node.id && (
-                  <GlassCard theme={theme} style={styles.auraInsightCard}>
-                    <Text style={[styles.auraInsightTitle, { color: themeColors.primary }]}>
-                      🎯 Cognitive Aura Target
-                    </Text>
-                    <Text style={[styles.auraInsightText, { color: themeColors.text }]}>
-                      This node has been selected by the Cognitive Aura Engine as your
-                      optimal learning target. Priority: {auraState.targetNodePriority}
-                    </Text>
-                    <Text style={[styles.auraInsightSubtext, { color: themeColors.textSecondary }]}>
-                      Confidence: {(auraState.confidence * 100).toFixed(0)}%
-                    </Text>
-                  </GlassCard>
-                )}
-
-                {/* Network Metrics */}
-                <View style={styles.metricsSection}>
-                  <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                    📊 Network Metrics
+              <ScrollView style={styles.nodeDetailContent}>
+                {/* Context Relevance */}
+                <View style={styles.contextRelevanceSection}>
+                  <Text
+                    style={[styles.sectionTitle, { color: themeColors.text }]}
+                  >
+                    Context Relevance
                   </Text>
-                  <View style={styles.metricGrid}>
-                    <View style={styles.metricItem}>
-                      <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                        Neural Connections
+                  {Object.entries(nodeDetail.contextRelevance).map(
+                    ([context, relevance]) => (
+                      <View key={context} style={styles.relevanceRow}>
+                        <Text
+                          style={[
+                            styles.contextName,
+                            {
+                              color:
+                                COGNITIVE_CONTEXT_COLORS[
+                                  context as AuraContext
+                                ],
+                            },
+                          ]}
+                        >
+                          {context}
+                        </Text>
+                        <View style={styles.relevanceBar}>
+                          <View
+                            style={[
+                              styles.relevanceFill,
+                              {
+                                width: `${relevance * 100}%`,
+                                backgroundColor:
+                                  COGNITIVE_CONTEXT_COLORS[
+                                    context as AuraContext
+                                  ],
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text
+                          style={[
+                            styles.relevanceScore,
+                            { color: themeColors.textSecondary },
+                          ]}
+                        >
+                          {(relevance * 100).toFixed(0)}%
+                        </Text>
+                      </View>
+                    ),
+                  )}
+                </View>
+
+                {/* Metrics */}
+                <View style={styles.metricsSection}>
+                  <Text
+                    style={[styles.sectionTitle, { color: themeColors.text }]}
+                  >
+                    Metrics
+                  </Text>
+                  <View style={styles.metricsGrid}>
+                    <View style={styles.metricBox}>
+                      <Text
+                        style={[styles.metricBoxValue, { color: contextColor }]}
+                      >
+                        {(nodeDetail.cognitiveLoad * 100).toFixed(0)}%
                       </Text>
-                      <Text style={[styles.metricValue, { color: themeColors.primary }]}>
+                      <Text
+                        style={[
+                          styles.metricBoxLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Cognitive Load
+                      </Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text
+                        style={[styles.metricBoxValue, { color: contextColor }]}
+                      >
+                        {(nodeDetail.masteryLevel * 100).toFixed(0)}%
+                      </Text>
+                      <Text
+                        style={[
+                          styles.metricBoxLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Mastery
+                      </Text>
+                    </View>
+                    <View style={styles.metricBox}>
+                      <Text
+                        style={[styles.metricBoxValue, { color: contextColor }]}
+                      >
                         {nodeDetail.connections}
                       </Text>
-                    </View>
-                    <View style={styles.metricItem}>
-                      <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                        Network Centrality
-                      </Text>
-                      <Text style={[styles.metricValue, { color: themeColors.primary }]}>
-                        {Math.round(nodeDetail.centrality * 100)}%
-                      </Text>
-                    </View>
-                    <View style={styles.metricItem}>
-                      <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                        Activation Level
-                      </Text>
-                      <Text style={[styles.metricValue, { color: themeColors.primary }]}>
-                        {Math.round(nodeDetail.node.activationLevel * 100)}%
-                      </Text>
-                    </View>
-                    <View style={styles.metricItem}>
-                      <Text style={[styles.metricLabel, { color: themeColors.textSecondary }]}>
-                        Last Accessed
-                      </Text>
-                      <Text style={[styles.metricValue, { color: themeColors.primary }]}>
-                        {nodeDetail.node.lastAccessed.toLocaleDateString()}
+                      <Text
+                        style={[
+                          styles.metricBoxLabel,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Connections
                       </Text>
                     </View>
                   </View>
                 </View>
 
-                {/* AI Recommendations */}
+                {/* Recommendations */}
                 <View style={styles.recommendationsSection}>
-                  <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                    🎯 AI Learning Recommendations
+                  <Text
+                    style={[styles.sectionTitle, { color: themeColors.text }]}
+                  >
+                    Recommendations
                   </Text>
                   {nodeDetail.recommendations.map((rec, index) => (
-                    <Text key={index} style={[styles.recommendation, { color: themeColors.text }]}>
+                    <Text
+                      key={index}
+                      style={[
+                        styles.recommendationText,
+                        { color: themeColors.textSecondary },
+                      ]}
+                    >
                       • {rec}
                     </Text>
                   ))}
                 </View>
 
-                {/* Health Insights */}
-                {nodeDetail.healthInsights && nodeDetail.healthInsights.length > 0 && (
-                  <View style={styles.healthSection}>
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                      ❤️🩹 Health Analysis
-                    </Text>
-                    {nodeDetail.healthInsights.map((insight, index) => (
-                      <Text key={index} style={[styles.healthInsight, { color: themeColors.text }]}>
-                        • {insight}
-                      </Text>
-                    ))}
-                  </View>
-                )}
-
-                {/* Performance Tracking Display */}
-                <View style={styles.performanceSection}>
-                  <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-                    📈 Session Performance
+                {/* Optimal Contexts */}
+                <View style={styles.optimalContextsSection}>
+                  <Text
+                    style={[styles.sectionTitle, { color: themeColors.text }]}
+                  >
+                    Optimal Contexts
                   </Text>
-                  <View style={styles.performanceStats}>
-                    <View style={styles.performanceStat}>
-                      <Text style={[styles.performanceValue, { color: '#10B981' }]}>
-                        {performanceTracking.completionCount}
-                      </Text>
-                      <Text style={[styles.performanceLabel, { color: themeColors.textSecondary }]}>
-                        Completed
-                      </Text>
-                    </View>
-                    <View style={styles.performanceStat}>
-                      <Text style={[styles.performanceValue, { color: '#F59E0B' }]}>
-                        {performanceTracking.skipCount}
-                      </Text>
-                      <Text style={[styles.performanceLabel, { color: themeColors.textSecondary }]}>
-                        Skipped
-                      </Text>
-                    </View>
-                    <View style={styles.performanceStat}>
-                      <Text style={[styles.performanceValue, { color: themeColors.primary }]}>
-                        {auraState?.adaptationCount || 0}
-                      </Text>
-                      <Text style={[styles.performanceLabel, { color: themeColors.textSecondary }]}>
-                        Adaptations
-                      </Text>
-                    </View>
+                  <View style={styles.contextChips}>
+                    {nodeDetail.optimalContexts.map((context) => (
+                      <View
+                        key={context}
+                        style={[
+                          styles.contextChip,
+                          {
+                            backgroundColor: `${COGNITIVE_CONTEXT_COLORS[context]}20`,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.contextChipText,
+                            { color: COGNITIVE_CONTEXT_COLORS[context] },
+                          ]}
+                        >
+                          {context}
+                        </Text>
+                      </View>
+                    ))}
                   </View>
                 </View>
               </ScrollView>
-
-              <View style={styles.modalActions}>
-                <Button
-                  title="Open Learning Module"
-                  onPress={() => {
-                    setNodeDetailVisible(false);
-                    const navigationMap = {
-                      flashcard: 'flashcards',
-                      task: 'tasks',
-                      palace: 'memory-palace',
-                      derived: 'flashcards',
-                      logic: 'flashcards',
-                    };
-                    onNavigate(
-                      navigationMap[nodeDetail.node.sourceType] || 'flashcards',
-                    );
-                  }}
-                  variant="primary"
-                  theme={theme}
-                  style={styles.modalButton}
-                />
-                <Button
-                  title="Close"
-                  onPress={() => setNodeDetailVisible(false)}
-                  variant="outline"
-                  theme={theme}
-                  style={styles.modalButton}
-                />
-              </View>
             </GlassCard>
-          )}
-        </View>
+          </View>
+        )}
       </Modal>
 
+      {/* Context Insights Modal */}
+      <Modal
+        visible={contextInsightsVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setContextInsightsVisible(false)}
+      >
+        <ContextInsightsPanel
+          onClose={() => setContextInsightsVisible(false)}
+          theme={theme}
+          contextColor={contextColor}
+        />
+      </Modal>
+
+      {/* Adaptive Controls Modal */}
+      <Modal
+        visible={adaptiveControlsVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setAdaptiveControlsVisible(false)}
+      >
+        <AdaptiveControlPanel
+          onClose={() => setAdaptiveControlsVisible(false)}
+          theme={theme}
+          contextColor={contextColor}
+        />
+      </Modal>
+
+      {/* Hamburger Menu */}
       <HamburgerMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -1090,313 +1863,426 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         currentScreen="neural-mind-map"
         theme={theme}
       />
+
+      {/* Mini Player */}
+      <MiniPlayer theme={theme} />
     </ScreenContainer>
   );
 };
 
-// Context-specific styles for CAE integration
-const CONTEXT_STYLES = {
-  RECOVERY: { primaryColor: '#10B981' },
-  FOCUS: { primaryColor: '#3B82F6' },
-  OVERLOAD: { primaryColor: '#F59E0B' },
-};
+// ==================== STYLES ====================
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  mainContent: {
-    flex: 1,
-    paddingTop: 100,
-  },
-  topSection: {
-    flex: 0,
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  statusCard: {
-    marginBottom: spacing.sm,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  statusItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statusLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: spacing.xs,
-  },
-  statusValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  statusDescription: {
-    fontSize: 10,
-    textAlign: 'center',
-    lineHeight: 12,
-  },
-  viewModeScroll: {
-    marginBottom: spacing.sm,
-  },
-  viewModeButton: {
-    minWidth: 120,
-    marginRight: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: borderRadius.md,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
-  viewModeButtonActive: {
-    borderWidth: 2,
-  },
-  viewModeIcon: {
-    fontSize: 20,
-    marginBottom: spacing.xs,
-  },
-  viewModeLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  viewModeDescription: {
-    fontSize: 10,
-    textAlign: 'center',
-    lineHeight: 12,
-  },
-  canvasContainer: {
-    flex: 1,
-    marginHorizontal: spacing.sm,
-  },
-  selectedNodeCard: {
-    margin: spacing.md,
-    padding: spacing.md,
-  },
-  selectedNodeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.sm,
-  },
-  selectedNodeInfo: {
-    flex: 1,
-  },
-  selectedNodeTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  selectedNodeMeta: {
-    fontSize: 12,
-  },
-  detailButton: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.sm,
-    marginLeft: spacing.sm,
-  },
-  detailButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'white',
-  },
-  selectedNodeStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  stat: {
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  statLabel: {
-    fontSize: 10,
-    marginTop: 2,
-  },
-  refreshButton: {
-    padding: spacing.xs,
-  },
-  refreshButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
+
+  // Loading styles
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: spacing.md,
   },
-  loadingText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  loadingSubtext: {
-    fontSize: 14,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  loadingGradient: {
+    padding: spacing.xl,
+    borderRadius: borderRadius.lg,
     alignItems: 'center',
-    paddingHorizontal: spacing.xl,
-    gap: spacing.lg,
+    minWidth: 280,
   },
-  emptyTitle: {
-    fontSize: 24,
-    fontWeight: '800',
+  loadingTitle: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+    marginTop: spacing.md,
     textAlign: 'center',
   },
-  emptySubtitle: {
-    fontSize: 16,
+  loadingStage: {
+    fontSize: typography.sizes.md,
+    marginTop: spacing.sm,
     textAlign: 'center',
-    lineHeight: 24,
   },
-  emptyButton: {
-    minWidth: 200,
+  progressContainer: {
+    width: 200,
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 2,
+    marginTop: spacing.md,
+    overflow: 'hidden',
   },
-  modalOverlay: {
+  progressBar: {
+    height: '100%',
+    backgroundColor: 'white',
+    borderRadius: 2,
+  },
+
+  // Context transition
+  contextTransitionOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  },
+
+  // View mode selector
+  viewModeSelector: {
+    maxHeight: 80,
     paddingHorizontal: spacing.md,
   },
-  modalCard: {
-    width: '100%',
-    maxHeight: '90%',
-    padding: 0,
+  viewModeSelectorContent: {
+    paddingVertical: spacing.sm,
   },
-  modalContent: {
+  viewModeButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginRight: spacing.sm,
+    minWidth: 80,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  viewModeIcon: {
+    fontSize: typography.sizes.lg,
+    marginBottom: spacing.xs,
+  },
+  viewModeText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.medium,
+  },
+  aiBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#8B5CF6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  aiText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: typography.weights.bold,
+  },
+
+  // Main content layout
+  mainContent: {
+    flex: 1,
+    flexDirection: 'row',
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+
+  leftPanel: {
+    width: 280,
+    gap: spacing.md,
+  },
+
+  centerPanel: {
+    flex: 1,
+  },
+
+  rightPanel: {
+    width: 320,
+    gap: spacing.md,
+  },
+
+  // Neural map
+  neuralMapContainer: {
+    flex: 1,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+
+  contextOverlay: {
+    position: 'absolute',
+    top: spacing.md,
+    left: spacing.md,
+    right: spacing.md,
+  },
+
+  contextGradient: {
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+  },
+
+  contextLabel: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+  },
+
+  contextScore: {
+    fontSize: typography.sizes.sm,
+    marginTop: spacing.xs,
+  },
+
+  // Error states
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  errorTitle: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+    marginTop: spacing.md,
+  },
+  errorMessage: {
+    fontSize: typography.sizes.md,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  retryButton: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+  },
+
+  emptyMapContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  emptyMapTitle: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+    marginTop: spacing.md,
+  },
+  emptyMapMessage: {
+    fontSize: typography.sizes.md,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  addContentButton: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+  },
+
+  // Widgets and cards
+  capacityForecastContainer: {
+    // Animated container for capacity forecast
+  },
+
+  insightsCard: {
+    padding: spacing.md,
+    borderLeftWidth: 4,
+  },
+  insightsTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    marginBottom: spacing.sm,
+  },
+  insightText: {
+    fontSize: typography.sizes.sm,
+    lineHeight: 20,
+    marginBottom: spacing.xs,
+  },
+
+  metricsCard: {
+    padding: spacing.md,
+  },
+  metricsTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    marginBottom: spacing.sm,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  metricItem: {
+    alignItems: 'center',
+  },
+  metricValue: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+  },
+  metricLabel: {
+    fontSize: typography.sizes.xs,
+    marginTop: spacing.xs,
+  },
+
+  // Micro task
+  microTaskContainer: {
+    // Animated container for micro task
+  },
+
+  // Actions
+  actionsCard: {
+    padding: spacing.md,
+  },
+  actionsTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    marginBottom: spacing.sm,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginBottom: spacing.xs,
+  },
+  actionText: {
+    fontSize: typography.sizes.sm,
+    marginLeft: spacing.sm,
+    fontWeight: typography.weights.medium,
+  },
+
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: spacing.lg,
   },
-  modalHeader: {
+
+  nodeDetailModal: {
+    maxWidth: 500,
+    maxHeight: '80%',
+    minHeight: 400,
+    width: '100%',
+  },
+
+  nodeDetailHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    padding: spacing.lg,
+    borderBottomWidth: 1,
+  },
+
+  nodeDetailTitle: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+    flex: 1,
+  },
+
+  closeButton: {
+    padding: spacing.sm,
+  },
+
+  nodeDetailContent: {
+    flex: 1,
+    padding: spacing.lg,
+  },
+
+  // Node detail sections
+  contextRelevanceSection: {
+    marginBottom: spacing.lg,
+  },
+
+  sectionTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
     marginBottom: spacing.md,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  closeButton: {
-    padding: spacing.xs,
-  },
-  modalNodeTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    marginBottom: spacing.xs,
-  },
-  modalNodePosition: {
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  modalNodeMeta: {
-    fontSize: 14,
-    marginBottom: spacing.lg,
-  },
-  auraInsightCard: {
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-  },
-  auraInsightTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+
+  relevanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: spacing.sm,
   },
-  auraInsightText: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: spacing.sm,
+
+  contextName: {
+    width: 120,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.medium,
   },
-  auraInsightSubtext: {
-    fontSize: 12,
+
+  relevanceBar: {
+    flex: 1,
+    height: 8,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    borderRadius: 4,
+    marginHorizontal: spacing.sm,
+    overflow: 'hidden',
   },
+
+  relevanceFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+
+  relevanceScore: {
+    width: 40,
+    fontSize: typography.sizes.xs,
+    textAlign: 'right',
+  },
+
   metricsSection: {
     marginBottom: spacing.lg,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: spacing.md,
-  },
-  metricGrid: {
+
+  metricsGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
+    justifyContent: 'space-between',
   },
-  metricItem: {
+
+  metricBox: {
     flex: 1,
-    minWidth: '45%',
     alignItems: 'center',
-    padding: spacing.sm,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: borderRadius.sm,
+    padding: spacing.md,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: borderRadius.md,
+    marginHorizontal: spacing.xs,
   },
-  metricLabel: {
-    fontSize: 12,
+
+  metricBoxValue: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+  },
+
+  metricBoxLabel: {
+    fontSize: typography.sizes.xs,
+    marginTop: spacing.xs,
     textAlign: 'center',
-    marginBottom: spacing.xs,
   },
-  metricValue: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
+
   recommendationsSection: {
     marginBottom: spacing.lg,
   },
-  recommendation: {
-    fontSize: 14,
+
+  recommendationText: {
+    fontSize: typography.sizes.sm,
     lineHeight: 20,
     marginBottom: spacing.xs,
   },
-  healthSection: {
+
+  optimalContextsSection: {
     marginBottom: spacing.lg,
   },
-  healthInsight: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: spacing.xs,
-  },
-  performanceSection: {
-    marginBottom: spacing.lg,
-  },
-  performanceStats: {
+
+  contextChips: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
-  performanceStat: {
-    alignItems: 'center',
+
+  contextChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.lg,
   },
-  performanceValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  performanceLabel: {
-    fontSize: 12,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    padding: spacing.lg,
-    gap: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  modalButton: {
-    flex: 1,
+
+  contextChipText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.medium,
   },
 });
 
 export default NeuralMindMapScreen;
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1524,7 +2410,7 @@ export default NeuralMindMapScreen;
 // }
 
 // /**
-//  * Phase 3: Enhanced ViewMode Interface with Health Analytics
+//  * Phase 3:  ViewMode Interface with Health Analytics
 //  */
 // interface ViewMode {
 //   id: 'network' | 'clusters' | 'paths' | 'health';
@@ -1560,7 +2446,7 @@ export default NeuralMindMapScreen;
 // }
 
 // /**
-//  * Phase 3: Enhanced VIEW_MODES with Color Coding and Analytics
+//  * Phase 3:  VIEW_MODES with Color Coding and Analytics
 //  */
 // const VIEW_MODES: ViewMode[] = [
 //   {
@@ -1776,7 +2662,7 @@ export default NeuralMindMapScreen;
 //   }, [crossModuleBridge]);
 
 //   /**
-//    * Generate neural graph with enhanced error handling
+//    * Generate neural graph with  error handling
 //    */
 //   const generateNeuralGraph = useCallback(
 //     async (forceRefresh = false) => {
@@ -1907,7 +2793,7 @@ export default NeuralMindMapScreen;
 //   );
 
 //   /**
-//    * Enhanced node detail generation with mode-specific insights
+//    *  node detail generation with mode-specific insights
 //    */
 //   const generateNodeDetail = useCallback(
 //     (node: NeuralNode) => {
@@ -1929,8 +2815,8 @@ export default NeuralMindMapScreen;
 //             ? 'bridge'
 //             : 'peripheral';
 
-//         // Generate enhanced AI recommendations
-//         const recommendations = generateEnhancedRecommendations(
+//         // Generate  AI recommendations
+//         const recommendations = generateRecommendations(
 //           node,
 //           networkPosition,
 //         );
@@ -2019,9 +2905,9 @@ export default NeuralMindMapScreen;
 //   );
 
 //   /**
-//    * Enhanced AI recommendations with Phase 3 features
+//    *  AI recommendations with Phase 3 features
 //    */
-//   const generateEnhancedRecommendations = useCallback(
+//   const generateRecommendations = useCallback(
 //     (node: NeuralNode, position: NodeDetail['networkPosition']): string[] => {
 //       const recommendations: string[] = [];
 
@@ -2251,7 +3137,7 @@ export default NeuralMindMapScreen;
 //       <SafeAreaView style={{ flex: 1 }}>
 //         <ScreenContainer theme={theme} style={styles.container}>
 //           <View style={styles.mainContent}>
-//             {/* Phase 3: Enhanced Status Dashboard with Mode Analytics */}
+//             {/* Phase 3:  Status Dashboard with Mode Analytics */}
 //             <View style={styles.topSection}>
 //               <GlassCard theme={theme} style={styles.statusCard}>
 //                 <View style={styles.statusRow}>
@@ -2338,7 +3224,7 @@ export default NeuralMindMapScreen;
 //                 </View>
 //               </GlassCard>
 
-//               {/* Phase 3: Enhanced View Mode Selector with Visual Indicators */}
+//               {/* Phase 3:  View Mode Selector with Visual Indicators */}
 //               <GlassCard theme={theme} style={styles.viewModeSelector}>
 //                 <ScrollView
 //                   horizontal
@@ -2425,7 +3311,7 @@ export default NeuralMindMapScreen;
 //               />
 //             </View>
 
-//             {/* Enhanced Selected Node Panel */}
+//             {/*  Selected Node Panel */}
 //             {selectedNode && (
 //               <GlassCard theme={theme} style={styles.selectedNodePanel}>
 //                 <View style={styles.selectedNodeHeader}>
@@ -2526,7 +3412,7 @@ export default NeuralMindMapScreen;
 //           {/* MiniPlayer Component Integration */}
 //           <MiniPlayer theme={theme} style={styles.miniPlayer} />
 
-//           {/* Enhanced Node Detail Modal with Phase 3 Insights */}
+//           {/*  Node Detail Modal with Phase 3 Insights */}
 //           <Modal
 //             visible={nodeDetailVisible}
 //             animationType="slide"
@@ -2829,7 +3715,7 @@ export default NeuralMindMapScreen;
 //     lineHeight: 16,
 //   },
 
-//   // Phase 3: Enhanced View Mode Selector
+//   // Phase 3:  View Mode Selector
 //   viewModeSelector: {
 //     paddingVertical: spacing.sm,
 //   },
@@ -2871,7 +3757,7 @@ export default NeuralMindMapScreen;
 //     minHeight: 400,
 //   },
 
-//   // Enhanced Selected Node Panel
+//   //  Selected Node Panel
 //   selectedNodePanel: {
 //     margin: spacing.md,
 //     padding: spacing.md,

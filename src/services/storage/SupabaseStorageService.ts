@@ -1162,6 +1162,298 @@ export class SupabaseStorageService {
       throw new Error(`Failed to save budget analysis: ${error}`);
     }
   }
+
+  // ==================== CAE 2.0: CONTEXT STORAGE METHODS ====================
+
+  async saveContextSnapshot(snapshot: any): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { error } = await supabase
+        .from('context_snapshots')
+        .upsert({
+          id: snapshot.id,
+          user_id: userId,
+          session_id: snapshot.sessionId,
+          timestamp: snapshot.timestamp,
+          time_intelligence: snapshot.timeIntelligence,
+          location_context: snapshot.locationContext,
+          digital_body_language: snapshot.digitalBodyLanguage,
+          overall_optimality: snapshot.overallOptimality,
+          context_quality_score: snapshot.contextQualityScore,
+          device_state: snapshot.deviceState,
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving context snapshot:', error);
+      throw new Error(`Failed to save context snapshot: ${error}`);
+    }
+  }
+
+  async getContextSnapshots(startDate?: Date, endDate?: Date, limit?: number): Promise<any[]> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      let query = supabase
+        .from('context_snapshots')
+        .select('*')
+        .eq('user_id', userId)
+        .order('timestamp', { ascending: false });
+
+      if (startDate) {
+        query = query.gte('timestamp', startDate.toISOString());
+      }
+
+      if (endDate) {
+        query = query.lte('timestamp', endDate.toISOString());
+      }
+
+      if (limit) {
+        query = query.limit(limit);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      return (data || []).map(snapshot => ({
+        id: snapshot.id,
+        sessionId: snapshot.session_id,
+        timestamp: snapshot.timestamp,
+        timeIntelligence: snapshot.time_intelligence,
+        locationContext: snapshot.location_context,
+        digitalBodyLanguage: snapshot.digital_body_language,
+        overallOptimality: snapshot.overall_optimality,
+        contextQualityScore: snapshot.context_quality_score,
+        deviceState: snapshot.device_state,
+        userId: snapshot.user_id,
+      }));
+    } catch (error) {
+      console.error('Error loading context snapshots:', error);
+      return [];
+    }
+  }
+
+  async saveLearnedPattern(pattern: any): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { error } = await supabase
+        .from('learned_patterns')
+        .upsert({
+          id: pattern.id,
+          user_id: userId,
+          type: pattern.type,
+          pattern: pattern.pattern,
+          last_seen: pattern.lastSeen,
+          effectiveness: pattern.effectiveness,
+          created_at: pattern.createdAt,
+          updated_at: pattern.updatedAt,
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving learned pattern:', error);
+      throw new Error(`Failed to save learned pattern: ${error}`);
+    }
+  }
+
+  async getLearnedPatterns(): Promise<any[]> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { data, error } = await supabase
+        .from('learned_patterns')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return (data || []).map(pattern => ({
+        id: pattern.id,
+        type: pattern.type,
+        pattern: pattern.pattern,
+        lastSeen: pattern.last_seen,
+        effectiveness: pattern.effectiveness,
+        createdAt: pattern.created_at,
+        updatedAt: pattern.updated_at,
+      }));
+    } catch (error) {
+      console.error('Error loading learned patterns:', error);
+      return [];
+    }
+  }
+
+  async saveOptimalLearningWindow(window: any): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { error } = await supabase
+        .from('optimal_learning_windows')
+        .upsert({
+          id: window.id,
+          user_id: userId,
+          circadian_hour: window.circadianHour,
+          day_of_week: window.dayOfWeek,
+          performance_score: window.performanceScore,
+          frequency: window.frequency,
+          last_performance: window.lastPerformance,
+          last_seen: window.lastSeen,
+          created_at: window.createdAt,
+          updated_at: window.updatedAt,
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving optimal learning window:', error);
+      throw new Error(`Failed to save optimal learning window: ${error}`);
+    }
+  }
+
+  async getOptimalLearningWindows(): Promise<any[]> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { data, error } = await supabase
+        .from('optimal_learning_windows')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return (data || []).map(window => ({
+        id: window.id,
+        circadianHour: window.circadian_hour,
+        dayOfWeek: window.day_of_week,
+        performanceScore: window.performance_score,
+        frequency: window.frequency,
+        lastPerformance: window.last_performance,
+        lastSeen: window.last_seen,
+        createdAt: window.created_at,
+        updatedAt: window.updated_at,
+      }));
+    } catch (error) {
+      console.error('Error loading optimal learning windows:', error);
+      return [];
+    }
+  }
+
+  async saveKnownLocation(location: any): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { error } = await supabase
+        .from('known_locations')
+        .upsert({
+          id: location.id,
+          user_id: userId,
+          name: location.name,
+          coordinates: location.coordinates,
+          environment: location.environment,
+          performance_history: location.performanceHistory,
+          average_performance: location.averagePerformance,
+          visit_count: location.visitCount,
+          last_visit: location.lastVisit,
+          created_at: location.createdAt,
+          updated_at: location.updatedAt,
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving known location:', error);
+      throw new Error(`Failed to save known location: ${error}`);
+    }
+  }
+
+  async getKnownLocations(): Promise<any[]> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { data, error } = await supabase
+        .from('known_locations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return (data || []).map(location => ({
+        id: location.id,
+        name: location.name,
+        coordinates: location.coordinates,
+        environment: location.environment,
+        performanceHistory: location.performance_history,
+        averagePerformance: location.average_performance,
+        visitCount: location.visit_count,
+        lastVisit: location.last_visit,
+        createdAt: location.created_at,
+        updatedAt: location.updated_at,
+      }));
+    } catch (error) {
+      console.error('Error loading known locations:', error);
+      return [];
+    }
+  }
+
+  async saveCognitiveForecast(forecast: any): Promise<void> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { error } = await supabase
+        .from('cognitive_forecasts')
+        .upsert({
+          id: forecast.id,
+          user_id: userId,
+          model_version: forecast.modelVersion,
+          predicted_context: forecast.predictedContext,
+          predicted_optimality: forecast.predictedOptimality,
+          prediction_horizon: forecast.predictionHorizon,
+          actual_context: forecast.actualContext,
+          actual_optimality: forecast.actualOptimality,
+          prediction_accuracy: forecast.predictionAccuracy,
+          created_at: forecast.createdAt,
+          evaluated_at: forecast.evaluatedAt,
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving cognitive forecast:', error);
+      throw new Error(`Failed to save cognitive forecast: ${error}`);
+    }
+  }
+
+  async getCognitiveForecasts(): Promise<any[]> {
+    try {
+      const userId = await this.getCurrentUserId();
+
+      const { data, error } = await supabase
+        .from('cognitive_forecasts')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return (data || []).map(forecast => ({
+        id: forecast.id,
+        modelVersion: forecast.model_version,
+        predictedContext: forecast.predicted_context,
+        predictedOptimality: forecast.predicted_optimality,
+        predictionHorizon: forecast.prediction_horizon,
+        actualContext: forecast.actual_context,
+        actualOptimality: forecast.actual_optimality,
+        predictionAccuracy: forecast.prediction_accuracy,
+        createdAt: forecast.created_at,
+        evaluatedAt: forecast.evaluated_at,
+      }));
+    } catch (error) {
+      console.error('Error loading cognitive forecasts:', error);
+      return [];
+    }
+  }
 }
 
 export default SupabaseStorageService;

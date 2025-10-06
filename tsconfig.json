@@ -1,14 +1,26 @@
 {
-    "extends": "expo/tsconfig.base",
-  
-    // This is where 'include' belongs: at the root level.
-    "include": ["**/*.ts", "**/*.tsx", "./src/types/reanimated.d.ts"],
-    "exclude": ["node_modules", "__tests__", "**/*.test.ts", "**/*.test.tsx", "supabase/functions/**/*"  ],
-  
-    "compilerOptions": {
-      "strict": true,
-      "types": ["react-native-reanimated", "node", "jest"],
-      "skipLibCheck": true
-    },
+  "extends": "expo/tsconfig.base",
+
+  // This is where 'include' belongs: at the root level.
+  "include": ["**/*.ts", "**/*.tsx", "./src/types/reanimated.d.ts"],
+  "exclude": [
+    "node_modules",
+    "__tests__",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "supabase/functions/**/*"
+  ],
+
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2017",
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "jsx": "react-native",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "downlevelIteration": true,
+    "types": ["react-native-reanimated", "node", "jest"],
+    "skipLibCheck": true
   }
-  
+}

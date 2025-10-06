@@ -23,7 +23,7 @@ import {
   AuraState,
   AuraContext,
   cognitiveAuraService
-} from '../services/learning/CognitiveAuraService';
+} from '../services/ai/CognitiveAuraService';
 import {
   cognitiveSoundscapeEngine
 } from '../services/learning/CognitiveSoundscapeEngine';
@@ -163,7 +163,7 @@ const initialState: AuraStoreState = {
     averageAccuracy: 0,
     averageCompletionRate: 0,
     averageUserSatisfaction: 3.0,
-    contextDistribution: { RECOVERY: 0, FOCUS: 0, OVERLOAD: 0 },
+    contextDistribution: { DeepFocus: 0, FragmentedAttention: 0, CognitiveOverload: 0, CreativeFlow: 0 },
     mostEffectiveContext: null,
     adaptationTrends: [],
     performanceImprovement: 0,
@@ -451,7 +451,7 @@ export const useAuraStore = create<AuraStoreState & AuraStoreActions>()(
           const averageUserSatisfaction = performanceHistory.reduce((sum, p) => sum + p.satisfaction, 0) / totalEntries;
 
           // Calculate context distribution
-          const contextDistribution: Record<AuraContext, number> = { RECOVERY: 0, FOCUS: 0, OVERLOAD: 0 };
+          const contextDistribution: Record<AuraContext, number> = { DeepFocus: 0, FragmentedAttention: 0, CognitiveOverload: 0, CreativeFlow: 0 };
           const contextPerformance = new Map<AuraContext, { total: number; count: number }>();
 
           Array.from(stateHistory.values()).forEach(auraState => {
@@ -487,7 +487,7 @@ export const useAuraStore = create<AuraStoreState & AuraStoreActions>()(
             timestamp: entry.timestamp,
             context: Array.from(stateHistory.values()).find(s =>
               Math.abs(s.timestamp.getTime() - entry.timestamp.getTime()) < 60000
-            )?.context || 'FOCUS',
+            )?.context || 'DeepFocus',
             accuracy: entry.accuracy,
           }));
 
@@ -545,7 +545,7 @@ export const useAuraStore = create<AuraStoreState & AuraStoreActions>()(
             recommendation: string;
           }> = [];
 
-          (['RECOVERY', 'FOCUS', 'OVERLOAD'] as AuraContext[]).forEach(context => {
+          (['DeepFocus', 'FragmentedAttention', 'CognitiveOverload', 'CreativeFlow'] as AuraContext[]).forEach(context => {
             const contextStates = Array.from(stateHistory.values()).filter(s => s.context === context);
             const frequency = contextStates.length / Math.max(1, stateHistory.size);
 

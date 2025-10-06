@@ -1,3 +1,11 @@
+/**
+ *  StorageService with Cognitive Aura 2.0 Context Storage Support
+ *
+ * This  storage service adds support for the new CAE 2.0 context sensing
+ * capabilities, including environmental snapshots, pattern learning data, and
+ * predictive analytics storage.
+ */
+
 import HybridStorageService from './HybridStorageService';
 import {
   Flashcard,
@@ -10,8 +18,101 @@ import {
 import { LogicStructure } from '../learning/MindMapGeneratorService';
 import { FSRSCard, FSRSReviewLog } from '../learning/SpacedRepetitionService';
 import { ReadingSession, SourceLink } from '../learning/SpeedReadingService';
+import { ContextSnapshot, TimeIntelligence, LocationContext, DigitalBodyLanguage } from '../ai/ContextSensorService';
 
-// ==================== Phase 7: Soundscape storage interfaces ====================
+// ==================== CAE 2.0: Context Storage Interfaces ====================
+
+/**
+ * Context snapshot storage format
+ */
+export interface StoredContextSnapshot {
+  id: string;
+  sessionId: string;
+  timestamp: string; // ISO string
+  timeIntelligence: TimeIntelligence;
+  locationContext: LocationContext;
+  digitalBodyLanguage: DigitalBodyLanguage;
+  overallOptimality: number;
+  contextQualityScore: number;
+  deviceState: {
+    batteryLevel: number;
+    isCharging: boolean;
+    networkQuality: string;
+  };
+  userId?: string;
+}
+
+/**
+ * Learned pattern storage
+ */
+export interface LearnedPattern {
+  id: string;
+  type: 'optimal_time' | 'productive_location' | 'context_sequence' | 'performance_correlation';
+  pattern: {
+    triggers: Record<string, any>;
+    outcomes: Record<string, any>;
+    frequency: number;
+    confidence: number;
+  };
+  lastSeen: string; // ISO string
+  effectiveness: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Optimal learning window data
+ */
+export interface OptimalLearningWindow {
+  id: string;
+  circadianHour: number; // 0-24
+  dayOfWeek: number; // 0-6
+  performanceScore: number; // 0-1
+  frequency: number; // How often this window occurs
+  lastPerformance: number;
+  lastSeen: string; // ISO string
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Known location data
+ */
+export interface KnownLocation {
+  id: string;
+  name: string;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  };
+  environment: LocationContext['environment'];
+  performanceHistory: number[];
+  averagePerformance: number;
+  visitCount: number;
+  lastVisit: string; // ISO string
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Cognitive forecasting model data
+ */
+export interface CognitiveForecasting {
+  id: string;
+  modelVersion: string;
+  predictedContext: string;
+  predictedOptimality: number;
+  predictionHorizon: number; // Minutes ahead
+  actualContext?: string;
+  actualOptimality?: number;
+  predictionAccuracy?: number;
+  createdAt: string;
+  evaluatedAt?: string;
+}
+
+// ==================== Existing Interfaces ====================
+
 export interface SoundSettings {
   volume: number;
   lastPreset?: string;
@@ -117,8 +218,8 @@ export interface EnhancedFlashcard extends Flashcard {
 }
 
 /**
- * StorageService - Simple wrapper that delegates to HybridStorageService
- * Maintains backward compatibility while using cloud-first architecture
+ *  StorageService with CAE 2.0 Support
+ * Maintains backward compatibility while adding anticipatory learning capabilities
  */
 export class StorageService {
   private static instance: StorageService;
@@ -142,7 +243,286 @@ export class StorageService {
     return this.hybridService;
   }
 
-  // ==================== SETTINGS ====================
+  // ==================== CAE 2.0: CONTEXT STORAGE METHODS ====================
+
+  /**
+   * Store context snapshot for pattern learning and analytics
+   */
+  async saveContextSnapshot(snapshot: ContextSnapshot): Promise<void> {
+    const storedSnapshot: StoredContextSnapshot = {
+      id: `context_${snapshot.timestamp.getTime()}_${Math.random().toString(36).substr(2, 9)}`,
+      sessionId: snapshot.sessionId,
+      timestamp: snapshot.timestamp.toISOString(),
+      timeIntelligence: snapshot.timeIntelligence,
+      locationContext: {
+        ...snapshot.locationContext,
+        coordinates: snapshot.locationContext.coordinates || { latitude: 0, longitude: 0 },
+      },
+      digitalBodyLanguage: snapshot.digitalBodyLanguage,
+      overallOptimality: snapshot.overallOptimality,
+      contextQualityScore: snapshot.contextQualityScore,
+      deviceState: {
+        batteryLevel: snapshot.batteryLevel,
+        isCharging: snapshot.isCharging,
+        networkQuality: snapshot.networkQuality,
+      },
+    };
+
+    return this.getHybridService().saveContextSnapshot(storedSnapshot);
+  }
+
+  /**
+   * Get context snapshots for analysis
+   */
+  async getContextSnapshots(
+    startDate?: Date,
+    endDate?: Date,
+    limit?: number
+  ): Promise<StoredContextSnapshot[]> {
+    return this.getHybridService().getContextSnapshots?.(startDate, endDate, limit) || [];
+  }
+
+  /**
+   * Get context analytics for a specific time period
+   */
+  async getContextAnalytics(days: number = 30): Promise<{
+    totalSnapshots: number;
+    averageOptimality: number;
+    optimalTimePatterns: Array<{
+      hour: number;
+      dayOfWeek: number;
+      frequency: number;
+      averageOptimality: number;
+    }>;
+    locationEffectiveness: Array<{
+      environment: string;
+      averageOptimality: number;
+      frequency: number;
+    }>;
+    dblPatterns: Array<{
+      state: string;
+      frequency: number;
+      averageOptimality: number;
+    }>;
+  }> {
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - (days * 24 * 60 * 60 * 1000));
+
+    const snapshots = await this.getContextSnapshots(startDate, endDate);
+
+    if (snapshots.length === 0) {
+      return {
+        totalSnapshots: 0,
+        averageOptimality: 0,
+        optimalTimePatterns: [],
+        locationEffectiveness: [],
+        dblPatterns: [],
+      };
+    }
+
+    const totalOptimality = snapshots.reduce((sum, s) => sum + s.overallOptimality, 0);
+    const averageOptimality = totalOptimality / snapshots.length;
+
+    // Analyze time patterns
+    const timePatterns = new Map<string, { optimality: number; count: number }>();
+    const locationPatterns = new Map<string, { optimality: number; count: number }>();
+    const dblPatterns = new Map<string, { optimality: number; count: number }>();
+
+    snapshots.forEach(snapshot => {
+      // Time patterns
+      const timeKey = `${snapshot.timeIntelligence.circadianHour.toFixed(0)}_${snapshot.timeIntelligence.dayOfWeek}`;
+      const existing = timePatterns.get(timeKey) || { optimality: 0, count: 0 };
+      timePatterns.set(timeKey, {
+        optimality: existing.optimality + snapshot.overallOptimality,
+        count: existing.count + 1,
+      });
+
+      // Location patterns
+      const locExisting = locationPatterns.get(snapshot.locationContext.environment) || { optimality: 0, count: 0 };
+      locationPatterns.set(snapshot.locationContext.environment, {
+        optimality: locExisting.optimality + snapshot.overallOptimality,
+        count: locExisting.count + 1,
+      });
+
+      // DBL patterns
+      const dblExisting = dblPatterns.get(snapshot.digitalBodyLanguage.state) || { optimality: 0, count: 0 };
+      dblPatterns.set(snapshot.digitalBodyLanguage.state, {
+        optimality: dblExisting.optimality + snapshot.overallOptimality,
+        count: dblExisting.count + 1,
+      });
+    });
+
+    return {
+      totalSnapshots: snapshots.length,
+      averageOptimality,
+      optimalTimePatterns: Array.from(timePatterns.entries()).map(([key, data]) => {
+        const [hourStr, dayOfWeek] = key.split('_');
+        return {
+          hour: parseInt(hourStr),
+          dayOfWeek: parseInt(dayOfWeek),
+          frequency: data.count,
+          averageOptimality: data.optimality / data.count,
+        };
+      }),
+      locationEffectiveness: Array.from(locationPatterns.entries()).map(([environment, data]) => ({
+        environment,
+        averageOptimality: data.optimality / data.count,
+        frequency: data.count,
+      })),
+      dblPatterns: Array.from(dblPatterns.entries()).map(([state, data]) => ({
+        state,
+        frequency: data.count,
+        averageOptimality: data.optimality / data.count,
+      })),
+    };
+  }
+
+  /**
+   * Save learned pattern
+   */
+  async saveLearnedPattern(pattern: Omit<LearnedPattern, 'id' | 'createdAt' | 'updatedAt'>): Promise<LearnedPattern> {
+    const now = new Date().toISOString();
+    const savedPattern: LearnedPattern = {
+      ...pattern,
+      id: `pattern_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.getHybridService().saveLearnedPattern?.(savedPattern);
+    return savedPattern;
+  }
+
+  /**
+   * Get learned patterns
+   */
+  async getLearnedPatterns(type?: LearnedPattern['type']): Promise<LearnedPattern[]> {
+    const patterns = await this.getHybridService().getLearnedPatterns?.() || [];
+    return type ? patterns.filter(p => p.type === type) : patterns;
+  }
+
+  /**
+   * Save optimal learning window
+   */
+  async saveOptimalLearningWindow(window: Omit<OptimalLearningWindow, 'id' | 'createdAt' | 'updatedAt'>): Promise<void> {
+    const now = new Date().toISOString();
+    const savedWindow: OptimalLearningWindow = {
+      ...window,
+      id: `window_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    return this.getHybridService().saveOptimalLearningWindow?.(savedWindow);
+  }
+
+  /**
+   * Get optimal learning windows
+   */
+  async getOptimalLearningWindows(): Promise<OptimalLearningWindow[]> {
+    return this.getHybridService().getOptimalLearningWindows?.() || [];
+  }
+
+  /**
+   * Save known location
+   */
+  async saveKnownLocation(location: Omit<KnownLocation, 'id' | 'createdAt' | 'updatedAt'>): Promise<void> {
+    const now = new Date().toISOString();
+    const savedLocation: KnownLocation = {
+      ...location,
+      id: `location_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    return this.getHybridService().saveKnownLocation?.(savedLocation);
+  }
+
+  /**
+   * Get known locations
+   */
+  async getKnownLocations(): Promise<KnownLocation[]> {
+    return this.getHybridService().getKnownLocations?.() || [];
+  }
+
+  /**
+   * Save cognitive forecasting result
+   */
+  async saveCognitiveForecast(forecast: Omit<CognitiveForecasting, 'id' | 'createdAt'>): Promise<void> {
+    const savedForecast: CognitiveForecasting = {
+      ...forecast,
+      id: `forecast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: new Date().toISOString(),
+    };
+
+    return this.getHybridService().saveCognitiveForecast?.(savedForecast);
+  }
+
+  /**
+   * Get cognitive forecasting accuracy metrics
+   */
+  async getForecastingMetrics(days: number = 7): Promise<{
+    totalForecasts: number;
+    averageAccuracy: number;
+    accuracyByHorizon: Record<number, number>;
+    modelPerformance: Record<string, number>;
+  }> {
+    const forecasts = await this.getHybridService().getCognitiveForecasts?.() || [];
+    const recentForecasts = forecasts.filter(f =>
+      f.evaluatedAt &&
+      new Date(f.evaluatedAt) > new Date(Date.now() - (days * 24 * 60 * 60 * 1000))
+    );
+
+    if (recentForecasts.length === 0) {
+      return {
+        totalForecasts: 0,
+        averageAccuracy: 0,
+        accuracyByHorizon: {},
+        modelPerformance: {},
+      };
+    }
+
+    const totalAccuracy = recentForecasts.reduce((sum, f) => sum + (f.predictionAccuracy || 0), 0);
+    const averageAccuracy = totalAccuracy / recentForecasts.length;
+
+    // Group by prediction horizon
+    const horizonGroups = new Map<number, number[]>();
+    const modelGroups = new Map<string, number[]>();
+
+    recentForecasts.forEach(forecast => {
+      if (forecast.predictionAccuracy !== undefined) {
+        // By horizon
+        const existing = horizonGroups.get(forecast.predictionHorizon) || [];
+        existing.push(forecast.predictionAccuracy);
+        horizonGroups.set(forecast.predictionHorizon, existing);
+
+        // By model version
+        const modelExisting = modelGroups.get(forecast.modelVersion) || [];
+        modelExisting.push(forecast.predictionAccuracy);
+        modelGroups.set(forecast.modelVersion, modelExisting);
+      }
+    });
+
+    const accuracyByHorizon: Record<number, number> = {};
+    horizonGroups.forEach((accuracies, horizon) => {
+      accuracyByHorizon[horizon] = accuracies.reduce((sum, acc) => sum + acc, 0) / accuracies.length;
+    });
+
+    const modelPerformance: Record<string, number> = {};
+    modelGroups.forEach((accuracies, model) => {
+      modelPerformance[model] = accuracies.reduce((sum, acc) => sum + acc, 0) / accuracies.length;
+    });
+
+    return {
+      totalForecasts: recentForecasts.length,
+      averageAccuracy,
+      accuracyByHorizon,
+      modelPerformance,
+    };
+  }
+
+  // ==================== EXISTING METHODS (Maintained for backward compatibility) ====================
+
   async saveSettings(settings: Settings): Promise<void> {
     return this.getHybridService().saveSettings(settings);
   }
@@ -152,12 +532,12 @@ export class StorageService {
   }
 
   // ==================== FLASHCARDS ====================
-  async saveFlashcards(flashcards: (Flashcard | EnhancedFlashcard)[]): Promise<void> {
+  async saveFlashcards(flashcards: (Flashcard | Flashcard)[]): Promise<void> {
     return this.getHybridService().saveFlashcards(flashcards);
   }
 
-  async getFlashcards(): Promise<EnhancedFlashcard[]> {
-    return this.getHybridService().getFlashcards() as Promise<EnhancedFlashcard[]>;
+  async getFlashcards(): Promise<(Flashcard | Flashcard)[]> {
+    return this.getHybridService().getFlashcards() as Promise<(Flashcard | Flashcard)[]>;
   }
 
   // ==================== LOGIC NODES ====================
@@ -169,7 +549,7 @@ export class StorageService {
     return this.getHybridService().getLogicNodes();
   }
 
-  async addLogicNode(nodeData: Partial<LogicNode>): Promise<LogicNode> {
+  async addLogicNode(nodeData: Partial<LogicNode>): Promise<LogicNode | null> {
     return this.getHybridService().addLogicNode(nodeData);
   }
 
@@ -202,7 +582,7 @@ export class StorageService {
     return this.getHybridService().saveFocusHealthMetrics(metrics);
   }
 
-  async getFocusHealthMetrics(): Promise<FocusHealthMetrics> {
+  async getFocusHealthMetrics(): Promise<FocusHealthMetrics | null> {
     return this.getHybridService().getFocusHealthMetrics();
   }
 
@@ -228,7 +608,7 @@ export class StorageService {
     return this.getHybridService().saveSoundSettings(settings);
   }
 
-  async getSoundSettings(): Promise<SoundSettings> {
+  async getSoundSettings(): Promise<SoundSettings | null> {
     return this.getHybridService().getSoundSettings();
   }
 
@@ -244,7 +624,6 @@ export class StorageService {
   async getStudySessions(): Promise<StudySession[]> { return []; }
   async saveStudySession(session: StudySession): Promise<void> {}
   async saveStudySessions(sessions: StudySession[]): Promise<void> {}
-
   async getProgressData(): Promise<ProgressData> {
     return {
       studyStreak: 1,
@@ -258,10 +637,8 @@ export class StorageService {
     };
   }
   async saveProgressData(progress: ProgressData): Promise<void> {}
-
   async getTasks(): Promise<Task[]> { return []; }
   async saveTasks(tasks: Task[]): Promise<void> {}
-
   async getMemoryPalaces(): Promise<MemoryPalace[]> { return []; }
   async saveMemoryPalaces(palaces: MemoryPalace[]): Promise<void> {}
 
@@ -270,24 +647,38 @@ export class StorageService {
   }
 
   async exportAllData(): Promise<string> {
-    return JSON.stringify({
+    const data = {
+      // Existing data
       flashcards: await this.getFlashcards(),
       logicNodes: await this.getLogicNodes(),
       focusSessions: await this.getFocusSessions(),
       readingSessions: await this.getReadingSessions(),
       settings: await this.getSettings(),
+
+      // CAE 2.0 data
+      contextSnapshots: await this.getContextSnapshots(),
+      learnedPatterns: await this.getLearnedPatterns(),
+      optimalLearningWindows: await this.getOptimalLearningWindows(),
+      knownLocations: await this.getKnownLocations(),
+
       exportDate: new Date().toISOString(),
-      version: '2.1.0',
-    }, null, 2);
+      version: '2.2.0',
+      caeVersion: '2.0',
+    };
+
+    return JSON.stringify(data, null, 2);
   }
 
   async getStorageInfo(): Promise<{ keys: string[]; estimatedSize: number; }> {
     const info = await this.getHybridService().getStorageInfo();
     return {
-      keys: ['hybrid-storage'],
+      keys: ['hybrid-storage', 'context-snapshots', 'learned-patterns'],
       estimatedSize: info.cacheSize,
     };
   }
 }
+
+// Maintain backward compatibility
+// Remove the duplicate class declaration to fix duplicate identifier error
 
 export default StorageService;

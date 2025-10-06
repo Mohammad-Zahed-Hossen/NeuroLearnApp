@@ -11,7 +11,6 @@ import { AppState } from 'react-native';
 import {
   cognitiveSoundscapeEngine,
   SoundscapeType,
-  SoundscapeState,
 } from '../services/learning/CognitiveSoundscapeEngine';
 import { HybridStorageService } from '../services/storage/HybridStorageService';
 import { validatePresetAssets } from '../services/learning/SoundscapeAssetValidator';
@@ -222,7 +221,6 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
   const initialize = useCallback(async () => {
     try {
       console.log('🎵 Initializing Cognitive Soundscape System...');
-      await cognitiveSoundscapeEngine.initialize();
 
       // Run a lightweight runtime validation to ensure presets reference bundled assets
       // This logs missing mappings to the console during startup for easier debugging.
@@ -297,10 +295,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
       }
     };
 
-    const sub = AppState.addEventListener(
-      'change',
-      handleAppStateChange as any,
-    );
+    const sub = AppState.addEventListener('change', handleAppStateChange as any);
 
     return () => {
       try {
@@ -407,9 +402,10 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
     [state.cognitiveLoad, state.adaptiveMode],
   );
 
-  const stopSoundscape = useCallback(async (fadeOut: boolean = true) => {
+
+  const stopSoundscape = useCallback(async () => {
     try {
-      await cognitiveSoundscapeEngine.stopSoundscape(fadeOut);
+      await cognitiveSoundscapeEngine.stopSoundscape();
       dispatch({ type: 'PRESET_STOP' });
     } catch (err) {
       console.error('❌ Failed to stop soundscape:', err);
@@ -477,7 +473,12 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
       };
 
       try {
-        await (cognitiveSoundscapeEngine as any).recordPerformance(performance);
+        await cognitiveSoundscapeEngine.recordSoundscapePerformance({
+          taskCompletion: performance,
+          userSatisfaction: performance * 5, // Convert 0-1 to 1-5 scale
+          focusImprovement: performance,
+          contextAccuracy: 0.8, // Default assumption
+        });
       } catch (e) {
         console.warn('Failed to persist performance in engine', e);
       }
@@ -518,7 +519,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
   }, []);
 
   const reset = useCallback(async () => {
-    await stopSoundscape(false);
+    await stopSoundscape();
     dispatch({ type: 'RESET' });
   }, [stopSoundscape]);
   const clearError = useCallback(() => {

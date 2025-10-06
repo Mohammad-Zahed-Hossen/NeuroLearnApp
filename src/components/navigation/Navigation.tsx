@@ -564,11 +564,18 @@ export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
 
 interface HeaderProps {
   title: string;
+  subtitle?: string;
   theme: ThemeType;
   onMenuPress: () => void;
   rightComponent?: React.ReactNode;
   cognitiveLoad?: number; // 0-1 scale for adaptive UI
   floating?: boolean; // When false, header renders in flow (non-absolute)
+  backgroundColor?: string;
+  rightActions?: Array<{
+    icon: string;
+    onPress: () => void;
+    badge?: number;
+  }>;
 }
 
 // NEW FLOATING AppHeader COMPONENT (MODIFIED)

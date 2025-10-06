@@ -26,7 +26,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import { AuraState, AuraContext } from '../../services/learning/CognitiveAuraService';
+import { AuraState, AuraContext } from '../../services/ai/CognitiveAuraService';
 
 interface MicroTaskCardProps {
   auraState: AuraState;
@@ -44,24 +44,31 @@ const { width: screenWidth } = Dimensions.get('window');
  * Context-specific styling configurations
  */
 const CONTEXT_STYLES = {
-  RECOVERY: {
-    primaryColor: '#10B981',    // Gentle green
-    backgroundColor: '#ECFDF5', // Light green background
-    borderColor: '#6EE7B7',     // Soft green border
-    iconName: 'heart-pulse',
-    gradientColors: ['#ECFDF5', '#D1FAE5'],
-  },
-  FOCUS: {
-    primaryColor: '#3B82F6',    // Clear blue
+  DeepFocus: {
+    primaryColor: '#3B82F6', // Clear blue
     backgroundColor: '#EFF6FF', // Light blue background
-    borderColor: '#93C5FD',     // Soft blue border
+    borderColor: '#93C5FD', // Soft blue border
     iconName: 'target',
     gradientColors: ['#EFF6FF', '#DBEAFE'],
   },
-  OVERLOAD: {
-    primaryColor: '#F59E0B',    // Warm amber
+  CreativeFlow: {
+    primaryColor: '#8B5CF6', // Creative purple
+    backgroundColor: '#F3F4F6', // Light purple background
+    borderColor: '#C4B5FD', // Soft purple border
+    iconName: 'lightbulb-on',
+    gradientColors: ['#F3F4F6', '#E9D5FF'],
+  },
+  FragmentedAttention: {
+    primaryColor: '#10B981', // Gentle green
+    backgroundColor: '#ECFDF5', // Light green background
+    borderColor: '#6EE7B7', // Soft green border
+    iconName: 'heart-pulse',
+    gradientColors: ['#ECFDF5', '#D1FAE5'],
+  },
+  CognitiveOverload: {
+    primaryColor: '#F59E0B', // Warm amber
     backgroundColor: '#FFFBEB', // Light amber background
-    borderColor: '#FCD34D',     // Soft amber border
+    borderColor: '#FCD34D', // Soft amber border
     iconName: 'brain',
     gradientColors: ['#FFFBEB', '#FEF3C7'],
   },
@@ -107,7 +114,7 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
 
   // Pulse animation for attention
   useEffect(() => {
-    if (!isMinimized && auraState.context === 'OVERLOAD') {
+    if (!isMinimized && auraState.context === 'CognitiveOverload') {
       const pulseSequence = Animated.sequence([
         Animated.timing(pulseAnimation, {
           toValue: 1.1,
@@ -135,13 +142,16 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
   }, [isMinimized, onMinimizeToggle]);
 
   // Handle task completion
-  const handleTaskComplete = useCallback((completed: boolean) => {
-    if (taskStartTime) {
-      const timeSpent = Date.now() - taskStartTime.getTime();
-      onTaskComplete?.(completed, timeSpent);
-      setTaskStartTime(null);
-    }
-  }, [taskStartTime, onTaskComplete]);
+  const handleTaskComplete = useCallback(
+    (completed: boolean) => {
+      if (taskStartTime) {
+        const timeSpent = Date.now() - taskStartTime.getTime();
+        onTaskComplete?.(completed, timeSpent);
+        setTaskStartTime(null);
+      }
+    },
+    [taskStartTime, onTaskComplete],
+  );
 
   // Handle task skip
   const handleTaskSkip = useCallback(() => {
@@ -152,12 +162,16 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
   // Get context-specific message
   const getContextMessage = useCallback((context: AuraContext): string => {
     switch (context) {
-      case 'RECOVERY':
+      case 'FragmentedAttention':
         return 'Gentle learning mode - take your time';
-      case 'FOCUS':
+      case 'DeepFocus':
         return 'Optimal learning window - seize the moment';
-      case 'OVERLOAD':
+      case 'CreativeFlow':
+        return 'Creative flow - let ideas emerge naturally';
+      case 'CognitiveOverload':
         return 'High cognitive load - keep it simple';
+      default:
+        return 'Adaptive learning mode';
     }
   }, []);
 
@@ -165,9 +179,13 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
   const getPriorityBadge = useCallback(() => {
     if (!auraState.targetNodePriority) return null;
 
-    const priorityConfig = {
+    const priorityConfig: Record<string, { label: string; color: string; text: string }> = {
       P1_URGENT_PREREQUISITE: { label: 'P1', color: '#EF4444', text: 'Urgent' },
-      P2_FORGETTING_RISK: { label: 'P2', color: '#F59E0B', text: 'Memory Risk' },
+      P2_FORGETTING_RISK: {
+        label: 'P2',
+        color: '#F59E0B',
+        text: 'Memory Risk',
+      },
       P3_COGNITIVE_LOAD: { label: 'P3', color: '#6B7280', text: 'High Load' },
     };
 
@@ -202,7 +220,12 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
               size={16}
               color={contextStyle.primaryColor}
             />
-            <Text style={[styles.minimizedText, { color: contextStyle.primaryColor }]}>
+            <Text
+              style={[
+                styles.minimizedText,
+                { color: contextStyle.primaryColor },
+              ]}
+            >
               {auraState.context}
             </Text>
             {getPriorityBadge()}
@@ -236,10 +259,7 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
     >
       <GlassCard
         theme={theme}
-        style={[
-          styles.card,
-          { borderColor: contextStyle.borderColor }
-        ]}
+        style={[styles.card, { borderColor: contextStyle.borderColor }]}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -249,7 +269,12 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
               size={20}
               color={contextStyle.primaryColor}
             />
-            <Text style={[styles.contextLabel, { color: contextStyle.primaryColor }]}>
+            <Text
+              style={[
+                styles.contextLabel,
+                { color: contextStyle.primaryColor },
+              ]}
+            >
               {auraState.context}
             </Text>
             {getPriorityBadge()}
@@ -271,17 +296,15 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
               onPress={handleMinimizeToggle}
               style={styles.headerButton}
             >
-              <Icon
-                name="minus"
-                size={18}
-                color={themeColors.textSecondary}
-              />
+              <Icon name="minus" size={18} color={themeColors.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Context Message */}
-        <Text style={[styles.contextMessage, { color: themeColors.textSecondary }]}>
+        <Text
+          style={[styles.contextMessage, { color: themeColors.textSecondary }]}
+        >
           {getContextMessage(auraState.context)}
         </Text>
 
@@ -296,17 +319,32 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
         {showDetails && (
           <View style={styles.detailsContainer}>
             <View style={styles.detailRow}>
-              <Text style={[styles.detailLabel, { color: themeColors.textSecondary }]}>
+              <Text
+                style={[
+                  styles.detailLabel,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
                 Cognitive Score:
               </Text>
-              <Text style={[styles.detailValue, { color: contextStyle.primaryColor }]}>
+              <Text
+                style={[
+                  styles.detailValue,
+                  { color: contextStyle.primaryColor },
+                ]}
+              >
                 {(auraState.compositeCognitiveScore * 100).toFixed(0)}%
               </Text>
             </View>
 
             {auraState.targetNode && (
               <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: themeColors.textSecondary }]}>
+                <Text
+                  style={[
+                    styles.detailLabel,
+                    { color: themeColors.textSecondary },
+                  ]}
+                >
                   Focus Target:
                 </Text>
                 <Text style={[styles.detailValue, { color: themeColors.text }]}>
@@ -316,7 +354,12 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
             )}
 
             <View style={styles.detailRow}>
-              <Text style={[styles.detailLabel, { color: themeColors.textSecondary }]}>
+              <Text
+                style={[
+                  styles.detailLabel,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
                 Confidence:
               </Text>
               <Text style={[styles.detailValue, { color: themeColors.text }]}>
@@ -325,7 +368,12 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
             </View>
 
             <View style={styles.detailRow}>
-              <Text style={[styles.detailLabel, { color: themeColors.textSecondary }]}>
+              <Text
+                style={[
+                  styles.detailLabel,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
                 Adaptations:
               </Text>
               <Text style={[styles.detailValue, { color: themeColors.text }]}>
@@ -342,7 +390,7 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
             style={[
               styles.actionButton,
               styles.completeButton,
-              { backgroundColor: contextStyle.primaryColor }
+              { backgroundColor: contextStyle.primaryColor },
             ]}
             activeOpacity={0.8}
           >
@@ -355,12 +403,21 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
             style={[
               styles.actionButton,
               styles.skipButton,
-              { borderColor: themeColors.border }
+              { borderColor: themeColors.border },
             ]}
             activeOpacity={0.8}
           >
-            <Icon name="skip-next" size={16} color={themeColors.textSecondary} />
-            <Text style={[styles.actionButtonText, { color: themeColors.textSecondary }]}>
+            <Icon
+              name="skip-next"
+              size={16}
+              color={themeColors.textSecondary}
+            />
+            <Text
+              style={[
+                styles.actionButtonText,
+                { color: themeColors.textSecondary },
+              ]}
+            >
               Skip
             </Text>
           </TouchableOpacity>
@@ -371,7 +428,7 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
           <View
             style={[
               styles.confidenceBar,
-              { backgroundColor: themeColors.border }
+              { backgroundColor: themeColors.border },
             ]}
           >
             <View
@@ -379,12 +436,17 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
                 styles.confidenceFill,
                 {
                   backgroundColor: contextStyle.primaryColor,
-                  width: `${auraState.confidence * 100}%`
-                }
+                  width: `${auraState.confidence * 100}%`,
+                },
               ]}
             />
           </View>
-          <Text style={[styles.confidenceText, { color: themeColors.textSecondary }]}>
+          <Text
+            style={[
+              styles.confidenceText,
+              { color: themeColors.textSecondary },
+            ]}
+          >
             Algorithm Confidence
           </Text>
         </View>
@@ -464,7 +526,7 @@ const styles = StyleSheet.create({
   priorityBadge: {
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
-    borderRadius: borderRadius.xs,
+    borderRadius: borderRadius.sm,
     marginLeft: spacing.xs,
   },
   priorityLabel: {
@@ -542,12 +604,12 @@ const styles = StyleSheet.create({
   confidenceBar: {
     width: '100%',
     height: 3,
-    borderRadius: borderRadius.xs,
+    borderRadius: borderRadius.sm,
     overflow: 'hidden',
   },
   confidenceFill: {
     height: '100%',
-    borderRadius: borderRadius.xs,
+    borderRadius: borderRadius.sm,
   },
   confidenceText: {
     fontSize: 10,

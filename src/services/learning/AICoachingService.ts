@@ -451,7 +451,7 @@ export class AICoachingService {
     // Clean old cache entries periodically
     if (this.responseCache.size > 100) {
       const cutoffTime = Date.now() - this.config.cacheTimeout;
-      for (const [key, value] of this.responseCache.entries()) {
+      for (const [key, value] of Array.from(this.responseCache.entries())) {
         if (value.timestamp < cutoffTime) {
           this.responseCache.delete(key);
         }
@@ -525,7 +525,7 @@ export class AICoachingService {
     }
 
     let oldestTimestamp = Date.now();
-    for (const cached of this.responseCache.values()) {
+    for (const cached of Array.from(this.responseCache.values())) {
       if (cached.timestamp < oldestTimestamp) {
         oldestTimestamp = cached.timestamp;
       }
