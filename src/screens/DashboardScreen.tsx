@@ -18,11 +18,19 @@ import {
 } from '../components/GlassComponents';
 import { colors, spacing, typography } from '../theme/colors';
 import { ThemeType } from '../theme/colors';
-import HybridStorageService from '../services/storage/HybridStorageService';
+import StorageService from '../services/storage/StorageService';
 import SpacedRepetitionService from '../services/learning/SpacedRepetitionService';
 import { FocusTimerService } from '../services/learning/FocusTimerService';
 import { Flashcard, StudySession, ProgressData, Task } from '../types';
 import AICheckinCard from '../components/ai/AICheckinCard';
+
+import {
+  useAuraContext,
+  useCognitiveLoad,
+  useDashboardData,
+} from '../hooks/useOptimizedSelectors';
+
+import PerformanceMonitor from '../utils/PerformanceMonitor';
 
 interface DashboardScreenProps {
   theme: ThemeType;
@@ -69,164 +77,54 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [menuVisible, setMenuVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const [stats, setStats] = useState<DashboardStats>({
-    dueCards: 0,
-    logicNodesDue: 0,
-    criticalLogicCount: 0,
-    atRiskCards: 0,
-    activeTasks: 0,
-    studyStreak: 0,
-    todayFocusTime: 0,
-    cognitiveLoad: 1.0,
-    retentionRate: 0,
-    weeklyProgress: 0,
-    optimalSessionSize: 10,
-    focusStreak: 0,
-    averageFocusRating: 0,
-    distractionsPerSession: 0,
-  });
 
+  // Use optimized selectors for dashboard data
+  const dashboardData = useDashboardData();
+  const auraContext = useAuraContext();
+  const cognitiveLoad = useCognitiveLoad();
+
+  // Performance monitor instance
+  const performanceMonitor = PerformanceMonitor.getInstance();
+
+  // Local state for loading and refreshing
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
 
   const themeColors = colors[theme];
-  const storage = HybridStorageService.getInstance();
-  const srs = SpacedRepetitionService.getInstance();
 
+  // Load dashboard data on mount and animate header
   useEffect(() => {
-    loadDashboardData();
-    // Animate header in
+    setLoading(false); // Assume data is reactive via optimized selectors
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 600,
       useNativeDriver: true,
     }).start();
-  }, []);
-
-  const loadDashboardData = async () => {
-    try {
-      setLoading(true);
-
-      const [flashcardsData, sessionsData, progressData, tasksData] =
-        await Promise.all([
-          storage.getFlashcards(),
-          storage.getStudySessions(),
-          storage.getProgressData(),
-          storage.getTasks(),
-        ]);
-
-      // Calculate science-based statistics
-      const calculatedStats = await calculateCognitiveStats(
-        flashcardsData,
-        sessionsData,
-        progressData,
-        tasksData,
-      );
-
-      setStats(calculatedStats);
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const calculateCognitiveStats = async (
-    flashcards: Flashcard[],
-    sessions: StudySession[],
-    progress: ProgressData,
-    tasks: Task[],
-  ): Promise<DashboardStats> => {
-    // Get due cards and logic nodes using StorageService
-    const dueData = await storage.getCardsDueToday();
-
-    // Due cards using FSRS algorithm
-    const dueCards = dueData.flashcards.length;
-
-    // Logic nodes due today
-    const logicNodesDue = dueData.logicNodes.length;
-
-    // Critical logic nodes count
-    const criticalLogicCount = dueData.criticalLogicCount;
-
-    // Cards at risk of being forgotten (predictive)
-    const atRiskCards = srs.getAtRiskCards(flashcards, 0.3).length;
-
-    // Active tasks
-    const activeTasks = tasks.filter((task) => !task.isCompleted).length;
-
-    // Cognitive load based on recent performance
-    const cognitiveLoad = srs.calculateCognitiveLoad(sessions.slice(-10));
-
-    // Optimal session size based on cognitive load (include logic nodes)
-    const optimalSessionSize = srs.getOptimalSessionSize(
-      cognitiveLoad,
-      dueCards + logicNodesDue,
-    );
-
-    // Retention rate from actual study data
-    const retentionRate = calculateRetentionRate(sessions, flashcards);
-
-    // Calculate current study streak based on actual study sessions
-    const studyStreak = await storage.calculateCurrentStudyStreak();
-
-    // Weekly progress calculation
-    const weeklyGoal = 2520; // 7 days * 360 minutes
-    const weeklyFocusTime = progress.weeklyData.reduce(
-      (acc, day) => acc + day.focusTime,
-      0,
-    );
-    const weeklyProgress = Math.min(100, (weeklyFocusTime / weeklyGoal) * 100);
-
-    // Get focus health metrics from StorageService (correct source)
-    const focusHealthData = await storage.getFocusHealthMetrics();
-
-    return {
-      dueCards,
-      logicNodesDue,
-      criticalLogicCount,
-      atRiskCards,
-      activeTasks,
-      studyStreak,
-      todayFocusTime: progress.todayFocusTime,
-      cognitiveLoad,
-      retentionRate: Math.round(retentionRate),
-      weeklyProgress: Math.round(weeklyProgress),
-      optimalSessionSize,
-      focusStreak: focusHealthData.streakCount,
-      averageFocusRating: focusHealthData.averageFocusRating,
-      distractionsPerSession: focusHealthData.distractionsPerSession,
-    };
-  };
-
-  const calculateRetentionRate = (
-    sessions: StudySession[],
-    flashcards: Flashcard[],
-  ): number => {
-    const recentSessions = sessions
-      .filter((s) => s.type === 'flashcards' && s.completed)
-      .slice(-5);
-
-    if (recentSessions.length === 0) return 0; // No data available
-
-    // Calculate based on cards that were successfully recalled
-    const successfulCards = recentSessions.reduce((acc, session) => {
-      return acc + (session.cardsStudied || 0);
-    }, 0);
-
-    const totalReviewed = recentSessions.length * 10; // Assume 10 cards per session
-
-    return Math.min(
-      95,
-      Math.max(0, (successfulCards / Math.max(1, totalReviewed)) * 100),
-    );
-  };
+  }, [fadeAnim]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadDashboardData();
+    // Trigger any refresh logic if needed
     setRefreshing(false);
+  };
+
+  // Compose stats from optimized selectors
+  const stats: DashboardStats = {
+    dueCards: dashboardData.dueCards || 0,
+    logicNodesDue: dashboardData.logicNodesDue || 0,
+    criticalLogicCount: dashboardData.criticalLogicCount || 0,
+    atRiskCards: dashboardData.atRiskCards || 0,
+    activeTasks: dashboardData.activeTasks || 0,
+    studyStreak: dashboardData.studyStreak || 0,
+    todayFocusTime: dashboardData.todayFocusTime || 0,
+    cognitiveLoad: cognitiveLoad || 0.5,
+    retentionRate: dashboardData.retentionRate || 0,
+    weeklyProgress: dashboardData.weeklyProgress || 0,
+    optimalSessionSize: dashboardData.optimalSessionSize || 10,
+    focusStreak: dashboardData.focusStreak || 0,
+    averageFocusRating: dashboardData.averageFocusRating || 3,
+    distractionsPerSession: dashboardData.distractionsPerSession || 0,
   };
 
   const quickSettings = [
@@ -871,7 +769,7 @@ const MetricsModal: React.FC<MetricsModalProps> = ({
           onPress={onClose}
         />
 
-        <GlassCard theme={theme} style={styles.modalCard}>
+        <GlassCard theme={theme} style={styles.modalCard} variant="modal">
           <View style={styles.modalHeader}>
             <Text style={[styles.modalTitle, { color: themeColors.text }]}>
               {selectedGroupData.title}
@@ -915,7 +813,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
   },
   settingsBackdrop: {
     position: 'absolute',
@@ -1160,7 +1058,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
   },
   modalBackdrop: {
     position: 'absolute',

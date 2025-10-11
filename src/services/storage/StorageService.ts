@@ -7,6 +7,7 @@
  */
 
 import HybridStorageService from './HybridStorageService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Flashcard,
   Task,
@@ -109,6 +110,60 @@ export interface CognitiveForecasting {
   predictionAccuracy?: number;
   createdAt: string;
   evaluatedAt?: string;
+}
+
+/**
+ * Cognitive sample data
+ */
+export interface CognitiveSample {
+  timestamp: number;
+  gazeStability: number;
+  headStillness: number;
+  blinkRate: number;
+  confidence?: number;
+  environmentalContext: {
+    timeIntelligence: TimeIntelligence;
+    locationContext: LocationContext;
+    digitalBodyLanguage: DigitalBodyLanguage;
+    batteryLevel: number;
+    isCharging: boolean;
+    networkQuality: string;
+  };
+}
+
+/**
+ * Processed cognitive metrics
+ */
+export interface ProcessedMetrics {
+  timestamp: number;
+  rawAttention: number;
+  filteredAttention: number;
+  cognitiveLoad: number;
+  stressIndicators: number[];
+  qualityScore: number;
+}
+
+/**
+ * Session statistics
+ */
+export interface SessionStats {
+  startTime: number;
+  duration: number;
+  averageAttention: number;
+  peakAttention: number;
+  lowAttention: number;
+  stabilityScore: number;
+  interruptions: number;
+}
+
+/**
+ * Cognitive log data
+ */
+export interface CognitiveLog {
+  userId: string;
+  samples: CognitiveSample[];
+  processedMetrics: ProcessedMetrics[];
+  sessionStats: SessionStats;
 }
 
 // ==================== Existing Interfaces ====================
@@ -218,6 +273,44 @@ export interface EnhancedFlashcard extends Flashcard {
 }
 
 /**
+ * Neuroplasticity session data for tracking synapse strengthening sessions
+ */
+export interface NeuroplasticitySession {
+  id: string;
+  sessionType: 'synapse_strengthening' | 'pathway_building' | 'cluster_integration';
+  targetEdgeIds: string[];
+  startTime: Date;
+  endTime?: Date;
+  completedTasks: number;
+  successRate: number;
+  cognitiveStrain: number;
+  plasticityGains: Array<{ edgeId: string; strengthDelta: number }>;
+  adaptationsTriggered: string[];
+  nextSessionRecommendations: string[];
+}
+
+/**
+ * Synapse data for storing neural connection information
+ */
+export interface SynapseData {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  strength: number; // 0-1 normalized
+  lastPracticeDate: Date;
+  practiceCount: number;
+  retentionRate: number;
+  plasticityScore: number;
+  urgencyLevel: 'critical' | 'moderate' | 'stable';
+  connectionType: 'association' | 'prerequisite' | 'similarity' | 'logical' | 'temporal';
+  microTasksGenerated: number;
+  strengthHistory: Array<{ date: Date; strength: number }>;
+  neuralPathways: string[];
+  cognitiveLoad: number;
+  lastReviewResult: 'success' | 'partial' | 'failed' | null;
+}
+
+/**
  *  StorageService with CAE 2.0 Support
  * Maintains backward compatibility while adding anticipatory learning capabilities
  */
@@ -247,6 +340,14 @@ export class StorageService {
 
   /**
    * Store context snapshot for pattern learning and analytics
+  *
+  * IMPORTANT: All producers of environmental/context snapshots (CAE 2.0)
+  * must call `StorageService.getInstance().saveContextSnapshot(snapshot)`
+  * so the snapshot flows through the HybridStorageService hot→warm→cold
+  * pipeline. Direct writes to the warm DB or AsyncStorage will bypass
+  * merge/conflict resolution, queueing for cold sync, telemetry, and
+  * retention/cleanup policies — please use the facade to ensure
+  * consistent behavior across the CAE stack.
    */
   async saveContextSnapshot(snapshot: ContextSnapshot): Promise<void> {
     const storedSnapshot: StoredContextSnapshot = {
@@ -391,6 +492,44 @@ export class StorageService {
 
     await this.getHybridService().saveLearnedPattern?.(savedPattern);
     return savedPattern;
+  }
+
+  // ==================== GENERIC ITEM PASS-THROUGH ====================
+  // Expose a minimal getItem/setItem pair so existing modules that
+  // rely on ad-hoc AsyncStorage keys can use the StorageService facade
+  // instead of reaching into HybridStorageService directly.
+  async getItem(key: string): Promise<any> {
+    return this.getHybridService().getItem(key);
+  }
+
+  async setItem(key: string, value: any): Promise<void> {
+    return this.getHybridService().setItem(key, value);
+  }
+
+  /**
+   * Remove an item from storage. Use HybridService if available; fall back to AsyncStorage.
+   */
+  async removeItem(key: string): Promise<void> {
+    try {
+      const svc: any = this.getHybridService();
+      if (svc && typeof svc.removeItem === 'function') return svc.removeItem(key);
+    } catch (e) {
+      // continue to fallback
+    }
+    try {
+      await AsyncStorage.removeItem(key);
+    } catch (e) {
+      // swallow
+    }
+  }
+
+  // ==================== USER PROGRESS FACADE ====================
+  async getUserProgress(userId: string): Promise<any | null> {
+    return this.getHybridService().getUserProgress?.(userId) ?? null;
+  }
+
+  async saveUserProgress(userId: string, progress: any): Promise<void> {
+    return this.getHybridService().saveUserProgress?.(userId, progress);
   }
 
   /**
@@ -566,6 +705,34 @@ export class StorageService {
     return this.getHybridService().getFocusSessions();
   }
 
+  async getSleepEntries(userId: string, days: number = 30): Promise<any[]> {
+    return this.getHybridService().getSleepEntries?.(userId, days) || [];
+  }
+
+  async saveSleepEntries(userId: string, entries: any[]): Promise<void> {
+    return this.getHybridService().saveSleepEntries?.(userId, entries);
+  }
+
+  async getCognitiveMetrics(userId: string): Promise<any[]> {
+    return this.getHybridService().getCognitiveMetrics?.(userId) || [];
+  }
+
+  async saveCognitiveMetrics(userId: string, metrics: any[]): Promise<void> {
+    return this.getHybridService().saveCognitiveMetrics?.(userId, metrics);
+  }
+
+  async saveCognitiveSession(sessionId: string, log: CognitiveLog): Promise<void> {
+    return this.getHybridService().saveCognitiveSession?.(sessionId, log);
+  }
+
+  async getHealthMetrics(userId: string): Promise<any | null> {
+    return this.getHybridService().getHealthMetrics?.(userId) || null;
+  }
+
+  async saveHealthMetrics(userId: string, metrics: any): Promise<void> {
+    return this.getHybridService().saveHealthMetrics?.(userId, metrics);
+  }
+
   async getFocusSession(sessionId: string): Promise<FocusSession | null> {
     return this.getHybridService().getFocusSession(sessionId);
   }
@@ -583,7 +750,26 @@ export class StorageService {
   }
 
   async getFocusHealthMetrics(): Promise<FocusHealthMetrics | null> {
+    // HybridStorageService returns a non-null FocusHealthMetrics by design
+    // Promote to non-nullable here to match existing callers which expect values
     return this.getHybridService().getFocusHealthMetrics();
+  }
+
+  // ==================== DASHBOARD / UTILITIES PROXIES ====================
+  async getCardsDueToday(): Promise<{
+    flashcards: (Flashcard | Flashcard)[];
+    logicNodes: LogicNode[];
+    criticalLogicCount: number;
+  }> {
+    return this.getHybridService().getCardsDueToday?.() || { flashcards: [], logicNodes: [], criticalLogicCount: 0 };
+  }
+
+  async calculateCurrentStudyStreak(): Promise<number> {
+    return this.getHybridService().calculateCurrentStudyStreak?.() ?? 0;
+  }
+
+  async pruneOldFocusData(olderThanDays: number = 90): Promise<void> {
+    return this.getHybridService().pruneOldFocusData?.(olderThanDays);
   }
 
   // ==================== READING SESSIONS ====================
@@ -621,9 +807,17 @@ export class StorageService {
   }
 
   // ==================== LEGACY COMPATIBILITY STUBS ====================
-  async getStudySessions(): Promise<StudySession[]> { return []; }
-  async saveStudySession(session: StudySession): Promise<void> {}
-  async saveStudySessions(sessions: StudySession[]): Promise<void> {}
+  async getStudySessions(): Promise<StudySession[]> {
+    return this.getHybridService().getStudySessions?.() || [];
+  }
+
+  async saveStudySession(session: StudySession): Promise<void> {
+    return this.getHybridService().saveStudySession?.(session);
+  }
+
+  async saveStudySessions(sessions: StudySession[]): Promise<void> {
+    return this.getHybridService().saveStudySessions?.(sessions);
+  }
   async getProgressData(): Promise<ProgressData> {
     return {
       studyStreak: 1,
@@ -637,10 +831,20 @@ export class StorageService {
     };
   }
   async saveProgressData(progress: ProgressData): Promise<void> {}
-  async getTasks(): Promise<Task[]> { return []; }
-  async saveTasks(tasks: Task[]): Promise<void> {}
-  async getMemoryPalaces(): Promise<MemoryPalace[]> { return []; }
-  async saveMemoryPalaces(palaces: MemoryPalace[]): Promise<void> {}
+  async getTasks(): Promise<Task[]> {
+    return this.getHybridService().getTasks?.() || [];
+  }
+
+  async saveTasks(tasks: Task[]): Promise<void> {
+    return this.getHybridService().saveTasks?.(tasks);
+  }
+  async getMemoryPalaces(): Promise<MemoryPalace[]> {
+    return this.getHybridService().getMemoryPalaces?.() || [];
+  }
+
+  async saveMemoryPalaces(palaces: MemoryPalace[]): Promise<void> {
+    return this.getHybridService().saveMemoryPalaces?.(palaces);
+  }
 
   async clearAllData(): Promise<void> {
     return this.getHybridService().clearAllData();
@@ -675,6 +879,55 @@ export class StorageService {
       keys: ['hybrid-storage', 'context-snapshots', 'learned-patterns'],
       estimatedSize: info.cacheSize,
     };
+  }
+
+  /**
+   * Reset sound optimal profiles (proxy to hybrid service)
+   */
+  async resetOptimalProfiles(): Promise<void> {
+    return this.getHybridService().resetOptimalProfiles?.();
+  }
+
+  // Health-related methods for AdvancedSleepService and HabitFormationService
+  async getLastSleepEntry(userId: string): Promise<any> {
+    // Return mock data for now - implement actual storage later
+    return null;
+  }
+
+  async getUserHealthProfile(userId: string): Promise<any> {
+    // Return mock data for now - implement actual storage later
+    return {
+      userId,
+      sleepGoal: 8,
+      stressLevel: 0.5,
+      energyLevel: 0.7,
+      lastUpdated: new Date()
+    };
+  }
+
+  async getMovementData(userId: string, days: number): Promise<any[]> {
+    // Return mock data for now - implement actual storage later
+    return [];
+  }
+
+  async getHabit(userId: string, habitId: string): Promise<any> {
+    // Return mock data for now - implement actual storage later
+    return null;
+  }
+
+  async getHabitCompletionHistory(userId: string, habitId: string, days: number): Promise<any[]> {
+    // Return mock data for now - implement actual storage later
+    return [];
+  }
+
+  async getUserHabits(userId: string): Promise<any[]> {
+    // Return mock data for now - implement actual storage later
+    return [];
+  }
+
+  async getRewardHistory(userId: string, days: number): Promise<any[]> {
+    // Return mock data for now - implement actual storage later
+    return [];
   }
 }
 

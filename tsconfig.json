@@ -2,7 +2,7 @@
   "extends": "expo/tsconfig.base",
 
   // This is where 'include' belongs: at the root level.
-  "include": ["**/*.ts", "**/*.tsx", "./src/types/reanimated.d.ts"],
+  "include": ["**/*.ts", "**/*.tsx", "src/types/**/*.d.ts"],
   "exclude": [
     "node_modules",
     "__tests__",
@@ -20,7 +20,8 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "downlevelIteration": true,
-    "types": ["react-native-reanimated", "node", "jest"],
-    "skipLibCheck": true
+    "types": ["react-native-reanimated", "node", "jest", "@notionhq/client"],
+    "skipLibCheck": true,
+    "isolatedModules": true
   }
 }

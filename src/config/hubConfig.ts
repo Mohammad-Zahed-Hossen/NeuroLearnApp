@@ -1,4 +1,4 @@
- // src/config/hubConfig.ts
+// src/config/hubConfig.ts
 // Centralized hub card configurations for DRY principle
 
 export interface HubCard {
@@ -45,6 +45,10 @@ export interface NavigationParams {
   'memory-palace'?: {
     palaceId?: string;
     mode?: 'create' | 'review';
+  };
+  'synapse-builder'?: {
+    mode?: 'create' | 'analyze' | 'explore';
+    topic?: string;
   };
   dashboard?: {
     tab?: 'overview' | 'analytics' | 'insights';
@@ -99,6 +103,17 @@ export const learnCards: HubCard[] = [
     usageFrequency: 2,
     streakCount: 0,
   },
+  {
+    id: 'synapse-builder',
+    title: 'Synapse Builder',
+    description: 'AI-powered knowledge synthesis and analysis',
+    icon: '🧬',
+    screen: 'synapse-builder',
+    color: '#EC4899',
+    cognitiveLoad: 0.8,
+    usageFrequency: 1,
+    streakCount: 0,
+  },
 ];
 
 export const focusCards: HubCard[] = [
@@ -137,16 +152,52 @@ export const focusCards: HubCard[] = [
   },
 ];
 
+export const integrationCards: HubCard[] = [
+  {
+    id: 'tasks',
+    title: 'Task Manager',
+    description: 'GTD productivity system with external integrations',
+    icon: '✅',
+    screen: 'tasks',
+    color: '#10B981',
+    cognitiveLoad: 0.4,
+    usageFrequency: 3,
+    streakCount: 0,
+  },
+  {
+    id: 'notion-dashboard',
+    title: 'Notion Integration',
+    description: 'Knowledge bridge and sync dashboard',
+    icon: '📝',
+    screen: 'notion-dashboard',
+    color: '#F59E0B',
+    cognitiveLoad: 0.4,
+    usageFrequency: 2,
+    streakCount: 0,
+  },
+];
+
 export const profileCards: HubCard[] = [
   {
-    id: 'analytics',
-    title: 'Analytics',
-    description: 'Learning progress and insights',
+    id: 'holistic-analytics',
+    title: 'Holistic Analytics',
+    description: 'Advanced cognitive performance dashboard',
+    icon: '🧠',
+    screen: 'holistic-analytics',
+    color: '#8B5CF6',
+    cognitiveLoad: 0.6,
+    usageFrequency: 2,
+    streakCount: 0,
+  },
+  {
+    id: 'monitoring',
+    title: 'System Monitor',
+    description: 'Real-time engine diagnostics and health monitoring',
     icon: '📊',
-    screen: 'dashboard',
+    screen: 'monitoring',
     color: '#06B6D4',
-    params: { tab: 'analytics' },
-    usageFrequency: 3,
+    cognitiveLoad: 0.4,
+    usageFrequency: 1,
     streakCount: 0,
   },
   {

@@ -24,7 +24,7 @@ import {
 } from '../../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import HybridStorageService from '../../services/storage/HybridStorageService';
+import StorageService from '../../services/storage/StorageService';
 import { TodoistService } from '../../services/integrations/TodoistService';
 import { Task } from '../../types/index';
 
@@ -69,7 +69,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   });
 
   const themeColors = colors[theme];
-  const storage = HybridStorageService.getInstance();
+  const storage = StorageService.getInstance();
   const todoistService = TodoistService.getInstance();
 
   useEffect(() => {

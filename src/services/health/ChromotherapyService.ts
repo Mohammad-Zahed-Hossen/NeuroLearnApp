@@ -411,13 +411,43 @@ export class ChromotherapyService {
 
   private getIntensityColor(intensity: number): string {
     const colors = ['#10B981', '#22C55E', '#F59E0B', '#EF4444', '#DC2626'];
-    return colors[intensity - 1] || '#6B7280';
+    // Accept either a normalized intensity (0.0-1.0) or a level (1-5).
+    if (intensity <= 1) {
+      // Map normalized value to index 0..4
+      const idx = Math.max(0, Math.min(colors.length - 1, Math.floor(intensity * colors.length)));
+      return colors[idx] || '#6B7280';
+    }
+
+    // Treat as 1-5 level
+    const level = Math.round(intensity);
+    const idx = Math.max(0, Math.min(colors.length - 1, level - 1));
+    return colors[idx] || '#6B7280';
   }
 
   private interpolateColor(color1: string, color2: string, factor: number): string {
-    // Simple color interpolation - would use a proper color library in production
+    // Interpolate two hex colors (e.g. #RRGGBB)
     const f = Math.max(0, Math.min(1, factor));
-    return f < 0.5 ? color1 : color2;
+    const hex = (c: string) => {
+      c = c.replace('#', '');
+      if (c.length === 3) c = c.split('').map(x => x + x).join('');
+      return [
+        parseInt(c.substring(0, 2), 16),
+        parseInt(c.substring(2, 4), 16),
+        parseInt(c.substring(4, 6), 16)
+      ];
+    };
+    const [r1, g1, b1] = hex(color1);
+    const [r2, g2, b2] = hex(color2);
+    const r = Math.round(r1 + (r2 - r1) * f);
+    const g = Math.round(g1 + (g2 - g1) * f);
+    const b = Math.round(b1 + (b2 - b1) * f);
+    return (
+      '#' +
+      [r, g, b]
+        .map((x) => x.toString(16).padStart(2, '0'))
+        .join('')
+        .toUpperCase()
+    );
   }
 
   private adjustSaturation(color: string, adjustment: number): string {

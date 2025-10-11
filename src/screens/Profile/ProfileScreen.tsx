@@ -28,6 +28,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onNavigate }) => {
   const themeColors = colors[theme];
 
   const menuItems: MenuItem[] = [
+    { id: 'analytics', title: 'Analytics', icon: 'chart-line', screen: 'holistic-analytics' },
     { id: 'settings', title: 'Settings', icon: 'cog', screen: 'Settings' },
     { id: 'ai', title: 'AI Assistant', icon: 'robot', screen: 'AIAssistant' },
     { id: 'export', title: 'Export Data', icon: 'download', action: 'export' },

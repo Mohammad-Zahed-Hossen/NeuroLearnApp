@@ -1,5 +1,5 @@
 import { NeuralPhysicsEngine } from './NeuralPhysicsEngine';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import {
   DistractionEvent,
   FocusSession,
@@ -155,7 +155,7 @@ export class FocusTimerService {
   private static instance: FocusTimerService;
 
   // Core dependencies
-  private storageService: HybridStorageService;
+  private storageService: StorageService;
   private todoistService: TodoistService;
   private mindMapGenerator: MindMapGenerator;
   private physicsEngine: NeuralPhysicsEngine | null = null;
@@ -181,7 +181,7 @@ export class FocusTimerService {
   }
 
   private constructor() {
-    this.storageService = HybridStorageService.getInstance();
+  this.storageService = StorageService.getInstance();
     this.todoistService = TodoistService.getInstance();
     this.mindMapGenerator = MindMapGenerator.getInstance();
 
@@ -203,7 +203,7 @@ export class FocusTimerService {
       }
       return false;
     } catch (error) {
-      console.error('Failed to enable eye tracking:', error);
+      console.error('Failed to enable eye tracking:', String(error ?? 'Unknown error'));
       return false;
     }
   }
@@ -390,8 +390,8 @@ export class FocusTimerService {
 
       return this.activeSession;
     } catch (error) {
-      console.error('Error starting focus session:', error);
-      throw new Error(`Failed to start focus session: ${error}`);
+      console.error('Error starting focus session:', String(error ?? 'Unknown error'));
+      throw new Error(`Failed to start focus session: ${String(error ?? 'Unknown error')}`);
     }
   }
 
@@ -458,8 +458,8 @@ export class FocusTimerService {
 
       return distractionEvent;
     } catch (error) {
-      console.error('Error logging distraction:', error);
-      throw new Error(`Failed to log distraction: ${error}`);
+      console.error('Error logging distraction:', String(error ?? 'Unknown error'));
+      throw new Error(`Failed to log distraction: ${String(error ?? 'Unknown error')}`);
     }
   }
 
@@ -574,8 +574,8 @@ export class FocusTimerService {
 
       return sessionToReturn;
     } catch (error) {
-      console.error('Error ending focus session:', error);
-      throw new Error(`Failed to end focus session: ${error}`);
+      console.error('Error ending focus session:', String(error ?? 'Unknown error'));
+      throw new Error(`Failed to end focus session: ${String(error ?? 'Unknown error')}`);
     }
   }
 
@@ -602,7 +602,7 @@ export class FocusTimerService {
 
       this.activeSession.focusLockActive = true;
     } catch (error) {
-      console.error('Error engaging focus lock:', error);
+      console.error('Error engaging focus lock:', String(error ?? 'Unknown error'));
     }
   }
 
@@ -618,7 +618,7 @@ export class FocusTimerService {
         console.log('🔓 Neural focus lock disengaged');
       }
     } catch (error) {
-      console.error('Error disengaging focus lock:', error);
+      console.error('Error disengaging focus lock:', String(error ?? 'Unknown error'));
     }
   }
 
@@ -684,7 +684,7 @@ export class FocusTimerService {
         }
       }
     } catch (error) {
-      console.error('Error applying distraction penalty:', error);
+      console.error('Error applying distraction penalty:', String(error ?? 'Unknown error'));
     }
   }
 
@@ -767,7 +767,7 @@ export class FocusTimerService {
         }
       }
     } catch (error) {
-      console.error('Error applying session outcome:', error);
+      console.error('Error applying session outcome:', String(error ?? 'Unknown error'));
     }
   }
 
@@ -798,7 +798,7 @@ export class FocusTimerService {
 
       return Math.max(0, Math.min(1, cognitiveLoad));
     } catch (error) {
-      console.error('Error calculating end cognitive load:', error);
+      console.error('Error calculating end cognitive load:', String(error ?? 'Unknown error'));
       return this.activeSession.cognitiveLoadStart;
     }
   }
@@ -870,7 +870,21 @@ export class FocusTimerService {
    * Get focus health metrics
    */
   public async getFocusHealthMetrics(): Promise<FocusHealthMetrics> {
-    return this.storageService.getFocusHealthMetrics();
+    const metrics = await this.storageService.getFocusHealthMetrics();
+    // Ensure non-null return for callers
+    return metrics ?? {
+      streakCount: 0,
+      averageFocusRating: 3,
+      distractionsPerSession: 0,
+      focusEfficiency: 1.0,
+      neuralReinforcement: 0,
+      dailyFocusTime: 0,
+      weeklyFocusTime: 0,
+      bestFocusTimeOfDay: 'morning',
+      commonDistractionTriggers: [],
+      mostDistractiveDays: [],
+      focusImprovement: 0,
+    };
   }
 
   /**
@@ -1023,6 +1037,10 @@ export class FocusTimerService {
     }
     if (this.distractionTimer) {
       clearTimeout(this.distractionTimer);
+    }
+    if (this.adaptiveBreakCheckInterval) {
+      clearInterval(this.adaptiveBreakCheckInterval);
+      this.adaptiveBreakCheckInterval = null;
     }
 
     // Clear callbacks

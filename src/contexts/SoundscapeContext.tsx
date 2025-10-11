@@ -12,7 +12,7 @@ import {
   cognitiveSoundscapeEngine,
   SoundscapeType,
 } from '../services/learning/CognitiveSoundscapeEngine';
-import { HybridStorageService } from '../services/storage/HybridStorageService';
+import StorageService from '../services/storage/StorageService';
 import { validatePresetAssets } from '../services/learning/SoundscapeAssetValidator';
 
 // Reuse the implementation from the previous context file but fix TSX/typing issues
@@ -234,8 +234,9 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
         await loadPersistedSettings();
       }
 
-      setupEngineListeners();
-      setupBackgroundHandling();
+      // Engine listeners and background handling are set up in a dedicated effect
+      // to ensure we return a proper cleanup function that removes listeners
+      // and subscriptions when the provider unmounts.
 
       dispatch({ type: 'INITIALIZE_SUCCESS' });
       console.log('✅ Cognitive Soundscape System initialized');
@@ -249,42 +250,99 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
     }
   }, [persistSettings]);
 
+  // Ensure engine listeners and AppState subscription are cleaned up on unmount.
+  useEffect(() => {
+    // Register engine listeners (store handler refs so cleanup can remove only these)
+    const analyticsHandler = (data: any) => {
+      dispatch({
+        type: 'STATE_UPDATE',
+        payload: {
+          sessionDuration: data.sessionDuration || 0,
+          effectivenessScore: data.effectivenessScore || 0,
+          entrainmentStrength:
+            data.entraintmentStrength || data.entrainmentStrength || 0,
+          adaptationCount: data.adaptationCount || 0,
+        },
+      });
+    };
+
+    const adaptationHandler = (data: any) => {
+      console.log('🔄 Soundscape adaptation triggered:', data);
+    };
+
+    const cognitiveLoadHandler = (data: any) => {
+      dispatch({ type: 'COGNITIVE_LOAD_UPDATE', payload: data.cognitiveLoad });
+    };
+
+    const startedHandler = (data: any) => {
+      console.log('🎧 Soundscape started:', data);
+    };
+
+    const stoppedHandler = (data: any) => {
+      console.log('⏹️ Soundscape stopped:', data);
+      dispatch({ type: 'PRESET_STOP' });
+    };
+
+    cognitiveSoundscapeEngine.on('analytics_updated', analyticsHandler);
+    cognitiveSoundscapeEngine.on('adaptation_triggered', adaptationHandler);
+    cognitiveSoundscapeEngine.on(
+      'cognitive_load_updated',
+      cognitiveLoadHandler,
+    );
+    cognitiveSoundscapeEngine.on('soundscape_started', startedHandler);
+    cognitiveSoundscapeEngine.on('soundscape_stopped', stoppedHandler);
+
+    // Setup AppState background handling and capture cleanup
+    const handleAppStateChange = (nextAppState: string) => {
+      if (nextAppState === 'background' && state.isActive) {
+        console.log('📱 App backgrounded - soundscape continuing');
+      } else if (nextAppState === 'active' && state.isActive) {
+        console.log('📱 App foregrounded - soundscape active');
+      }
+    };
+
+    const appSub = AppState.addEventListener(
+      'change',
+      handleAppStateChange as any,
+    );
+
+    return () => {
+      try {
+        cognitiveSoundscapeEngine.off('analytics_updated', analyticsHandler);
+        cognitiveSoundscapeEngine.off(
+          'adaptation_triggered',
+          adaptationHandler,
+        );
+        cognitiveSoundscapeEngine.off(
+          'cognitive_load_updated',
+          cognitiveLoadHandler,
+        );
+        cognitiveSoundscapeEngine.off('soundscape_started', startedHandler);
+        cognitiveSoundscapeEngine.off('soundscape_stopped', stoppedHandler);
+      } catch (e) {
+        /* ignore: best-effort cleanup */
+      }
+
+      try {
+        appSub.remove();
+      } catch (e) {
+        /* noop for older RN versions */
+      }
+    };
+    // Intentionally leave dependencies minimal to run once on mount/unmount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (autoInitialize && !state.isInitialized) {
       initialize();
     }
   }, [autoInitialize, state.isInitialized, initialize]);
 
-  const setupEngineListeners = useCallback(() => {
-    cognitiveSoundscapeEngine.on('analytics_updated', (data: any) => {
-      dispatch({
-        type: 'STATE_UPDATE',
-        payload: {
-          sessionDuration: data.sessionDuration || 0,
-          effectivenessScore: data.effectivenessScore || 0,
-          entrainmentStrength: data.entrainmentStrength || 0,
-          adaptationCount: data.adaptationCount || 0,
-        },
-      });
-    });
-
-    cognitiveSoundscapeEngine.on('adaptation_triggered', (data: any) => {
-      console.log('🔄 Soundscape adaptation triggered:', data);
-    });
-
-    cognitiveSoundscapeEngine.on('cognitive_load_updated', (data: any) => {
-      dispatch({ type: 'COGNITIVE_LOAD_UPDATE', payload: data.cognitiveLoad });
-    });
-
-    cognitiveSoundscapeEngine.on('soundscape_started', (data: any) => {
-      console.log('🎧 Soundscape started:', data);
-    });
-
-    cognitiveSoundscapeEngine.on('soundscape_stopped', (data: any) => {
-      console.log('⏹️ Soundscape stopped:', data);
-      dispatch({ type: 'PRESET_STOP' });
-    });
-  }, []);
+  // setupEngineListeners was removed — listeners are registered in the mount
+  // effect above using named handlers so they can be removed precisely on
+  // unmount. Leaving this function would risk duplicate anonymous listeners
+  // that cannot be off()'d easily.
 
   const setupBackgroundHandling = useCallback(() => {
     const handleAppStateChange = (nextAppState: string) => {
@@ -295,7 +353,10 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
       }
     };
 
-    const sub = AppState.addEventListener('change', handleAppStateChange as any);
+    const sub = AppState.addEventListener(
+      'change',
+      handleAppStateChange as any,
+    );
 
     return () => {
       try {
@@ -308,7 +369,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
 
   const loadPersistedSettings = useCallback(async () => {
     try {
-      const storage = HybridStorageService.getInstance();
+      const storage = StorageService.getInstance();
       const settings: any = await storage.getSettings();
 
       if (settings?.soundscapeSettings) {
@@ -337,7 +398,7 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
     if (!persistSettings) return;
 
     try {
-      const storage = HybridStorageService.getInstance();
+      const storage = StorageService.getInstance();
       const settings: any = await storage.getSettings();
 
       await storage.saveSettings({
@@ -401,7 +462,6 @@ export const SoundscapeProvider: React.FC<SoundscapeProviderProps> = ({
     },
     [state.cognitiveLoad, state.adaptiveMode],
   );
-
 
   const stopSoundscape = useCallback(async () => {
     try {

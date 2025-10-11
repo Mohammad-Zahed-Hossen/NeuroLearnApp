@@ -9,7 +9,7 @@ import { CognitiveAuraService } from './services/ai/CognitiveAuraService';
 import { cognitiveSoundscapeEngine } from './services/learning/CognitiveSoundscapeEngine';
 import { NeuralPhysicsEngine } from './services/learning/NeuralPhysicsEngine';
 import { useAuraStore, initializeAuraStore } from './store/useAuraStore';
-import HybridStorageService from './services/storage/HybridStorageService';
+import StorageService from './services/storage/StorageService';
 import CrossModuleBridgeService from './services/integrations/CrossModuleBridgeService';
 
 /**
@@ -18,7 +18,7 @@ import CrossModuleBridgeService from './services/integrations/CrossModuleBridgeS
 export class CAEQualityAssurance {
   private cognitiveAuraService!: CognitiveAuraService;
   private soundscapeEngine!: any;
-  private storage!: HybridStorageService;
+  private storage!: StorageService;
   private crossModuleBridge!: CrossModuleBridgeService;
 
   private testResults: Array<{
@@ -31,7 +31,7 @@ export class CAEQualityAssurance {
   constructor() {
     this.cognitiveAuraService = CognitiveAuraService.getInstance();
     this.soundscapeEngine = cognitiveSoundscapeEngine;
-    this.storage = HybridStorageService.getInstance();
+  this.storage = StorageService.getInstance();
     this.crossModuleBridge = CrossModuleBridgeService.getInstance();
   }
 

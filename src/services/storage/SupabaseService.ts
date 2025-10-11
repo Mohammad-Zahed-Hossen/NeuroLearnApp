@@ -27,18 +27,22 @@ type SyncQueueItem = {
 };
 
 // Load environment variables from Expo Constants
-const SUPABASE_URL = Constants.expoConfig?.extra?.SUPABASE_URL;
-const SUPABASE_ANON_KEY = Constants.expoConfig?.extra?.SUPABASE_ANON_KEY;
+// NOTE: In test environment we provide safe defaults so the module can be
+// imported without failing (tests mock the supabase client behavior).
+let SUPABASE_URL = Constants.expoConfig?.extra?.SUPABASE_URL;
+let SUPABASE_ANON_KEY = Constants.expoConfig?.extra?.SUPABASE_ANON_KEY;
+let ENCRYPTION_KEY = Constants.expoConfig?.extra?.ENCRYPTION_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('FATAL: SUPABASE_URL and SUPABASE_ANON_KEY must be set in app.config.js. Check your .env file.');
-}
-
-// Encryption key for token storage (should be in environment variables)
-const ENCRYPTION_KEY = Constants.expoConfig?.extra?.ENCRYPTION_KEY;
-
-if (!ENCRYPTION_KEY) {
-  throw new Error('FATAL: ENCRYPTION_KEY is not set in app.config.js. Check your .env file.');
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !ENCRYPTION_KEY) {
+  if (process.env.NODE_ENV === 'test') {
+    // Provide benign defaults during tests. The actual network calls are
+    // mocked in Jest setup, so these values are not used for real requests.
+    SUPABASE_URL = SUPABASE_URL || 'http://localhost:9999';
+    SUPABASE_ANON_KEY = SUPABASE_ANON_KEY || 'test-anon-key';
+    ENCRYPTION_KEY = ENCRYPTION_KEY || 'test-encryption-key';
+  } else {
+    throw new Error('FATAL: SUPABASE_URL, SUPABASE_ANON_KEY and ENCRYPTION_KEY must be set in app.config.js. Check your .env file.');
+  }
 }
 
 export class SupabaseService {
@@ -82,8 +86,15 @@ export class SupabaseService {
     return this.client;
   }
 
-  public getCurrentUser(): User | null {
-    return this.currentUser;
+  public async getCurrentUser(): Promise<User | null> {
+    try {
+      const { data: { session } } = await this.client.auth.getSession();
+      this.currentUser = session?.user || null; // Update cached user
+      return this.currentUser;
+    } catch (e) {
+      console.error('Error getting current user:', e);
+      return this.currentUser; // Fallback to cached user
+    }
   }
 
   public async signUp(email: string, password: string): Promise<{ user: User | null; error: any }> {
@@ -476,6 +487,64 @@ export class SupabaseService {
   public async clearSyncQueue() {
     this.syncQueue = [];
     await AsyncStorage.removeItem('sync_queue');
+  }
+
+  /**
+   * Test database connection health
+   */
+  public async checkConnectionHealth(): Promise<void> {
+    try {
+      // Simple query to test database connectivity
+      const { error } = await this.client
+        .from('user_profiles')
+        .select('id')
+        .limit(1);
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned, which is fine
+        throw new Error(`Database connection failed: ${error.message}`);
+      }
+    } catch (error) {
+      throw new Error(`Supabase health check failed: ${error}`);
+    }
+  }
+
+  /**
+   * Check connection and measure latency
+   */
+  public async checkConnectionAndLatency(): Promise<number> {
+    const startTime = Date.now();
+    await this.checkConnectionHealth();
+    return Date.now() - startTime;
+  }
+
+  /**
+   * Get database status information
+   */
+  public async getDatabaseStatus(): Promise<{
+    isConnected: boolean;
+    latency: number;
+    region: string;
+    version: string;
+  }> {
+    try {
+      const startTime = Date.now();
+      const { error } = await this.client.rpc('get_database_info');
+      const latency = Date.now() - startTime;
+
+      return {
+        isConnected: !error,
+        latency,
+        region: 'us-east-1', // Would get from actual config
+        version: '15.1', // Would get from database query
+      };
+    } catch (error) {
+      return {
+        isConnected: false,
+        latency: 0,
+        region: 'unknown',
+        version: 'unknown',
+      };
+    }
   }
 }
 

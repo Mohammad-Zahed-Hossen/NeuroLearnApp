@@ -1,7 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Task } from '../../types';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import { FocusSession, DistractionEvent } from '../storage/StorageService';
 
 /**
@@ -15,7 +15,7 @@ export class TodoistService {
   private static instance: TodoistService;
   private apiToken: string = '';
   private baseURL = 'https://api.todoist.com/rest/v2';
-  private storageService: HybridStorageService;
+  private storageService: StorageService;
 
   // Phase 5: Focus session management
   private taskTimerActiveMap: Map<string, boolean> = new Map();
@@ -23,7 +23,7 @@ export class TodoistService {
   private focusSessionHistory: FocusSession[] = [];
 
   private constructor() {
-    this.storageService = HybridStorageService.getInstance();
+  this.storageService = StorageService.getInstance();
     this.loadFocusHistory();
   }
 
@@ -59,8 +59,14 @@ export class TodoistService {
 
   private async saveFocusHistory(): Promise<void> {
     try {
-      // Save focus sessions using HybridStorageService (which uses Supabase as primary)
-      await this.storageService.saveFocusSessions(this.focusSessionHistory);
+      // Persist focus sessions via StorageService facade (save per-session)
+      await Promise.all(
+        this.focusSessionHistory.map((s) =>
+          this.storageService.saveFocusSession(s).catch((e) => {
+            console.warn('Failed to save focus session via StorageService:', e);
+          }),
+        ),
+      );
     } catch (error) {
       console.error('Error saving focus history:', error);
     }
@@ -73,12 +79,28 @@ export class TodoistService {
     return TodoistService.instance;
   }
 
-  setApiToken(token: string) {
+
+  /**
+   * Set and persist the Todoist API token using the StorageService facade.
+   * Falls back to AsyncStorage only if the facade fails.
+   */
+  async setApiToken(token: string) {
     this.apiToken = token;
-    // Save token to storage for persistence
-    AsyncStorage.setItem('todoistApiToken', token).catch((error) =>
-      console.error('Error saving Todoist API token:', error),
-    );
+    try {
+      // Save token to settings via StorageService facade
+      const settings = await this.storageService.getSettings();
+      await this.storageService.saveSettings({
+        ...settings,
+        todoistToken: token,
+      });
+    } catch (err) {
+      console.warn('StorageService.saveSettings failed, falling back to AsyncStorage:', err);
+      try {
+        await AsyncStorage.setItem('todoistApiToken', token);
+      } catch (e) {
+        console.error('AsyncStorage fallback failed for Todoist API token:', e);
+      }
+    }
   }
 
   private getAuthHeaders() {
@@ -88,41 +110,7 @@ export class TodoistService {
     };
   }
 
-  /**
-   * Test connection to Todoist API
-   */
-  async testConnection(): Promise<{ success: boolean; message: string }> {
-    if (!this.apiToken) {
-      return { success: false, message: 'No API token provided' };
-    }
 
-    try {
-      const response = await axios.get(`${this.baseURL}/projects`, {
-        headers: this.getAuthHeaders(),
-        timeout: 10000,
-      });
-
-      if (response.status === 200) {
-        return {
-          success: true,
-          message: `Connected successfully! Found ${response.data.length} projects.`,
-        };
-      } else {
-        return { success: false, message: 'Unexpected response from Todoist' };
-      }
-    } catch (error: any) {
-      if (error.response?.status === 401) {
-        return { success: false, message: 'Invalid API token' };
-      } else if (error.code === 'ENOTFOUND') {
-        return { success: false, message: 'No internet connection' };
-      } else {
-        return {
-          success: false,
-          message: `Connection failed: ${error.message}`,
-        };
-      }
-    }
-  }
 
   /**
    * Get all tasks from Todoist
@@ -662,6 +650,78 @@ export class TodoistService {
     await this.saveFocusHistory();
     console.log('🗑️ Focus session history cleared');
   }
+
+  /**
+   * Get all projects from Todoist
+   */
+  public async getProjects(): Promise<any[]> {
+    if (!this.apiToken) {
+      await this.loadApiToken();
+      if (!this.apiToken) return [];
+    }
+
+    try {
+      const response = await axios.get(`${this.baseURL}/projects`, {
+        headers: this.getAuthHeaders(),
+        timeout: 10000,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      throw error;
+    }
+  }
+
+/**
+ * Test connection to Todoist API with lightweight request
+ */
+public async testConnection(): Promise<void> {
+  if (!this.apiToken) {
+    throw new Error('Todoist API token not configured');
+  }
+
+  try {
+    // Use lightweight endpoint for connection testing
+    const response = await fetch(`${this.baseURL}/projects`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // Don't parse the full response, just verify we can connect
+    await response.text();
+  } catch (error) {
+    throw new Error(`Todoist connection failed: ${error}`);
+  }
+}
+
+/**
+ * Check connection and measure latency
+ */
+public async checkConnectionAndLatency(): Promise<number> {
+  const startTime = Date.now();
+  await this.testConnection();
+  return Date.now() - startTime;
+}
+
+/**
+ * Validate if the current API token is valid
+ */
+public async isTokenValid(): Promise<boolean> {
+  try {
+    await this.testConnection();
+    return true;
+  } catch (error) {
+    console.warn('Todoist token validation failed:', error);
+    return false;
+  }
+}
 }
 
 export default TodoistService;

@@ -18,6 +18,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SupabaseService } from '../services/storage/SupabaseService';
 import {
   CognitiveAuraService,
   AuraState,
@@ -28,7 +29,7 @@ import {
   cognitiveSoundscapeEngine
 } from '../services/learning/CognitiveSoundscapeEngine';
 import { MindMapGenerator, NeuralGraph } from '../services/learning/MindMapGeneratorService';
-import HybridStorageService from '../services/storage/HybridStorageService';
+import StorageService from '../services/storage/StorageService';
 
 // ==================== INTERFACES ====================
 
@@ -120,7 +121,7 @@ interface AuraStoreActions {
   resetStore: () => void;
 
   // Performance tracking
-  recordPerformance: (accuracy: number, completion: number, satisfaction?: number) => void;
+  recordPerformance: (accuracy: number, completion: number, satisfaction?: number) => Promise<void>;
   updateSessionMetrics: (update: Partial<SessionMetrics>) => void;
   startSession: () => void;
   endSession: () => void;
@@ -308,47 +309,53 @@ export const useAuraStore = create<AuraStoreState & AuraStoreActions>()(
         /**
          * Record performance metrics
          */
-        recordPerformance: (accuracy: number, completion: number, satisfaction: number = 3.0) => {
-          const state = get();
-          const timestamp = new Date();
+        recordPerformance: async (accuracy: number, completion: number, satisfaction: number = 3.0) => {
+          try {
+            const state = get();
+            const timestamp = new Date();
 
-          const newPerformanceEntry = {
-            accuracy,
-            completion,
-            satisfaction,
-            timestamp,
-          };
+            const newPerformanceEntry = {
+              accuracy,
+              completion,
+              satisfaction,
+              timestamp,
+            };
 
-          set(state => ({
-            performanceHistory: [
-              ...state.performanceHistory,
-              newPerformanceEntry
-            ].slice(-100), // Keep last 100 entries
-          }));
+            set(state => ({
+              performanceHistory: [
+                ...state.performanceHistory,
+                newPerformanceEntry
+              ].slice(-100), // Keep last 100 entries
+            }));
 
-          // Update session metrics
-          const sessionUpdate: Partial<SessionMetrics> = {
-            tasksCompleted: completion > 0.5 ? state.sessionMetrics.tasksCompleted + 1 : state.sessionMetrics.tasksCompleted,
-            tasksSkipped: completion <= 0.5 ? state.sessionMetrics.tasksSkipped + 1 : state.sessionMetrics.tasksSkipped,
-            currentStreak: completion > 0.5 ? state.sessionMetrics.currentStreak + 1 : 0,
-            focusEfficiency: (state.sessionMetrics.focusEfficiency + accuracy) / 2,
-          };
+            // Update session metrics
+            const sessionUpdate: Partial<SessionMetrics> = {
+              tasksCompleted: completion > 0.5 ? state.sessionMetrics.tasksCompleted + 1 : state.sessionMetrics.tasksCompleted,
+              tasksSkipped: completion <= 0.5 ? state.sessionMetrics.tasksSkipped + 1 : state.sessionMetrics.tasksSkipped,
+              currentStreak: completion > 0.5 ? state.sessionMetrics.currentStreak + 1 : 0,
+              focusEfficiency: (state.sessionMetrics.focusEfficiency + accuracy) / 2,
+            };
 
-          get().updateSessionMetrics(sessionUpdate);
+            get().updateSessionMetrics(sessionUpdate);
 
-          // Record in CAE service
-          cognitiveAuraService.recordPerformance({
-            accuracy,
-            taskCompletion: completion,
-            timeToComplete: 0, // Would be calculated from actual timing
-            userSatisfaction: satisfaction,
-            contextRelevance: 0.8, // Default assumption
-          });
+            // Record in CAE service
+            await cognitiveAuraService.recordPerformance({
+              accuracy,
+              taskCompletion: completion,
+              timeToComplete: 0, // Would be calculated from actual timing
+              userSatisfaction: satisfaction,
+              contextRelevance: 0.8, // Default assumption
+            });
 
-          // Recalculate analytics
-          get().calculateAnalytics();
+            // Recalculate analytics
+            get().calculateAnalytics();
 
-          console.log('📊 Performance recorded:', { accuracy, completion, satisfaction });
+            console.log('📊 Performance recorded:', { accuracy, completion, satisfaction });
+          } catch (error) {
+            console.error('❌ Failed to record performance:', error);
+            // Optionally set error state
+            set({ error: (error as Error)?.message || 'Failed to record performance' });
+          }
         },
 
         /**
@@ -799,6 +806,15 @@ export const initializeAuraStore = async (): Promise<void> => {
   try {
     console.log('🚀 Initializing Cognitive Aura Store...');
 
+    // Check if user is authenticated before initializing aura
+    const supabaseService = SupabaseService.getInstance();
+    const currentUser = await supabaseService.getCurrentUser();
+
+    if (!currentUser) {
+      console.warn('⚠️ User not authenticated, skipping aura initialization');
+      return;
+    }
+
     const state = useAuraStore.getState();
 
     // Start initial session
@@ -811,7 +827,8 @@ export const initializeAuraStore = async (): Promise<void> => {
 
   } catch (error) {
     console.error('❌ Failed to initialize Cognitive Aura Store:', error);
-    throw error;
+    // Don't throw error to prevent blocking app startup
+    console.warn('⚠️ Continuing app startup without aura features');
   }
 };
 

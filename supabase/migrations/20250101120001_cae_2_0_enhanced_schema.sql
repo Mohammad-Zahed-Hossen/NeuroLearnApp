@@ -1,11 +1,10 @@
--- ==============================
 -- CAE 2.0 Migration Script
 -- Enhanced Cognitive Aura Engine 2.0 Database Migration
 -- ==============================
 
--- This migration script upgrades the existing NeuroLearn database 
+-- This migration script upgrades the existing NeuroLearn database
 -- to support the new Cognitive Aura Engine 2.0 features including
--- environmental context sensing, predictive intelligence, and 
+-- environmental context sensing, predictive intelligence, and
 -- anticipatory learning capabilities.
 
 -- Version: CAE 2.0.1
@@ -28,17 +27,17 @@ BEGIN
         applied_at TIMESTAMPTZ DEFAULT NOW(),
         description TEXT
     );
-    
+
     -- Check current version
-    SELECT version INTO current_version 
-    FROM migrations 
+    SELECT version INTO current_version
+    FROM migrations
     WHERE version = migration_version;
-    
+
     IF current_version IS NOT NULL THEN
         RAISE NOTICE 'Migration % already applied, skipping', migration_version;
         RETURN;
     END IF;
-    
+
     RAISE NOTICE 'Starting CAE 2.0 Migration: %', migration_version;
 END $$;
 
@@ -49,17 +48,17 @@ END $$;
 DO $$
 BEGIN
     RAISE NOTICE 'Creating backup tables for CAE 2.0 migration...';
-    
+
     -- Backup critical tables before migration
-    CREATE TABLE IF NOT EXISTS backup_flashcards_cae_2_0 AS 
+    CREATE TABLE IF NOT EXISTS backup_flashcards_cae_2_0 AS
     SELECT *, NOW() as backup_date FROM flashcards;
-    
-    CREATE TABLE IF NOT EXISTS backup_logic_nodes_cae_2_0 AS 
+
+    CREATE TABLE IF NOT EXISTS backup_logic_nodes_cae_2_0 AS
     SELECT *, NOW() as backup_date FROM logic_nodes;
-    
-    CREATE TABLE IF NOT EXISTS backup_focus_sessions_cae_2_0 AS 
+
+    CREATE TABLE IF NOT EXISTS backup_focus_sessions_cae_2_0 AS
     SELECT *, NOW() as backup_date FROM focus_sessions;
-    
+
     RAISE NOTICE 'Backup tables created successfully';
 END $$;
 
@@ -89,7 +88,7 @@ CREATE TABLE context_snapshots (
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     session_id TEXT NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
-    
+
     -- Time Intelligence
     circadian_hour DECIMAL(4,2) NOT NULL CHECK (circadian_hour >= 0 AND circadian_hour < 24),
     time_of_day TEXT NOT NULL CHECK (time_of_day IN ('early_morning', 'morning', 'midday', 'afternoon', 'evening', 'late_night')),
@@ -98,7 +97,7 @@ CREATE TABLE context_snapshots (
     energy_level TEXT NOT NULL CHECK (energy_level IN ('peak', 'high', 'medium', 'low', 'recovery')),
     historical_performance DECIMAL(3,2) NOT NULL CHECK (historical_performance >= 0 AND historical_performance <= 1),
     next_optimal_window TIMESTAMPTZ,
-    
+
     -- Location Context
     environment TEXT NOT NULL CHECK (environment IN ('home', 'office', 'library', 'commute', 'outdoor', 'unknown')),
     noise_level TEXT NOT NULL CHECK (noise_level IN ('silent', 'quiet', 'moderate', 'noisy', 'very_noisy')),
@@ -109,7 +108,7 @@ CREATE TABLE context_snapshots (
     location_coordinates TEXT, -- Latitude,longitude as text (PostGIS not available)
     is_known_location BOOLEAN NOT NULL DEFAULT false,
     location_confidence DECIMAL(3,2) NOT NULL CHECK (location_confidence >= 0 AND location_confidence <= 1),
-    
+
     -- Digital Body Language
     dbl_state TEXT NOT NULL CHECK (dbl_state IN ('engaged', 'fragmented', 'restless', 'focused', 'overwhelmed')),
     app_switch_frequency DECIMAL(5,2) NOT NULL DEFAULT 0,
@@ -122,22 +121,22 @@ CREATE TABLE context_snapshots (
     attention_span DECIMAL(5,2) NOT NULL DEFAULT 20,
     cognitive_load_indicator DECIMAL(3,2) NOT NULL DEFAULT 0.5 CHECK (cognitive_load_indicator >= 0 AND cognitive_load_indicator <= 1),
     stress_indicators DECIMAL(3,2) NOT NULL DEFAULT 0 CHECK (stress_indicators >= 0 AND stress_indicators <= 1),
-    
+
     -- Device State
     battery_level DECIMAL(3,2) NOT NULL DEFAULT 0.5 CHECK (battery_level >= 0 AND battery_level <= 1),
     is_charging BOOLEAN NOT NULL DEFAULT false,
     network_quality TEXT NOT NULL DEFAULT 'good' CHECK (network_quality IN ('excellent', 'good', 'fair', 'poor', 'offline')),
     device_temperature DECIMAL(5,2),
-    
+
     -- Aggregated Insights
     overall_optimality DECIMAL(3,2) NOT NULL CHECK (overall_optimality >= 0 AND overall_optimality <= 1),
     recommended_action TEXT NOT NULL CHECK (recommended_action IN ('proceed', 'optimize_environment', 'take_break', 'reschedule')),
     context_quality_score DECIMAL(3,2) NOT NULL CHECK (context_quality_score >= 0 AND context_quality_score <= 1),
     anticipated_changes JSONB DEFAULT '[]', -- Array of predicted changes
-    
+
     -- Metadata
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     -- Constraints
     UNIQUE(user_id, session_id, timestamp)
 );
@@ -156,8 +155,8 @@ CREATE INDEX idx_context_snapshots_optimality ON context_snapshots(overall_optim
 CREATE INDEX idx_context_snapshots_dbl_state ON context_snapshots(dbl_state);
 CREATE INDEX idx_context_snapshots_energy_level ON context_snapshots(energy_level);
 
--- Spatial index for location queries
-CREATE INDEX idx_context_snapshots_location ON context_snapshots USING GIST(location_coordinates);
+-- Note: Spatial index removed as coordinates are TEXT and PostGIS is not available
+-- For location-based queries, consider migrating to PostGIS in the future
 
 DO $$
 BEGIN
@@ -181,11 +180,11 @@ CREATE TABLE learned_patterns (
     confidence DECIMAL(3,2) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     -- Add pattern validation
     CONSTRAINT valid_pattern_structure CHECK (
-        jsonb_typeof(pattern) = 'object' AND 
-        pattern ? 'triggers' AND 
+        jsonb_typeof(pattern) = 'object' AND
+        pattern ? 'triggers' AND
         pattern ? 'outcomes'
     )
 );
@@ -226,7 +225,7 @@ CREATE TABLE optimal_learning_windows (
     confidence DECIMAL(3,2) NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     -- Ensure uniqueness per user, hour, day combination
     UNIQUE(user_id, circadian_hour, day_of_week)
 );
@@ -265,10 +264,10 @@ CREATE TABLE known_locations (
     confidence DECIMAL(3,2) NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     -- Ensure reasonable visit count
     CONSTRAINT valid_visit_count CHECK (visit_count >= 1),
-    
+
     -- Ensure performance history is not too large
     CONSTRAINT reasonable_history_size CHECK (array_length(performance_history, 1) <= 100)
 );
@@ -331,10 +330,10 @@ CREATE TABLE cognitive_forecasting (
     metadata JSONB DEFAULT '{}', -- Additional prediction metadata
     created_at TIMESTAMPTZ DEFAULT NOW(),
     evaluated_at TIMESTAMPTZ,
-    
+
     -- Ensure reasonable prediction horizon
     CONSTRAINT reasonable_horizon CHECK (prediction_horizon >= 1 AND prediction_horizon <= 1440), -- Max 24 hours
-    
+
     -- Ensure evaluation happens after creation
     CONSTRAINT valid_evaluation_time CHECK (evaluated_at IS NULL OR evaluated_at > created_at)
 );
@@ -361,7 +360,7 @@ END $$;
 -- ==============================
 
 -- Add CAE 2.0 fields to existing flashcards table
-ALTER TABLE flashcards 
+ALTER TABLE flashcards
 ADD COLUMN IF NOT EXISTS context_snapshot_id UUID REFERENCES context_snapshots(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS optimal_review_context JSONB DEFAULT '{}',
 ADD COLUMN IF NOT EXISTS context_performance_history JSONB DEFAULT '[]',
@@ -372,8 +371,8 @@ ADD COLUMN IF NOT EXISTS last_context_update TIMESTAMPTZ DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_flashcards_context_snapshot ON flashcards(context_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_flashcards_cae_version ON flashcards(cae_version);
 
--- Add CAE 2.0 fields to existing logic_nodes table  
-ALTER TABLE logic_nodes 
+-- Add CAE 2.0 fields to existing logic_nodes table
+ALTER TABLE logic_nodes
 ADD COLUMN IF NOT EXISTS context_snapshot_id UUID REFERENCES context_snapshots(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS optimal_practice_context JSONB DEFAULT '{}',
 ADD COLUMN IF NOT EXISTS context_difficulty_adjustment DECIMAL(3,2) DEFAULT 0,
@@ -385,7 +384,7 @@ CREATE INDEX IF NOT EXISTS idx_logic_nodes_context_snapshot ON logic_nodes(conte
 CREATE INDEX IF NOT EXISTS idx_logic_nodes_difficulty_adjustment ON logic_nodes(context_difficulty_adjustment);
 
 -- Add CAE 2.0 fields to existing focus_sessions table
-ALTER TABLE focus_sessions 
+ALTER TABLE focus_sessions
 ADD COLUMN IF NOT EXISTS context_snapshot_id UUID REFERENCES context_snapshots(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS predicted_performance DECIMAL(3,2),
 ADD COLUMN IF NOT EXISTS actual_performance DECIMAL(3,2),
@@ -401,12 +400,12 @@ CREATE INDEX IF NOT EXISTS idx_focus_sessions_predicted_performance ON focus_ses
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'reading_sessions') THEN
-        ALTER TABLE reading_sessions 
+        ALTER TABLE reading_sessions
         ADD COLUMN IF NOT EXISTS context_snapshot_id UUID REFERENCES context_snapshots(id) ON DELETE SET NULL,
         ADD COLUMN IF NOT EXISTS reading_context_score DECIMAL(3,2) DEFAULT 0.5,
         ADD COLUMN IF NOT EXISTS environmental_adjustments JSONB DEFAULT '{}',
         ADD COLUMN IF NOT EXISTS cae_version TEXT DEFAULT '2.0';
-        
+
         CREATE INDEX IF NOT EXISTS idx_reading_sessions_context_snapshot ON reading_sessions(context_snapshot_id);
     END IF;
 END $$;
@@ -424,7 +423,7 @@ DROP VIEW IF EXISTS forecasting_accuracy CASCADE;
 
 -- View: Context effectiveness analysis
 CREATE VIEW context_effectiveness AS
-SELECT 
+SELECT
     user_id,
     environment,
     dbl_state,
@@ -435,12 +434,12 @@ SELECT
     ROUND(STDDEV(overall_optimality), 3) as optimality_variance,
     MIN(timestamp) as first_seen,
     MAX(timestamp) as last_seen
-FROM context_snapshots 
+FROM context_snapshots
 GROUP BY user_id, environment, dbl_state, energy_level;
 
 -- View: Temporal performance patterns
 CREATE VIEW temporal_performance AS
-SELECT 
+SELECT
     user_id,
     EXTRACT(hour FROM timestamp) as hour_of_day,
     EXTRACT(dow FROM timestamp) as day_of_week,
@@ -450,7 +449,7 @@ SELECT
     ROUND(AVG(historical_performance), 3) as avg_historical_performance,
     ROUND(AVG(context_quality_score), 3) as avg_quality,
     COUNT(*) as frequency
-FROM context_snapshots 
+FROM context_snapshots
 GROUP BY user_id, EXTRACT(hour FROM timestamp), EXTRACT(dow FROM timestamp), time_of_day, energy_level;
 
 -- View: Location intelligence summary
@@ -470,7 +469,7 @@ FROM known_locations kl;
 
 -- View: Digital body language trends
 CREATE VIEW dbl_trends AS
-SELECT 
+SELECT
     user_id,
     dbl_state,
     ROUND(AVG(app_switch_frequency), 2) as avg_app_switches,
@@ -481,12 +480,12 @@ SELECT
     COUNT(*) as frequency,
     MIN(timestamp) as first_seen,
     MAX(timestamp) as last_seen
-FROM context_snapshots 
+FROM context_snapshots
 GROUP BY user_id, dbl_state;
 
 -- View: Forecasting accuracy metrics
 CREATE VIEW forecasting_accuracy AS
-SELECT 
+SELECT
     user_id,
     model_version,
     prediction_horizon,
@@ -497,17 +496,16 @@ SELECT
     SUM(CASE WHEN prediction_accuracy >= 0.8 THEN 1 ELSE 0 END) as high_accuracy_predictions,
     ROUND(AVG(predicted_optimality), 3) as avg_predicted_optimality,
     ROUND(AVG(actual_optimality), 3) as avg_actual_optimality
-FROM cognitive_forecasting 
+FROM cognitive_forecasting
 WHERE prediction_accuracy IS NOT NULL
 GROUP BY user_id, model_version, prediction_horizon, predicted_context;
-
-RAISE NOTICE 'Created CAE 2.0 analytics views';
 
 -- ==============================
 -- 8. CAE 2.0 HELPER FUNCTIONS
 -- ==============================
 
 -- Function: Get optimal learning windows for user
+DROP FUNCTION IF EXISTS get_optimal_windows(UUID);
 CREATE OR REPLACE FUNCTION get_optimal_windows(p_user_id UUID)
 RETURNS TABLE (
     circadian_hour DECIMAL,
@@ -519,16 +517,16 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT 
+    SELECT
         olw.circadian_hour,
         olw.day_of_week,
         olw.performance_score,
         olw.frequency,
         olw.confidence,
         -- Calculate next occurrence (simplified version)
-        (CURRENT_TIMESTAMP + INTERVAL '1 day' * 
-         (CASE 
-            WHEN olw.day_of_week >= EXTRACT(dow FROM CURRENT_TIMESTAMP) 
+        (CURRENT_TIMESTAMP + INTERVAL '1 day' *
+         (CASE
+            WHEN olw.day_of_week >= EXTRACT(dow FROM CURRENT_TIMESTAMP)
             THEN olw.day_of_week - EXTRACT(dow FROM CURRENT_TIMESTAMP)
             ELSE 7 + olw.day_of_week - EXTRACT(dow FROM CURRENT_TIMESTAMP)
           END) +
@@ -540,6 +538,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP FUNCTION IF EXISTS get_context_recommendations(UUID);
 -- Function: Get context recommendations
 CREATE OR REPLACE FUNCTION get_context_recommendations(p_user_id UUID)
 RETURNS TABLE (
@@ -552,7 +551,7 @@ RETURNS TABLE (
 BEGIN
     RETURN QUERY
     -- Recommend best environment
-    SELECT 
+    SELECT
         'environment'::TEXT,
         'Consider working in: ' || environment || ' (avg optimality: ' || ROUND(avg_optimality * 100, 1) || '%)',
         ROUND(avg_optimality, 2),
@@ -560,18 +559,18 @@ BEGIN
         1 as priority
     FROM (
         SELECT environment, AVG(overall_optimality) as avg_optimality, COUNT(*) as frequency
-        FROM context_snapshots 
+        FROM context_snapshots
         WHERE user_id = p_user_id AND timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'
         GROUP BY environment
         HAVING COUNT(*) >= 3 -- Only recommend environments with sufficient data
         ORDER BY avg_optimality DESC
         LIMIT 1
     ) best_env
-    
+
     UNION ALL
-    
+
     -- Recommend optimal time
-    SELECT 
+    SELECT
         'timing'::TEXT,
         'Best learning time: ' || time_of_day || ' (avg optimality: ' || ROUND(avg_optimality * 100, 1) || '%)',
         ROUND(avg_optimality, 2),
@@ -579,18 +578,18 @@ BEGIN
         2 as priority
     FROM (
         SELECT time_of_day, AVG(overall_optimality) as avg_optimality
-        FROM context_snapshots 
+        FROM context_snapshots
         WHERE user_id = p_user_id AND timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'
         GROUP BY time_of_day
         HAVING COUNT(*) >= 5
         ORDER BY avg_optimality DESC
         LIMIT 1
     ) best_time
-    
+
     UNION ALL
-    
+
     -- Warn about problematic patterns
-    SELECT 
+    SELECT
         'warning'::TEXT,
         'Avoid ' || dbl_state || ' state sessions (low optimality: ' || ROUND(avg_optimality * 100, 1) || '%)',
         ROUND(1 - avg_optimality, 2),
@@ -598,14 +597,14 @@ BEGIN
         3 as priority
     FROM (
         SELECT dbl_state, AVG(overall_optimality) as avg_optimality, COUNT(*) as frequency
-        FROM context_snapshots 
+        FROM context_snapshots
         WHERE user_id = p_user_id AND timestamp > CURRENT_TIMESTAMP - INTERVAL '14 days'
         GROUP BY dbl_state
         HAVING COUNT(*) >= 3 AND AVG(overall_optimality) < 0.4
         ORDER BY avg_optimality ASC
         LIMIT 1
     ) problematic_state
-    
+
     ORDER BY priority;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -625,18 +624,18 @@ BEGIN
     IF p_performance_score < 0 OR p_performance_score > 1 THEN
         RAISE EXCEPTION 'Performance score must be between 0 and 1';
     END IF;
-    
+
     -- Update the context snapshot with actual performance
-    UPDATE context_snapshots 
-    SET anticipated_changes = anticipated_changes || 
+    UPDATE context_snapshots
+    SET anticipated_changes = anticipated_changes ||
         jsonb_build_object(
-            'actual_performance', p_performance_score, 
+            'actual_performance', p_performance_score,
             'activity_type', p_activity_type,
             'duration_minutes', p_duration_minutes,
             'recorded_at', CURRENT_TIMESTAMP
         )
     WHERE id = p_context_snapshot_id AND user_id = p_user_id;
-    
+
     -- Update or create learned patterns
     INSERT INTO learned_patterns (user_id, type, pattern, last_seen, effectiveness, confidence)
     VALUES (
@@ -650,23 +649,23 @@ BEGIN
         ),
         NOW(),
         p_performance_score,
-        CASE 
+        CASE
             WHEN p_performance_score >= 0.8 THEN 0.9
             WHEN p_performance_score >= 0.6 THEN 0.7
             ELSE 0.5
         END
     )
     ON CONFLICT DO NOTHING; -- Simple conflict resolution for now
-    
+
     -- Update forecasting accuracy if there are predictions for this timeframe
     UPDATE cognitive_forecasting
     SET actual_optimality = p_performance_score,
         prediction_accuracy = 1.0 - ABS(predicted_optimality - p_performance_score),
         evaluated_at = NOW()
-    WHERE user_id = p_user_id 
+    WHERE user_id = p_user_id
       AND context_snapshot_id = p_context_snapshot_id
       AND actual_optimality IS NULL;
-      
+
     RAISE NOTICE 'Context performance recorded successfully';
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -683,22 +682,22 @@ DECLARE
     deleted_forecasting INTEGER;
 BEGIN
     -- Clean up old context snapshots (keep last N days)
-    DELETE FROM context_snapshots 
+    DELETE FROM context_snapshots
     WHERE timestamp < NOW() - INTERVAL '1 day' * days_to_keep;
     GET DIAGNOSTICS deleted_snapshots = ROW_COUNT;
-    
+
     -- Clean up old learned patterns that are no longer effective
-    DELETE FROM learned_patterns 
+    DELETE FROM learned_patterns
     WHERE last_seen < NOW() - INTERVAL '1 day' * days_to_keep
       AND effectiveness < 0.3
       AND frequency < 3;
     GET DIAGNOSTICS deleted_patterns = ROW_COUNT;
-    
+
     -- Clean up old forecasting data
-    DELETE FROM cognitive_forecasting 
+    DELETE FROM cognitive_forecasting
     WHERE created_at < NOW() - INTERVAL '1 day' * days_to_keep;
     GET DIAGNOSTICS deleted_forecasting = ROW_COUNT;
-    
+
     -- Return cleanup summary
     RETURN QUERY VALUES
         ('context_snapshots', deleted_snapshots),
@@ -707,7 +706,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-RAISE NOTICE 'Created CAE 2.0 helper functions';
+DO $$
+BEGIN
+    RAISE NOTICE 'Created CAE 2.0 helper functions';
+END $$;
 
 -- ==============================
 -- 9. CAE 2.0 TRIGGERS FOR AUTOMATIC PATTERN LEARNING
@@ -722,18 +724,18 @@ DECLARE
 BEGIN
     -- Only process high-optimality contexts with sufficient confidence
     IF NEW.overall_optimality >= 0.7 AND NEW.context_quality_score >= 0.6 THEN
-        
+
         -- Round circadian hour to nearest 0.5 for grouping
         v_hour_rounded := ROUND(NEW.circadian_hour * 2) / 2;
         v_day_of_week := EXTRACT(dow FROM NEW.timestamp);
-        
+
         INSERT INTO optimal_learning_windows (
-            user_id, 
-            circadian_hour, 
-            day_of_week, 
-            performance_score, 
-            frequency, 
-            last_performance, 
+            user_id,
+            circadian_hour,
+            day_of_week,
+            performance_score,
+            frequency,
+            last_performance,
             last_seen,
             confidence
         )
@@ -747,10 +749,10 @@ BEGIN
             NEW.timestamp,
             NEW.context_quality_score
         )
-        ON CONFLICT (user_id, circadian_hour, day_of_week) 
+        ON CONFLICT (user_id, circadian_hour, day_of_week)
         DO UPDATE SET
             performance_score = (
-                optimal_learning_windows.performance_score * optimal_learning_windows.frequency + 
+                optimal_learning_windows.performance_score * optimal_learning_windows.frequency +
                 NEW.overall_optimality
             ) / (optimal_learning_windows.frequency + 1),
             frequency = optimal_learning_windows.frequency + 1,
@@ -759,7 +761,7 @@ BEGIN
             confidence = (optimal_learning_windows.confidence + NEW.context_quality_score) / 2,
             updated_at = NOW();
     END IF;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -775,29 +777,27 @@ CREATE TRIGGER trigger_update_learning_windows
 CREATE OR REPLACE FUNCTION update_known_locations_from_context()
 RETURNS TRIGGER AS $$
 DECLARE
-    v_location_id UUID;
     v_existing_location RECORD;
 BEGIN
     -- Only process contexts with coordinates and good performance
     IF NEW.location_coordinates IS NOT NULL AND NEW.overall_optimality >= 0.6 THEN
-        
-        -- Check if we have a nearby known location (within 100 meters)
+
+        -- Check if we have an exact coordinate match (since PostGIS is not available)
         SELECT * INTO v_existing_location
         FROM known_locations kl
         WHERE kl.user_id = NEW.user_id
-          AND ST_DWithin(kl.coordinates, NEW.location_coordinates, 100)
-        ORDER BY ST_Distance(kl.coordinates, NEW.location_coordinates)
+          AND kl.coordinates = NEW.location_coordinates
         LIMIT 1;
-        
+
         IF v_existing_location IS NOT NULL THEN
             -- Update existing location
-            UPDATE known_locations 
+            UPDATE known_locations
             SET performance_history = array_append(
-                    CASE 
-                        WHEN array_length(performance_history, 1) >= 50 
+                    CASE
+                        WHEN array_length(performance_history, 1) >= 50
                         THEN performance_history[2:] -- Keep only last 49 + new one
-                        ELSE performance_history 
-                    END, 
+                        ELSE performance_history
+                    END,
                     NEW.overall_optimality
                 ),
                 visit_count = visit_count + 1,
@@ -831,7 +831,7 @@ BEGIN
             END IF;
         END IF;
     END IF;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -843,7 +843,10 @@ CREATE TRIGGER trigger_update_known_locations
     FOR EACH ROW
     EXECUTE FUNCTION update_known_locations_from_context();
 
-RAISE NOTICE 'Created CAE 2.0 automatic learning triggers';
+DO $$
+BEGIN
+    RAISE NOTICE 'Created CAE 2.0 automatic learning triggers';
+END $$;
 
 -- ==============================
 -- 10. PARTITIONING FOR PERFORMANCE
@@ -867,10 +870,10 @@ BEGIN
     FOR month_iter IN 0..11 LOOP
         end_date := start_date + INTERVAL '1 month';
         partition_name := 'context_snapshots_' || to_char(start_date, 'YYYY_MM');
-        
+
         EXECUTE format('CREATE TABLE %I PARTITION OF context_snapshots FOR VALUES FROM (%L) TO (%L)',
                       partition_name, start_date, end_date);
-        
+
         start_date := end_date;
     END LOOP;
 END $$;
@@ -886,7 +889,7 @@ RETURNS VOID AS $$
 BEGIN
     -- Insert default optimal learning windows based on research
     INSERT INTO optimal_learning_windows (user_id, circadian_hour, day_of_week, performance_score, frequency, last_performance, last_seen, confidence)
-    VALUES 
+    VALUES
     -- Morning peak (9-11 AM)
     (p_user_id, 9.0, 1, 0.8, 1, 0.8, NOW(), 0.6), -- Monday 9 AM
     (p_user_id, 10.0, 1, 0.85, 1, 0.85, NOW(), 0.6), -- Monday 10 AM
@@ -896,11 +899,11 @@ BEGIN
     (p_user_id, 14.0, 1, 0.75, 1, 0.75, NOW(), 0.5), -- Monday 2 PM
     (p_user_id, 15.0, 1, 0.75, 1, 0.75, NOW(), 0.5) -- Monday 3 PM
     ON CONFLICT (user_id, circadian_hour, day_of_week) DO NOTHING;
-    
+
     -- Insert default learned patterns
     INSERT INTO learned_patterns (user_id, type, pattern, last_seen, effectiveness, confidence)
-    VALUES 
-    (p_user_id, 'optimal_time', 
+    VALUES
+    (p_user_id, 'optimal_time',
      '{"triggers": {"time_of_day": "morning", "energy_level": "high"}, "outcomes": {"optimality": 0.8, "focus_duration": 45}}'::jsonb,
      NOW(), 0.7, 0.6),
     (p_user_id, 'productive_location',
@@ -910,7 +913,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-RAISE NOTICE 'Created default pattern seeding function';
+DO $$
+BEGIN
+    RAISE NOTICE 'Created default pattern seeding function';
+END $$;
 
 -- ==============================
 -- 12. PERFORMANCE OPTIMIZATIONS
@@ -932,7 +938,7 @@ BEGIN
     ANALYZE optimal_learning_windows;
     ANALYZE known_locations;
     ANALYZE cognitive_forecasting;
-    
+
     RAISE NOTICE 'CAE 2.0 table statistics updated';
 END;
 $$ LANGUAGE plpgsql;
@@ -973,7 +979,11 @@ GRANT EXECUTE ON FUNCTION record_context_performance(UUID, UUID, TEXT, DECIMAL, 
 GRANT EXECUTE ON FUNCTION cleanup_old_cae_data(INTEGER) TO authenticated;
 GRANT EXECUTE ON FUNCTION seed_default_patterns_for_user(UUID) TO authenticated;
 
-RAISE NOTICE 'Enhanced security policies and permissions applied';
+DO $$
+BEGIN
+    RAISE NOTICE 'Enhanced security policies and permissions applied';
+END;
+$$;
 
 -- ==============================
 -- 14. MIGRATION COMPLETION
@@ -982,7 +992,7 @@ RAISE NOTICE 'Enhanced security policies and permissions applied';
 -- Record successful migration
 INSERT INTO migrations (version, description)
 VALUES (
-    'CAE_2_0_1', 
+    'CAE_2_0_1',
     'Cognitive Aura Engine 2.0: Anticipatory Learning - Complete schema upgrade with environmental context sensing, predictive intelligence, and enhanced analytics'
 );
 
@@ -991,7 +1001,7 @@ DO $$
 DECLARE
     summary_text TEXT;
 BEGIN
-    summary_text := format('
+    summary_text := $summary$
 🚀 CAE 2.0 Migration Completed Successfully! 🚀
 
 📊 Database Objects Created:
@@ -1031,8 +1041,8 @@ Next Steps:
 4. Monitor performance and accuracy metrics
 
 The future of adaptive learning starts now! 🧠✨
-    ');
-    
+    $summary$;
+
     RAISE NOTICE '%', summary_text;
 END $$;
 
@@ -1046,24 +1056,24 @@ DECLARE
 BEGIN
     -- Count created objects
     SELECT COUNT(*) INTO table_count
-    FROM information_schema.tables 
-    WHERE table_schema = 'public' 
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
     AND table_name IN ('context_snapshots', 'learned_patterns', 'optimal_learning_windows', 'known_locations', 'cognitive_forecasting');
-    
+
     SELECT COUNT(*) INTO view_count
     FROM information_schema.views
     WHERE table_schema = 'public'
     AND table_name IN ('context_effectiveness', 'temporal_performance', 'location_intelligence', 'dbl_trends', 'forecasting_accuracy');
-    
+
     SELECT COUNT(*) INTO function_count
     FROM information_schema.routines
     WHERE routine_schema = 'public'
     AND routine_name IN ('get_optimal_windows', 'get_context_recommendations', 'record_context_performance', 'cleanup_old_cae_data', 'seed_default_patterns_for_user', 'update_cae_statistics');
-    
+
     SELECT COUNT(*) INTO trigger_count
     FROM information_schema.triggers
     WHERE trigger_name IN ('trigger_update_learning_windows', 'trigger_update_known_locations');
-    
+
     IF table_count = 5 AND view_count = 5 AND function_count = 6 AND trigger_count = 2 THEN
         RAISE NOTICE '✅ Migration verification passed: All objects created successfully';
         RAISE NOTICE '   - Tables: %/5', table_count;
@@ -1083,4 +1093,7 @@ END $$;
 -- END OF CAE 2.0 MIGRATION
 -- ==============================
 
-RAISE NOTICE '🎉 CAE 2.0 Migration Complete! Welcome to the future of adaptive learning! 🎉';
+DO $$
+BEGIN
+    RAISE NOTICE '🎉 CAE 2.0 Migration Complete! Welcome to the future of adaptive learning! 🎉';
+END $$;

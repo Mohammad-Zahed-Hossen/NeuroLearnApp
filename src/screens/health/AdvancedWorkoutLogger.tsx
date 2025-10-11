@@ -178,25 +178,15 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
 
   const loadBiometricData = async () => {
     try {
-      // Simulate biometric data - would integrate with actual sensors/APIs
-      const mockBiometrics: BiometricData = {
-        heartRate: 72 + Math.floor(Math.random() * 20),
-        hrvScore: 45 + Math.floor(Math.random() * 30),
-        recoveryStatus: ['optimal', 'good', 'caution', 'rest'][Math.floor(Math.random() * 4)] as any,
-        stressLevel: Math.floor(Math.random() * 100)
-      };
+      // TODO: Integrate with actual biometric sensors/APIs
+      // For now, show empty state until real data is available
+      setBiometricData(null);
 
-      setBiometricData(mockBiometrics);
-
-      // Animate recovery indicator
-      recoveryAnimation.value = withTiming(
-        mockBiometrics.recoveryStatus === 'optimal' ? 1 :
-        mockBiometrics.recoveryStatus === 'good' ? 0.75 :
-        mockBiometrics.recoveryStatus === 'caution' ? 0.5 : 0.25,
-        { duration: 2000 }
-      );
+      // Reset recovery animation
+      recoveryAnimation.value = withTiming(0, { duration: 1000 });
     } catch (error) {
       console.error('Error loading biometric data:', error);
+      setBiometricData(null);
     }
   };
 
@@ -455,12 +445,25 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   );
 
   const renderProgressChart = () => {
-    if (!weeklyProgress) return null;
+    if (!weeklyProgress || workouts.length === 0) return null;
+
+    // Generate chart data from actual workout data
+    const last7Days = workouts.filter(w =>
+      differenceInDays(new Date(), new Date(w.date)) <= 7
+    );
+
+    // Group workouts by day of week
+    const dayData = [0, 0, 0, 0, 0, 0, 0]; // Mon to Sun
+    last7Days.forEach(workout => {
+      const dayOfWeek = new Date(workout.date).getDay(); // 0 = Sun, 1 = Mon, etc.
+      const adjustedDay = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Convert to Mon=0, Sun=6
+      dayData[adjustedDay] += workout.duration;
+    });
 
     const chartData = {
       labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       datasets: [{
-        data: [45, 0, 60, 30, 90, 75, 45], // Mock weekly data
+        data: dayData,
         color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
         strokeWidth: 3
       }]

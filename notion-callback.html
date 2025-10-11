@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Notion OAuth Callback - NeuroLearn</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+        }
+        h1 {
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+        p {
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            color: #ffcccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="content">
+        <h1>🔗 Connecting to NeuroLearn</h1>
+        <p>Please wait while we complete the Notion connection...</p>
+        <div class="spinner"></div>
+        <p style="font-size: 0.9em; opacity: 0.7;">This window will close automatically</p>
+    </div>
+
+    <script>
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const error = urlParams.get('error');
+        const errorDescription = urlParams.get('error_description');
+
+        const contentDiv = document.getElementById('content');
+
+        if (error) {
+            // Handle OAuth error
+            contentDiv.className = 'container error';
+            contentDiv.innerHTML = `
+                <h1>❌ Connection Failed</h1>
+                <p>${errorDescription || error}</p>
+                <p style="font-size: 0.9em; margin-top: 20px;">
+                    Please try again or contact support if the problem persists.
+                </p>
+            `;
+        } else if (code) {
+            // Success - redirect to mobile app
+            contentDiv.innerHTML = `
+                <h1>✅ Success!</h1>
+                <p>Authorization code received. Redirecting to NeuroLearn...</p>
+                <div class="spinner"></div>
+            `;
+
+            // Redirect to mobile app with the code
+            setTimeout(() => {
+                window.location.href = 'neurolearn://notion/callback?code=' + encodeURIComponent(code);
+            }, 1000);
+        } else {
+            // No code or error - show error
+            contentDiv.className = 'container error';
+            contentDiv.innerHTML = `
+                <h1>❌ Invalid Request</h1>
+                <p>No authorization code received from Notion.</p>
+                <p style="font-size: 0.9em; margin-top: 20px;">
+                    Please try connecting again from the NeuroLearn app.
+                </p>
+            `;
+        }
+    </script>
+</body>
+</html>

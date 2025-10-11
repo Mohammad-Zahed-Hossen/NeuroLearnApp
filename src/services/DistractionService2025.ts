@@ -200,9 +200,19 @@ export class DistractionService2025 {
 
     // Save to localStorage as backup
     if (typeof window !== 'undefined') {
-      const pendingEvents = JSON.parse(localStorage.getItem('pending_distraction_events') || '[]');
-      pendingEvents.push(fallbackEvent);
-      localStorage.setItem('pending_distraction_events', JSON.stringify(pendingEvents));
+      // Replace localStorage with AsyncStorage for React Native
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const pendingEventsStr = await AsyncStorage.getItem('pending_distraction_events');
+        const pendingEvents = pendingEventsStr ? JSON.parse(pendingEventsStr) : [];
+        pendingEvents.push(fallbackEvent);
+        await AsyncStorage.setItem('pending_distraction_events', JSON.stringify(pendingEvents));
+      } catch (e) {
+        // Fallback to localStorage if AsyncStorage not available
+        const pendingEvents = JSON.parse(localStorage.getItem('pending_distraction_events') || '[]');
+        pendingEvents.push(fallbackEvent);
+        localStorage.setItem('pending_distraction_events', JSON.stringify(pendingEvents));
+      }
     }
 
     // Queue for background sync

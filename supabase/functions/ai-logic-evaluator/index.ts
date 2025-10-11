@@ -178,8 +178,8 @@ Be ${strictnessLevel > 0.5 ? 'strict but constructive' : 'gentle and encouraging
           continue;
         }
 
-        lastError = error.message;
-        console.error(`AI request failed (attempt ${attempt + 1}/${maxRetries}):`, error);
+  lastError = String(error ?? 'Unknown error');
+  console.error(`AI request failed (attempt ${attempt + 1}/${maxRetries}):`, error);
         if (attempt === maxRetries - 1) break;
       }
     }
@@ -190,10 +190,10 @@ Be ${strictnessLevel > 0.5 ? 'strict but constructive' : 'gentle and encouraging
       fallback: getFallbackEvaluation(premise1, premise2, conclusion, exerciseType)
     }), { status: 500 });
 
-  } catch (error: any) {
-    console.error('Global Error in AI Logic Evaluator:', error.message);
+    } catch (error: any) {
+    console.error('Global Error in AI Logic Evaluator:', String(error ?? 'Unknown error'));
     return new Response(
-      JSON.stringify({ error: 'Internal Server Error', details: error.message }),
+      JSON.stringify({ error: 'Internal Server Error', details: String(error ?? 'Unknown error') }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

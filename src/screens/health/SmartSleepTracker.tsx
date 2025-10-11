@@ -24,7 +24,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { GlassCard } from '../../components/GlassComponents';
 import { supabase } from '../../services/storage/SupabaseService';
-import HybridStorageService from '../../services/storage/HybridStorageService';
+import StorageService from '../../services/storage/StorageService';
 import CircadianIntelligenceService from '../../services/health/CircadianIntelligenceService';
 import { colors } from '../../theme/colors';
 
@@ -60,8 +60,11 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   const [sleepPressure, setSleepPressure] = useState<any>(null);
   const [optimalWindow, setOptimalWindow] = useState<any>(null);
 
+
+
   const screenWidth = Dimensions.get('window').width;
   const circadianService = CircadianIntelligenceService.getInstance();
+  const storage = StorageService.getInstance();
 
   // Enhanced Animations
   const crdiAnimation = useSharedValue(0);
@@ -99,12 +102,16 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   const loadSleepData = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) {
+        setSleepLogs([]);
+        return;
+      }
 
-      const data = await HybridStorageService.getInstance().getSleepEntries(user.id, 14);
+      const data = await storage.getSleepEntries(user.id, 14);
       setSleepLogs(data || []);
     } catch (error) {
       console.error('Error loading sleep logs:', error);
+      setSleepLogs([]);
     }
   };
 
@@ -116,25 +123,37 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
         circadianService.predictOptimalSleepWindow(userId)
       ]);
 
-      setCircadianHealth(crdi);
-      setSleepPressure(pressure);
-      setOptimalWindow(window);
+      if (crdi !== null && crdi !== undefined) {
+        setCircadianHealth(crdi);
+        crdiAnimation.value = withSpring(crdi / 100, { damping: 15 });
+      } else {
+        setCircadianHealth(null);
+      }
 
-      // Update dynamic configuration based on user's optimal window
+      if (pressure) {
+        setSleepPressure(pressure);
+        pressureAnimation.value = withSpring(pressure.currentPressure / 100, { damping: 12 });
+      } else {
+        setSleepPressure(null);
+      }
+
       if (window) {
+        setOptimalWindow(window);
+        // Update dynamic configuration based on user's optimal window
         setUserConfig(prev => ({
           ...prev,
           optimalBedtime: format(new Date(window.bedtime), 'HH:mm'),
           optimalWakeTime: format(new Date(window.wakeTime), 'HH:mm'),
           sleepTarget: Math.round(differenceInHours(new Date(window.wakeTime), new Date(window.bedtime)))
         }));
+      } else {
+        setOptimalWindow(null);
       }
-
-      // Animate the metrics
-      crdiAnimation.value = withSpring(crdi / 100, { damping: 15 });
-      pressureAnimation.value = withSpring(pressure.currentPressure / 100, { damping: 12 });
     } catch (error) {
       console.error('Error loading advanced metrics:', error);
+      setCircadianHealth(null);
+      setSleepPressure(null);
+      setOptimalWindow(null);
     }
   };
 
@@ -164,7 +183,7 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
         date: new Date().toISOString().split('T')[0],
       };
 
-      await HybridStorageService.getInstance().saveSleepEntries(user.id, [sleepEntry]);
+  await storage.saveSleepEntries(user.id, [sleepEntry]);
 
       Alert.alert('Success', `Sleep logged successfully! Score: ${sleepScore}/100`);
       setBedtime('');
@@ -411,7 +430,7 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   );
 
   const renderSleepChart = () => {
-    if (!chartData) return null;
+    if (!chartData || !chartData.datasets || !chartData.datasets[0] || !chartData.datasets[0].data) return null;
 
     return (
       <Reanimated.View style={chartEntranceStyle}>

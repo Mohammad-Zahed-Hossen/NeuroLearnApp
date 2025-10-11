@@ -1,6 +1,6 @@
 import { supabase } from '../storage/SupabaseService';
 import { format, differenceInHours, differenceInMinutes } from 'date-fns';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 
 interface CircadianData {
   lightExposure: number[];
@@ -22,7 +22,7 @@ interface SleepEntry {
 
 export class CircadianIntelligenceService {
   private static instance: CircadianIntelligenceService;
-  private storage: any;
+  private storage: StorageService;
 
   static getInstance(): CircadianIntelligenceService {
     if (!CircadianIntelligenceService.instance) {
@@ -32,7 +32,7 @@ export class CircadianIntelligenceService {
   }
 
   constructor() {
-    this.storage = supabase;
+  this.storage = StorageService.getInstance();
   }
 
   /**
@@ -311,7 +311,7 @@ export class CircadianIntelligenceService {
   // Integration methods with existing NeuroLearn services
   private async getSleepEntries(userId: string, days: number): Promise<SleepEntry[]> {
     try {
-      const entries = await HybridStorageService.getInstance().getSleepEntries(userId, days);
+  const entries = await StorageService.getInstance().getSleepEntries(userId, days);
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - days);
 
@@ -330,7 +330,7 @@ export class CircadianIntelligenceService {
   async getCognitivePerformanceData(userId: string): Promise<any[]> {
     // Integration point with NeuroLearn's cognitive assessment data
     try {
-      return await HybridStorageService.getInstance().getCognitiveMetrics(userId);
+  return await StorageService.getInstance().getCognitiveMetrics(userId);
     } catch (error) {
       console.error('Error getting cognitive performance data:', error);
       return [];
@@ -344,7 +344,7 @@ export class CircadianIntelligenceService {
     sleepQuality: number;
   } | null> {
     try {
-      const healthDataRaw = await HybridStorageService.getInstance().getHealthMetrics(userId);
+  const healthDataRaw = await StorageService.getInstance().getHealthMetrics(userId);
       if (!healthDataRaw) return null;
 
       // Handle both single object and array cases
@@ -380,7 +380,7 @@ export class CircadianIntelligenceService {
   private async getFocusSessionData(userId: string): Promise<any[]> {
     // Integration point with NeuroLearn's focus tracking
     try {
-      return await HybridStorageService.getInstance().getFocusSessions();
+  return await StorageService.getInstance().getFocusSessions();
     } catch (error) {
       console.error('Error getting focus session data:', error);
       return [];

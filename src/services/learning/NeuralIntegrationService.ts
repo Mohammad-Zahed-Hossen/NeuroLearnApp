@@ -19,7 +19,7 @@ import {
   SoundscapeType,
 } from './CognitiveSoundscapeEngine';
 import { FocusTimerService } from './FocusTimerService';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 
 // ==================== TYPES ====================
 
@@ -62,7 +62,7 @@ export class NeuralIntegrationService extends EventEmitter {
 
   // Service dependencies
   private focusTimerService: FocusTimerService;
-  private storageService: HybridStorageService;
+  private storageService: StorageService;
 
   // Configuration
   private config: NeuralIntegrationConfig = {
@@ -164,8 +164,8 @@ export class NeuralIntegrationService extends EventEmitter {
 
   private constructor() {
     super();
-    this.focusTimerService = FocusTimerService.getInstance();
-    this.storageService = HybridStorageService.getInstance();
+  this.focusTimerService = FocusTimerService.getInstance();
+  this.storageService = StorageService.getInstance();
     console.log('🧠 Neural Integration Service initialized');
   }
 

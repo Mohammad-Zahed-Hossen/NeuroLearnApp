@@ -21,7 +21,7 @@ import {
 } from '../../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import { HybridStorageService } from '../../services/storage/HybridStorageService';
+import StorageService from '../../services/storage/StorageService';
 import { SpacedRepetitionService } from '../../services/learning/SpacedRepetitionService';
 import { Flashcard, StudySession } from '../../types';
 
@@ -83,7 +83,7 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
   const fadeAnim = useState(new Animated.Value(1))[0];
 
   const themeColors = colors[theme];
-  const storage = HybridStorageService.getInstance();
+  const storage = StorageService.getInstance();
   const srs = SpacedRepetitionService.getInstance();
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import { CircadianIntelligenceService } from '../health/CircadianIntelligenceService';
 import BudgetService from '../finance/BudgetService';
 
@@ -42,7 +42,7 @@ interface HolisticInsight {
 export class GeminiInsightsService {
   private static instance: GeminiInsightsService;
   private genAI: GoogleGenerativeAI | null = null;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: StorageService;
   private circadianService: CircadianIntelligenceService;
   private budgetService: BudgetService;
   private conversationMemory: Map<string, ConversationMemory> = new Map();
@@ -55,7 +55,7 @@ export class GeminiInsightsService {
   }
 
   private constructor() {
-    this.hybridStorage = HybridStorageService.getInstance();
+  this.hybridStorage = StorageService.getInstance();
     this.circadianService = CircadianIntelligenceService.getInstance();
     this.budgetService = BudgetService.getInstance();
     this.initializeGemini();

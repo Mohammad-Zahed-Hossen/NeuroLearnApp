@@ -1,5 +1,5 @@
 import { supabase } from '../storage/SupabaseService';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import AIInsightsService from '../ai/AIInsightsService';
 import { CircadianIntelligenceService } from '../health/CircadianIntelligenceService';
 
@@ -31,7 +31,7 @@ interface CrossModuleData {
 
 class CrossModuleBridgeService {
   private static instance: CrossModuleBridgeService;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: StorageService;
   private aiInsights: AIInsightsService;
   private circadianService: CircadianIntelligenceService;
 
@@ -43,7 +43,7 @@ class CrossModuleBridgeService {
   }
 
   private constructor() {
-    this.hybridStorage = HybridStorageService.getInstance();
+  this.hybridStorage = StorageService.getInstance();
     this.aiInsights = AIInsightsService.getInstance();
     this.circadianService = CircadianIntelligenceService.getInstance();
   }
@@ -275,10 +275,17 @@ class CrossModuleBridgeService {
   // Helper methods for data retrieval
   private async getSleepMetrics(userId: string): Promise<{ quality: number; duration: number }> {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.warn('User not authenticated, returning default sleep metrics');
+        return { quality: 0.5, duration: 7 };
+      }
+      const currentUserId = user.id;
+
       const { data: sleepLogs } = await supabase
         .from('sleep_logs')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', currentUserId)
         .gte('date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
         .order('date', { ascending: false })
         .limit(7);
@@ -299,10 +306,17 @@ class CrossModuleBridgeService {
 
   private async getWorkoutMetrics(userId: string): Promise<{ frequency: number; intensity: number }> {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.warn('User not authenticated, returning default workout metrics');
+        return { frequency: 0, intensity: 0.5 };
+      }
+      const currentUserId = user.id;
+
       const { data: workoutLogs } = await supabase
         .from('workout_logs')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', currentUserId)
         .gte('date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
       const frequency = workoutLogs?.length || 0;
@@ -319,11 +333,18 @@ class CrossModuleBridgeService {
 
   private async getStressMetrics(userId: string): Promise<{ level: number; recovery: number }> {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.warn('User not authenticated, returning default stress metrics');
+        return { level: 0.5, recovery: 0.5 };
+      }
+      const currentUserId = user.id;
+
       // Get recent stress indicators from health logs
       const { data: healthLogs } = await supabase
         .from('health_logs')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', currentUserId)
         .gte('date', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
       if (!healthLogs || healthLogs.length === 0) {

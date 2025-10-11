@@ -48,6 +48,11 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
     progress: 0,
   });
   const [calories, setCalories] = useState(0);
+  const [stats, setStats] = useState({
+    avgTime: 0,
+    favorite: '',
+    totalCalories: 0,
+  });
 
   const animatedScales = useMemo(() => {
     return workoutTypes.reduce((acc, type) => {
@@ -113,6 +118,11 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
         progress: 0,
       });
       setCalories(0);
+      setStats({
+        avgTime: 0,
+        favorite: '',
+        totalCalories: 0,
+      });
       return;
     }
 
@@ -154,8 +164,28 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
       0,
     );
 
+    // Calculate stats
+    const avgTime = workouts.length > 0 ? Math.round(totalMinutes / workouts.length) : 0;
+
+    // Find favorite workout type
+    const typeCounts = workouts.reduce((acc, w) => {
+      acc[w.workout_type] = (acc[w.workout_type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const favorite = Object.keys(typeCounts).reduce((a, b) =>
+      typeCounts[a] > typeCounts[b] ? a : b, ''
+    );
+
+    const totalCalories = Math.round(calEstimate);
+
     setWeeklySummary({ totalWorkouts, totalMinutes, streak, progress });
     setCalories(calEstimate);
+    setStats({
+      avgTime,
+      favorite: getWorkoutName(favorite),
+      totalCalories,
+    });
   };
 
   const logWorkout = async () => {
@@ -516,7 +546,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
                 { color: theme === 'dark' ? '#FFFFFF' : '#111827' },
               ]}
             >
-              35 mins
+              {stats.avgTime} mins
             </Text>
           </GlassCard>
           <GlassCard theme={theme} style={styles.statsCard}>
@@ -534,7 +564,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
                 { color: theme === 'dark' ? '#FFFFFF' : '#111827' },
               ]}
             >
-              Cardio
+              {stats.favorite || 'None'}
             </Text>
           </GlassCard>
           <GlassCard theme={theme} style={styles.statsCard}>
@@ -552,7 +582,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
                 { color: theme === 'dark' ? '#FFFFFF' : '#111827' },
               ]}
             >
-              ~420
+              ~{stats.totalCalories}
             </Text>
           </GlassCard>
         </View>

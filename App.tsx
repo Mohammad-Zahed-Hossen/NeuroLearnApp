@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { BackHandler, Linking, View } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Alert, BackHandler, Linking, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Existing screens
 import { DashboardScreen } from './src/screens/DashboardScreen';
@@ -11,6 +14,7 @@ import { FlashcardsScreen } from './src/screens/Learning Tools/FlashcardsScreen'
 import { SpeedReadingScreen } from './src/screens/Learning Tools/SpeedReadingScreen';
 import { TasksScreen } from './src/screens/Focus & Productivity/TasksScreen';
 import { SettingsScreen } from './src/screens/Profile/SettingsScreen';
+import { CognitivePrivacyScreen } from './src/screens/Profile/CognitivePrivacyScreen';
 import { MemoryPalaceScreen } from './src/screens/Learning Tools/MemoryPalaceScreen';
 import { NeuralMindMapScreen } from './src/screens/Focus & Productivity/NeuralMindMapScreen';
 import { LogicTrainerScreen } from './src/screens/Learning Tools/LogicTrainerScreen';
@@ -23,16 +27,17 @@ import {
   LearnHubScreen,
   FocusHubScreen,
   ProfileHubScreen,
+  IntegrationHubScreen,
 } from './src/components/navigation/TabScreens';
 
 // Overlay components
-import { MiniPlayer } from './src/components/MiniPlayerComponent';
 import { CommandPalette } from './src/components/navigation/CommandPalette';
 import { FloatingActionButton } from './src/components/shared/FloatingActionButton';
 import { QuickActionBottomSheet } from './src/components/navigation/QuickActionBottomSheet';
 import FloatingChatBubble from './src/components/ai/FloatingChatBubble';
 import FloatingElementsOrchestrator from './src/components/shared/FloatingElementsOrchestrator';
 import { MicroTaskCard } from './src/components/shared/MicroTaskCard';
+import FloatingCommandCenter from './src/components/shared/FloatingCommandCenter';
 
 // Contexts
 import { FocusProvider } from './src/contexts/FocusContext';
@@ -41,6 +46,7 @@ import { CognitiveProvider } from './src/contexts/CognitiveProvider';
 
 // Services
 import SupabaseService from './src/services/storage/SupabaseService';
+import { neuralIntegrationService } from './src/services/learning/NeuralIntegrationService';
 
 // Cognitive Aura Engine Integration
 import {
@@ -59,12 +65,29 @@ import WorkoutLoggerScreen from './src/screens/wellness/WorkoutLoggerScreen';
 import SmartSleepTracker from './src/screens/health/SmartSleepTracker';
 import AdvancedWorkoutLogger from './src/screens/health/AdvancedWorkoutLogger';
 import AIAssistantScreen from './src/screens/Learning Tools/AIAssistantScreen';
+import NotionDashboardScreen from './src/screens/Learning Tools/NotionDashboardScreen';
 import ProfileScreen from './src/screens/Profile/ProfileScreen';
+import SynapseBuilderScreen from './src/screens/NeuroPlastisity/SynapseBuilderScreen';
+import HolisticAnalyticsScreen from './src/screens/Analytics/HolisticAnalyticsScreen';
+import PatientsScreen from './src/screens/PatientsScreen';
+import { MonitoringScreen } from './src/screens/Profile/MonitoringScreen';
 
 import { ThemeType, colors } from './src/theme/colors';
 
 type AppState = 'loading' | 'auth' | 'app';
 type NavigationMode = 'hamburger' | 'modern' | 'hybrid';
+
+// Create a client for React Query
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      gcTime: 1000 * 60 * 10, // 10 minutes
+      retry: 2,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeType>('dark');
@@ -84,6 +107,7 @@ export default function App() {
   const [user, setUser] = React.useState<any>(null);
   // Ensure hooks run in stable order: call aura hook at top-level of component
   const auraState = useCurrentAuraState();
+  const [microTaskDismissed, setMicroTaskDismissed] = useState(false);
 
   const handleNavigate = (screen: string, params?: any) => {
     console.log(
@@ -118,6 +142,33 @@ export default function App() {
     return () => backHandler.remove();
   }, [navigationStack]);
 
+  // Cleanup services on app unmount
+  useEffect(() => {
+    return () => {
+      neuralIntegrationService.dispose();
+    };
+  }, []);
+
+  // Handle deep links for OAuth callbacks
+  useEffect(() => {
+    const handleDeepLink = (event: { url: string }) => {
+      const { url } = event;
+      if (url.includes('notion/callback')) {
+        handleNotionCallback(url);
+      }
+    };
+
+    // Listen for deep links
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    // Handle initial URL if app was opened from link
+    Linking.getInitialURL().then((url) => {
+      if (url) handleDeepLink({ url });
+    });
+
+    return () => subscription?.remove();
+  }, []);
+
   const initializeApp = async () => {
     try {
       const currentUser = await supabaseService.getCurrentUser();
@@ -128,13 +179,61 @@ export default function App() {
         return;
       }
 
-      // Initialize Cognitive Aura Engine
-      await initializeAuraStore();
+      // Initialize Cognitive Aura Engine only if user is authenticated
+      try {
+        await initializeAuraStore();
+      } catch (auraError) {
+        console.warn(
+          'Aura initialization failed, continuing without aura features:',
+          auraError,
+        );
+        // Don't block app startup if aura fails
+      }
+
+      // Initialize warm-tier database if available. Use dynamic import so
+      // tests and environments without WatermelonDB/MMKV won't fail at
+      // module-evaluation time.
+      try {
+        // Dynamic import the initDatabase module. Use the TS-resolvable
+        // path (no .js extension) and accept either a default export or a
+        // named export. Some bundlers/TS configurations make the module
+        // namespace the inferred type which caused the "not callable"
+        // TypeScript error; casting to `any` and checking at runtime
+        // ensures we only call a function.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+        const mod = (await import('./src/database/initDatabase.js')) as any;
+        const initDatabaseFn = mod.default ?? mod.initDatabase ?? mod;
+        // initDatabase() will attempt to initialize a real WatermelonDB
+        // instance if native modules and schema are present, otherwise it
+        // returns the fallback DB. We call it to eagerly initialize the
+        // warm-tier where possible. Do a runtime check before calling.
+        if (typeof initDatabaseFn === 'function') {
+          initDatabaseFn();
+        } else {
+          // If module returned a constructor bag or fallback value, log it
+          // for diagnostics — don't throw.
+          // eslint-disable-next-line no-console
+          console.debug('initDatabase not callable, module:', initDatabaseFn);
+        }
+      } catch (dbInitErr) {
+        // Non-fatal — log for diagnostics but don't block app startup.
+        // Tests that mock DB modules won't throw because we import dynamically.
+        // eslint-disable-next-line no-console
+        console.debug(
+          'initDatabase not run:',
+          dbInitErr instanceof Error ? dbInitErr.message : String(dbInitErr),
+        );
+      }
 
       setAppState('app');
     } catch (error) {
       console.error('App initialization error:', error);
-      setAppState('auth');
+      // If user is authenticated but aura init failed, still allow app access
+      if (user) {
+        setAppState('app');
+      } else {
+        setAppState('auth');
+      }
     }
   };
 
@@ -167,7 +266,85 @@ export default function App() {
     }
   };
 
-  const renderCurrentScreen = () => {
+  // Handle Notion OAuth callback
+  const handleNotionCallback = useCallback(async (url: string) => {
+    try {
+      console.log('🔗 Handling Notion OAuth callback:', url);
+
+      // Extract the authorization code from the URL
+      const urlObj = new URL(url);
+      const code = urlObj.searchParams.get('code');
+      const error = urlObj.searchParams.get('error');
+
+      if (error) {
+        console.error('❌ Notion OAuth error:', error);
+        Alert.alert('Connection Failed', `Notion authorization failed: ${error}`);
+        return;
+      }
+
+      if (!code) {
+        console.error('❌ No authorization code received');
+        Alert.alert('Connection Failed', 'No authorization code received from Notion');
+        return;
+      }
+
+      // Navigate to Notion dashboard to complete the connection
+      handleNavigate('notion-dashboard', { oauthCode: code });
+
+      console.log('✅ Notion OAuth callback handled successfully');
+    } catch (error) {
+      console.error('❌ Failed to handle Notion callback:', error);
+      Alert.alert('Connection Failed', 'Failed to process Notion authorization');
+    }
+  }, [handleNavigate]);
+
+  // Handle micro-task completion from Cognitive Aura Engine
+  const handleMicroTaskComplete = useCallback(
+    async (completed: boolean, timeSpent: number, satisfaction: number = 3) => {
+      try {
+        if (!auraState) return;
+
+        // Import the CAE service dynamically to avoid circular dependencies
+        const { cognitiveAuraService } = await import(
+          './src/services/ai/CognitiveAuraService.js'
+        );
+        const CAE = cognitiveAuraService;
+
+        // Record performance metrics
+        const Metrics = {
+          accuracy: completed ? 1.0 : 0.0,
+          taskCompletion: completed ? 1.0 : 0.0,
+          timeToComplete: timeSpent / 1000,
+          userSatisfaction: satisfaction,
+          contextRelevance:
+            auraState.environmentalContext?.contextQualityScore ?? 0,
+          environmentOptimality:
+            auraState.environmentalContext?.overallOptimality ?? 0,
+          predictiveAccuracy: auraState.predictionAccuracy ?? 0,
+          adaptationEffectiveness: auraState.biologicalAlignment ?? 0,
+        };
+
+        await CAE.recordPerformance(Metrics);
+
+        // Generate new aura state
+        await CAE.refreshAuraState();
+
+        console.log(
+          `✅ Micro-task ${completed ? 'completed' : 'skipped'} in ${(
+            timeSpent / 1000
+          ).toFixed(1)}s`,
+        );
+
+        // Dismiss the micro-task card after completion
+        setMicroTaskDismissed(true);
+      } catch (error) {
+        console.error('❌ Micro-task completion handling failed:', error);
+      }
+    },
+    [auraState],
+  );
+
+  const currentScreenComponent = useMemo(() => {
     switch (currentScreen) {
       case 'dashboard':
         return <DashboardScreen theme={theme} onNavigate={handleNavigate} />;
@@ -199,8 +376,12 @@ export default function App() {
             onThemeChange={handleThemeChange}
           />
         );
+      case 'cognitive-privacy':
+        return <CognitivePrivacyScreen />;
       case 'learn':
         return <LearnHubScreen theme={theme} onNavigate={handleNavigate} />;
+      case 'integrations':
+        return <IntegrationHubScreen theme={theme} onNavigate={handleNavigate} />;
       case 'profile':
         return <ProfileHubScreen theme={theme} onNavigate={handleNavigate} />;
       case 'finance':
@@ -263,12 +444,116 @@ export default function App() {
             onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
           />
         );
+      case 'notion-dashboard':
+        return (
+          <NotionDashboardScreen theme={theme} onNavigate={handleNavigate} />
+        );
       case 'user-profile':
         return <ProfileScreen onNavigate={handleNavigate} />;
+      case 'synapse-builder':
+        return <SynapseBuilderScreen theme={theme} navigation={{ goBack: () => setNavigationStack((prev) => prev.slice(0, -1)) }} />;
+      case 'holistic-analytics':
+        return <HolisticAnalyticsScreen navigation={{ goBack: () => setNavigationStack((prev) => prev.slice(0, -1)) }} theme={theme} />;
+      case 'monitoring':
+        return <MonitoringScreen theme={theme} navigation={{ goBack: () => setNavigationStack((prev) => prev.slice(0, -1)) }} />;
+      case 'patients':
+        return (
+          <PatientsScreen
+            onBack={() => setNavigationStack((prev) => prev.slice(0, -1))}
+          />
+        );
       default:
         return <DashboardScreen theme={theme} onNavigate={handleNavigate} />;
     }
-  };
+  }, [currentScreen, theme, handleNavigate, handleThemeChange, user?.id]);
+
+  const renderCurrentScreen = () => currentScreenComponent;
+
+
+
+  // Core learning screens that should hide the tab bar for immersive experience
+
+  const coreLearningScreens = [
+
+    'flashcards',
+
+    'speed-reading',
+
+    'memory-palace',
+
+    'logic-trainer',
+
+    'neural-mind-map',
+
+    'focus',
+
+    'tasks',
+
+    'adaptive-focus',
+
+    'settings',
+
+    'cognitive-privacy',
+
+    'ai-assistant',
+
+    'synapse-builder',
+
+    'holistic-analytics',
+
+    'monitoring',
+
+    'patients',
+
+  ];
+
+
+
+  // Finance and health screens that should hide the tab bar
+
+  const financeAndHealthScreens = [
+
+    'add-transaction',
+
+    'budget-manager',
+
+    'transaction-history',
+
+    'sleep-tracker',
+
+    'workout-logger',
+
+    'smart-sleep-tracker',
+
+    'advanced-workout-logger',
+
+  ];
+
+
+
+  // Integration screens that should hide the tab bar for immersive experience
+
+  const integrationScreens = [
+
+    'notion-dashboard',
+
+  ];
+
+
+
+  const shouldHideTabBar = useMemo(
+
+    () =>
+
+      coreLearningScreens.includes(currentScreen) ||
+
+      financeAndHealthScreens.includes(currentScreen) ||
+
+      integrationScreens.includes(currentScreen),
+
+    [currentScreen]
+
+  );
 
   if (appState === 'loading') {
     return (
@@ -289,36 +574,10 @@ export default function App() {
         </SafeAreaProvider>
       </GestureHandlerRootView>
     );
+
   }
 
-  // Core learning screens that should hide the tab bar for immersive experience
-  const coreLearningScreens = [
-    'flashcards',
-    'speed-reading',
-    'memory-palace',
-    'logic-trainer',
-    'neural-mind-map',
-    'focus',
-    'tasks',
-    'adaptive-focus',
-    'settings',
-    'ai-assistant',
-  ];
 
-  // Finance and health screens that should hide the tab bar
-  const financeAndHealthScreens = [
-    'add-transaction',
-    'budget-manager',
-    'transaction-history',
-    'sleep-tracker',
-    'workout-logger',
-    'smart-sleep-tracker',
-    'advanced-workout-logger',
-  ];
-
-  const shouldHideTabBar =
-    coreLearningScreens.includes(currentScreen) ||
-    financeAndHealthScreens.includes(currentScreen);
 
   const renderNavigation = () => {
     switch (navigationMode) {
@@ -333,11 +592,13 @@ export default function App() {
               currentScreen={currentScreen}
               theme={theme}
             />
-            {auraState && auraState.microTask && (
+            {auraState && auraState.microTask && !microTaskDismissed && (
               <MicroTaskCard
                 auraState={auraState}
                 theme={theme}
                 position="floating"
+                onTaskComplete={handleMicroTaskComplete}
+                onClose={() => setMicroTaskDismissed(true)}
               />
             )}
           </>
@@ -361,6 +622,7 @@ export default function App() {
                 auraState={auraState}
                 theme={theme}
                 position="floating"
+                onTaskComplete={handleMicroTaskComplete}
               />
             )}
           </>
@@ -393,6 +655,7 @@ export default function App() {
                 auraState={auraState}
                 theme={theme}
                 position="floating"
+                onTaskComplete={handleMicroTaskComplete}
               />
             )}
           </>
@@ -404,70 +667,73 @@ export default function App() {
   };
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <SafeAreaView
-          style={{
-            flex: 1,
-            backgroundColor:
-              theme === 'dark'
-                ? colors.dark.background
-                : colors.light.background,
-          }}
-        >
-          <FocusProvider>
-            <SoundscapeProvider>
-              <CognitiveProvider>
-                <FloatingElementsOrchestrator
-                  cognitiveLoad="low"
-                  currentScreen={currentScreen}
-                >
-                  {renderNavigation()}
-
-                  {quickActionVisible && (
-                    <View
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        zIndex: 10000,
-                      }}
-                    >
-                      <QuickActionBottomSheet
-                        theme={theme}
-                        currentScreen={currentScreen}
-                        visible={quickActionVisible}
-                        onAction={handleQuickAction}
-                        onClose={() => setQuickActionVisible(false)}
-                      />
-                    </View>
-                  )}
-
-                  <MiniPlayer theme={theme} />
-
-                  <FloatingActionButton
-                    theme={theme}
-                    onPress={() => setQuickActionVisible(true)}
+    <QueryClientProvider client={queryClient}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <SafeAreaView
+            style={{
+              flex: 1,
+              backgroundColor:
+                theme === 'dark'
+                  ? colors.dark.background
+                  : colors.light.background,
+            }}
+          >
+            <FocusProvider>
+              <SoundscapeProvider>
+                <CognitiveProvider>
+                  <FloatingElementsOrchestrator
+                    cognitiveLoad="low"
                     currentScreen={currentScreen}
-                  />
-
-                  <FloatingChatBubble theme={theme} userId={user?.id} />
-
-                  <CommandPalette
-                    theme={theme}
-                    visible={commandPaletteVisible}
-                    onClose={() => setCommandPaletteVisible(false)}
                     onNavigate={handleNavigate}
-                  />
-                </FloatingElementsOrchestrator>
-              </CognitiveProvider>
-            </SoundscapeProvider>
-          </FocusProvider>
-          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        </SafeAreaView>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+                  >
+                    {renderNavigation()}
+
+                    {quickActionVisible && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          zIndex: 10000,
+                        }}
+                      >
+                        <QuickActionBottomSheet
+                          theme={theme}
+                          currentScreen={currentScreen}
+                          visible={quickActionVisible}
+                          onAction={handleQuickAction}
+                          onClose={() => setQuickActionVisible(false)}
+                        />
+                      </View>
+                    )}
+
+                    <FloatingActionButton
+                      theme={theme}
+                      onPress={() => setQuickActionVisible(true)}
+                      currentScreen={currentScreen}
+                    />
+
+                    {user && (
+                      <FloatingChatBubble theme={theme} userId={user.id} />
+                    )}
+
+                    <CommandPalette
+                      theme={theme}
+                      visible={commandPaletteVisible}
+                      onClose={() => setCommandPaletteVisible(false)}
+                      onNavigate={handleNavigate}
+                    />
+                  </FloatingElementsOrchestrator>
+                </CognitiveProvider>
+              </SoundscapeProvider>
+            </FocusProvider>
+            <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+          </SafeAreaView>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </QueryClientProvider>
   );
 }

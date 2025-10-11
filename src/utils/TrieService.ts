@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { HybridStorageService } from '../services/storage/HybridStorageService';
+import StorageService from '../services/storage/StorageService';
+import MMKVStorageService from '../services/storage/MMKVStorageService';
 
 interface TrieNode {
   char: string;
@@ -17,7 +18,7 @@ interface TrieNode {
 export class TrieService {
   private static instance: TrieService;
   private root: TrieNode;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: any; // Use StorageService facade which exposes legacy helpers
   private cacheKey = '@neurolearn/trie_cache';
   private maxCacheSize = 100;
 
@@ -30,7 +31,7 @@ export class TrieService {
 
   private constructor() {
     this.root = this.createNode('');
-    this.hybridStorage = HybridStorageService.getInstance();
+  this.hybridStorage = StorageService.getInstance();
     this.loadFromCache();
   }
 
@@ -50,7 +51,7 @@ export class TrieService {
    */
   insert(word: string, category?: string, amount?: number): void {
     if (!word || word.length === 0) return;
-    
+
     word = word.toLowerCase().trim();
     let current = this.root;
 
@@ -64,7 +65,7 @@ export class TrieService {
     current.isEndOfWord = true;
     current.frequency += 1;
     current.lastUsed = new Date();
-    
+
     if (category) {
       current.category = category;
     }
@@ -119,8 +120,8 @@ export class TrieService {
   }
 
   private dfsCollect(
-    node: TrieNode, 
-    currentWord: string, 
+    node: TrieNode,
+    currentWord: string,
     results: Array<{ text: string; category?: string; frequency: number; score: number }>
   ): void {
     if (node.isEndOfWord && currentWord.length > 0) {
@@ -141,12 +142,12 @@ export class TrieService {
   private calculateRelevanceScore(node: TrieNode): number {
     const now = new Date();
     const daysSinceUsed = (now.getTime() - node.lastUsed.getTime()) / (1000 * 60 * 60 * 24);
-    
+
     // Scoring algorithm: frequency (40%) + recency (40%) + base relevance (20%)
     const frequencyScore = Math.min(node.frequency / 10, 1) * 40;
     const recencyScore = Math.max(0, (30 - daysSinceUsed) / 30) * 40;
     const baseScore = 20;
-    
+
     return frequencyScore + recencyScore + baseScore;
   }
 
@@ -159,7 +160,7 @@ export class TrieService {
     }> = [];
 
     this.collectRecentWords(this.root, '', suggestions);
-    
+
     return suggestions
       .sort((a, b) => new Date(b.score).getTime() - new Date(a.score).getTime())
       .slice(0, limit);
@@ -186,7 +187,7 @@ export class TrieService {
 
   private inferCategory(description: string, amount: number): string {
     const desc = description.toLowerCase();
-    
+
     // Smart category inference
     if (desc.includes('food') || desc.includes('restaurant') || desc.includes('grocery')) return 'food';
     if (desc.includes('transport') || desc.includes('uber') || desc.includes('bus')) return 'transport';
@@ -194,7 +195,7 @@ export class TrieService {
     if (desc.includes('doctor') || desc.includes('medicine') || desc.includes('health')) return 'health';
     if (desc.includes('movie') || desc.includes('entertainment') || desc.includes('game')) return 'entertainment';
     if (amount > 1000) return 'shopping'; // High amount likely shopping
-    
+
     return 'general';
   }
 
@@ -203,7 +204,18 @@ export class TrieService {
    */
   private async loadFromCache(): Promise<void> {
     try {
-      const cachedData = await AsyncStorage.getItem(this.cacheKey);
+      // Prefer MMKV hot cache when available for faster access, fall back to AsyncStorage
+      let cachedData: string | null = null;
+      try {
+        if (MMKVStorageService.isAvailable()) {
+          const obj = await MMKVStorageService.getObject(this.cacheKey);
+          if (obj) cachedData = JSON.stringify(obj);
+        }
+      } catch (e) {
+        // ignore MMKV read errors, fall back to AsyncStorage
+      }
+
+    if (!cachedData) cachedData = await this.hybridStorage.getItem(this.cacheKey);
       if (cachedData) {
         const entries: Array<{word: string, category: string, frequency: number}> = JSON.parse(cachedData);
         entries.forEach(entry => {
@@ -226,6 +238,25 @@ export class TrieService {
   async persistToCache(): Promise<void> {
     try {
       const entries = this.extractTopEntries(this.maxCacheSize);
+      // Prefer MMKV for hot cache when available
+      try {
+        if (MMKVStorageService.isAvailable()) {
+          await MMKVStorageService.setObject(this.cacheKey, entries);
+          return;
+        }
+      } catch (e) {
+        // ignore and fall back
+      }
+      // Use StorageService facade for persistence if available
+      try {
+        if (this.hybridStorage && this.hybridStorage.setItem) {
+          await this.hybridStorage.setItem(this.cacheKey, entries);
+          return;
+        }
+      } catch (e) {
+        // ignore and fall back
+      }
+      // Fallback: direct AsyncStorage only if facade fails
       await AsyncStorage.setItem(this.cacheKey, JSON.stringify(entries));
     } catch (error) {
       console.error('Failed to persist Trie cache:', error);
@@ -235,7 +266,7 @@ export class TrieService {
   private extractTopEntries(limit: number): Array<{word: string, category: string, frequency: number}> {
     const entries: Array<{word: string, category: string, frequency: number, lastUsed: Date}> = [];
     this.extractAllEntries(this.root, '', entries);
-    
+
     // Sort by frequency and recency, take top entries
     return entries
       .sort((a, b) => (b.frequency * 1000 + b.lastUsed.getTime()) - (a.frequency * 1000 + a.lastUsed.getTime()))
@@ -244,8 +275,8 @@ export class TrieService {
   }
 
   private extractAllEntries(
-    node: TrieNode, 
-    word: string, 
+    node: TrieNode,
+    word: string,
     entries: Array<{word: string, category: string, frequency: number, lastUsed: Date}>
   ): void {
     if (node.isEndOfWord && word.length > 0) {

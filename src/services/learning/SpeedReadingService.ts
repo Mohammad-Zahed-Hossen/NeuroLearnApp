@@ -10,7 +10,7 @@
  */
 
 import EventEmitter from 'eventemitter3';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import { MindMapGenerator } from './MindMapGeneratorService';
 import { aiCoachingService } from './AICoachingService';
 
@@ -849,7 +849,7 @@ export class SpeedReadingService extends EventEmitter {
       this.activeSession.sourceLinks = this.createSourceLinks();
 
       // Phase 6 Integration: Persist and update neural map
-      const storage = HybridStorageService.getInstance();
+  const storage = StorageService.getInstance();
       const mind = MindMapGenerator.getInstance();
 
       // Generate additional neural links (if any) and persist

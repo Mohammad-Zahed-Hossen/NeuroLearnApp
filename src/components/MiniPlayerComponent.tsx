@@ -52,7 +52,7 @@ import {
 } from '../theme/colors';
 import { useSoundscape } from '../contexts/SoundscapeContext';
 import { SoundscapeType } from '../services/learning/CognitiveSoundscapeEngine';
-import { useRegisterFloatingElement } from './shared/FloatingElementsOrchestrator';
+import { useRegisterFloatingElement } from './shared/FloatingElementsContext';
 
 // Screen dimensions
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -134,6 +134,13 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ theme, style }) => {
   // Smart Orchestra integration
   const { isVisible, position, zIndex } =
     useRegisterFloatingElement('miniPlayer');
+
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[MiniPlayer] orchestrator isVisible', isVisible);
+    } catch {}
+  }, [isVisible]);
 
   // Safe copies to prevent frozen object issues
   const safePosition = useMemo(
@@ -395,7 +402,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ theme, style }) => {
         <View
           style={[
             styles.currentStatus,
-            { backgroundColor: currentPresetOption.color + '20' },
+            {
+              backgroundColor:
+                (currentPresetOption?.color || themeColors.primary) + '20',
+            },
           ]}
         >
           <View style={styles.statusLeft}>
@@ -436,7 +446,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ theme, style }) => {
               {
                 backgroundColor:
                   soundscape.currentPreset === preset.id
-                    ? preset.color + '20'
+                    ? (preset?.color || themeColors.primary) + '20'
                     : themeColors.surface,
                 borderColor:
                   soundscape.currentPreset === preset.id

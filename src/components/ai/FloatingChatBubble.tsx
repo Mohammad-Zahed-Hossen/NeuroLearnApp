@@ -12,7 +12,7 @@ import {
   Animated,
   Vibration,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { BlurView } from 'expo-blur';
@@ -21,14 +21,17 @@ import Reanimated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
-  interpolate
+  interpolate,
 } from 'react-native-reanimated';
 
 import { GlassCard } from '../GlassComponents';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../services/storage/SupabaseService';
 import AdvancedGeminiService from '../../services/ai/AdvancedGeminiService';
-import { useRegisterFloatingElement } from '../shared/FloatingElementsOrchestrator';
+import {
+  useRegisterFloatingElement,
+  useFloatingElements,
+} from '../shared/FloatingElementsContext';
 
 interface Message {
   id: string;
@@ -41,10 +44,16 @@ interface Message {
 interface FloatingChatBubbleProps {
   theme: 'light' | 'dark';
   userId?: string;
+  isVisible?: boolean;
+  onClose?: () => void;
 }
 
-const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }) => {
-  const [isVisible, setIsVisible] = useState(false);
+const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({
+  theme,
+  userId,
+  isVisible = false,
+  onClose,
+}) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -53,18 +62,48 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [isFetchingSessions, setIsFetchingSessions] = useState(false);
-  const [recentSessions, setRecentSessions] = useState<Array<{ id: string; last: string }>>([]);
-  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [recentSessions, setRecentSessions] = useState<
+    Array<{ id: string; last: string }>
+  >([]);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
+    null,
+  );
 
   // Register with the floating elements orchestrator
-  const { isVisible: isBubbleVisible, position, zIndex } = useRegisterFloatingElement('aiChat');
+  const {
+    isVisible: isBubbleVisible,
+    position,
+    zIndex,
+  } = useRegisterFloatingElement('aiChat');
+
+  const floatingCtx = useFloatingElements();
+
+  // Open chat when orchestrator requests it
+  useEffect(() => {
+    if (floatingCtx.showAIChat) {
+      openChat();
+    }
+  }, [floatingCtx.showAIChat]);
+
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log(
+        '[FloatingChatBubble] floatingCtx.showAIChat',
+        floatingCtx.showAIChat,
+        'isVisible prop',
+        isVisible,
+      );
+    } catch {}
+  }, [floatingCtx.showAIChat, isVisible]);
 
   // Resolve a valid UUID for user_id. Fallback to Supabase auth if prop is invalid.
   const [resolvedUserId, setResolvedUserId] = useState<string | null>(null);
 
   const isValidUUID = (val: string | null | undefined) => {
     if (!val) return false;
-    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+    const uuidRegex =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
     return uuidRegex.test(val);
   };
 
@@ -106,7 +145,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
     if (isLoading) {
       pulseAnimation.value = withSpring(1.2, { duration: 1000 });
       const interval = setInterval(() => {
-        pulseAnimation.value = withSpring(pulseAnimation.value === 1 ? 1.2 : 1, { duration: 1000 });
+        pulseAnimation.value = withSpring(
+          pulseAnimation.value === 1 ? 1.2 : 1,
+          { duration: 1000 },
+        );
       }, 1000);
       return () => clearInterval(interval);
     } else {
@@ -177,7 +219,12 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
       if (chatHistory && Array.isArray(chatHistory) && chatHistory.length > 0) {
         const formattedMessages: Message[] = chatHistory
           .filter(
-            (chat) => chat && typeof chat === 'object' && chat.id && chat.role && chat.message,
+            (chat) =>
+              chat &&
+              typeof chat === 'object' &&
+              chat.id &&
+              chat.role &&
+              chat.message,
           )
           .map((chat) => ({
             id: String(chat.id),
@@ -209,7 +256,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
     }
   };
 
-  const saveChatMessage = async (role: 'user' | 'assistant', content: string) => {
+  const saveChatMessage = async (
+    role: 'user' | 'assistant',
+    content: string,
+  ) => {
     try {
       if (!resolvedUserId) throw new Error('No authenticated user');
 
@@ -239,7 +289,7 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
   };
 
   const openChat = () => {
-    setIsVisible(true);
+    onClose?.();
     setUnreadCount(0);
     modalOpacity.value = withTiming(1, { duration: 300 });
     slideUp.value = withSpring(0, { damping: 20, stiffness: 200 });
@@ -255,7 +305,11 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
     slideUp.value = withTiming(500, { duration: 250 });
 
     setTimeout(() => {
-      setIsVisible(false);
+      onClose?.();
+      // clear programmatic request
+      try {
+        floatingCtx.setShowAIChat(false);
+      } catch {}
     }, 250);
   };
 
@@ -282,10 +336,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
       id: `user_${Date.now()}`,
       role: 'user',
       content: inputText.trim(),
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     await saveChatMessage('user', userMessage.content);
 
     const messageToSend = inputText.trim();
@@ -299,20 +353,23 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
         role: 'assistant',
         content: 'AI is thinking...',
         timestamp: new Date(),
-        isTyping: true
+        isTyping: true,
       };
-      setMessages(prev => [...prev, typingMessage]);
+      setMessages((prev) => [...prev, typingMessage]);
 
-      const aiResponse = await geminiService.chatWithAI(resolvedUserId ?? '', messageToSend);
+      const aiResponse = await geminiService.chatWithAI(
+        resolvedUserId ?? '',
+        messageToSend,
+      );
 
       // Remove typing indicator and add actual response
-      setMessages(prev => {
-        const withoutTyping = prev.filter(m => m.id !== 'typing');
+      setMessages((prev) => {
+        const withoutTyping = prev.filter((m) => m.id !== 'typing');
         const aiMessage: Message = {
           id: `ai_${Date.now()}`,
           role: 'assistant',
           content: aiResponse,
-          timestamp: new Date()
+          timestamp: new Date(),
         };
         return [...withoutTyping, aiMessage];
       });
@@ -322,16 +379,16 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
 
       await saveChatMessage('assistant', aiResponse);
       Vibration.vibrate(50); // Subtle haptic feedback
-
     } catch (error) {
       console.error('Error getting AI response:', error);
-      setMessages(prev => {
-        const withoutTyping = prev.filter(m => m.id !== 'typing');
+      setMessages((prev) => {
+        const withoutTyping = prev.filter((m) => m.id !== 'typing');
         const errorMessage: Message = {
           id: `error_${Date.now()}`,
           role: 'assistant',
-          content: "I apologize, but I'm having trouble processing your request right now. Please try again in a moment.",
-          timestamp: new Date()
+          content:
+            "I apologize, but I'm having trouble processing your request right now. Please try again in a moment.",
+          timestamp: new Date(),
         };
         return [...withoutTyping, errorMessage];
       });
@@ -341,18 +398,15 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
   };
 
   const bubbleStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: bubbleScale.value },
-      { scale: pulseAnimation.value }
-    ]
+    transform: [{ scale: bubbleScale.value }, { scale: pulseAnimation.value }],
   }));
 
   const modalStyle = useAnimatedStyle(() => ({
-    opacity: modalOpacity.value
+    opacity: modalOpacity.value,
   }));
 
   const contentStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: slideUp.value }]
+    transform: [{ translateY: slideUp.value }],
   }));
 
   const renderMessage = (message: Message) => (
@@ -360,13 +414,13 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
       key={message.id}
       style={[
         styles.messageContainer,
-        message.role === 'user' ? styles.userMessage : styles.aiMessage
+        message.role === 'user' ? styles.userMessage : styles.aiMessage,
       ]}
     >
       {message.role === 'assistant' && (
         <View style={styles.aiAvatar}>
           <Icon
-            name={message.isTyping ? "dots-horizontal" : "robot"}
+            name={message.isTyping ? 'dots-horizontal' : 'robot'}
             size={16}
             color="#6366F1"
           />
@@ -377,19 +431,20 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
         style={[
           styles.messageBubble,
           message.role === 'user' ? styles.userBubble : styles.aiBubble,
-          message.isTyping && styles.typingBubble
+          message.isTyping && styles.typingBubble,
         ]}
       >
         <Text
           style={[
             styles.messageText,
-            message.role === 'user' ? styles.userText : styles.aiText
+            message.role === 'user' ? styles.userText : styles.aiText,
           ]}
         >
           {message.content}
         </Text>
         <Text style={styles.timestamp}>
-          {message.timestamp.getHours().toString().padStart(2, '0')}:{message.timestamp.getMinutes().toString().padStart(2, '0')}
+          {message.timestamp.getHours().toString().padStart(2, '0')}:
+          {message.timestamp.getMinutes().toString().padStart(2, '0')}
         </Text>
       </View>
     </View>
@@ -414,24 +469,28 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
   };
 
   const startNewSession = () => {
-    Alert.alert('Start new chat?', 'This will begin a fresh conversation. Previous sessions remain saved.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Start New',
-        style: 'destructive',
-        onPress: () => {
-          setSessionId(null);
-          const welcomeMessage: Message = {
-            id: 'welcome',
-            role: 'assistant',
-            content:
-              "Hello! I'm your NeuroLearn AI coach. What would you like to discuss?",
-            timestamp: new Date(),
-          };
-          setMessages([welcomeMessage]);
+    Alert.alert(
+      'Start new chat?',
+      'This will begin a fresh conversation. Previous sessions remain saved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Start New',
+          style: 'destructive',
+          onPress: () => {
+            setSessionId(null);
+            const welcomeMessage: Message = {
+              id: 'welcome',
+              role: 'assistant',
+              content:
+                "Hello! I'm your NeuroLearn AI coach. What would you like to discuss?",
+              timestamp: new Date(),
+            };
+            setMessages([welcomeMessage]);
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const loadUserSessions = async () => {
@@ -452,7 +511,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
           const sid = String(row.session_id || '');
           if (sid && !seen.has(sid)) {
             seen.add(sid);
-            sessions.push({ id: sid, last: row.timestamp || new Date().toISOString() });
+            sessions.push({
+              id: sid,
+              last: row.timestamp || new Date().toISOString(),
+            });
           }
         });
         setRecentSessions(sessions);
@@ -524,7 +586,8 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
   const onMessagesScroll = (e: any) => {
     try {
       const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-      const nearBottom = contentOffset.y + layoutMeasurement.height >= contentSize.height - 120;
+      const nearBottom =
+        contentOffset.y + layoutMeasurement.height >= contentSize.height - 120;
       setShowScrollToBottom(!nearBottom);
     } catch {}
   };
@@ -535,37 +598,6 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
 
   return (
     <>
-      {/* Floating Chat Bubble */}
-      <TouchableOpacity
-        onPress={openChat}
-        onPressIn={() => bubbleScale.value = withSpring(0.95)}
-        onPressOut={() => bubbleScale.value = withSpring(1)}
-        style={[styles.floatingBubble, { bottom: position.bottom, right: position.right, zIndex: zIndex }]}
-      >
-        <View style={styles.bubbleWrapper}>
-          {/* Glow effect */}
-          <View style={styles.glowEffect} />
-
-          <Reanimated.View style={[styles.bubbleContainer, bubbleStyle]}>
-            <BlurView intensity={20} style={styles.bubbleBlur}>
-              <Icon name="chat" size={24} color="#FFFFFF" />
-              {isLoading && (
-                <View style={styles.loadingIndicator}>
-                  <View style={styles.loadingDot} />
-                </View>
-              )}
-            </BlurView>
-
-            {/* Notification badge */}
-            {unreadCount > 0 && (
-              <View style={styles.notificationBadge}>
-                <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : String(unreadCount)}</Text>
-              </View>
-            )}
-          </Reanimated.View>
-        </View>
-      </TouchableOpacity>
-
       {/* Chat Modal */}
       <Modal
         visible={isVisible}
@@ -600,7 +632,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                     </View>
                   </View>
 
-                  <TouchableOpacity onPress={closeChat} style={styles.closeButton}>
+                  <TouchableOpacity
+                    onPress={closeChat}
+                    style={styles.closeButton}
+                  >
                     <Icon name="close" size={24} color={colors[theme].text} />
                   </TouchableOpacity>
                 </View>
@@ -608,15 +643,23 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                 {/* Session info and actions */}
                 <View style={styles.sessionBar}>
                   <Text style={styles.sessionText}>
-                    {sessionId ? 'Continuing your last conversation' : 'New conversation'}
+                    {sessionId
+                      ? 'Continuing your last conversation'
+                      : 'New conversation'}
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity onPress={openSessionPicker} style={styles.newChatButton}>
+                    <TouchableOpacity
+                      onPress={openSessionPicker}
+                      style={styles.newChatButton}
+                    >
                       <Icon name="history" size={18} color="#6366F1" />
                       <Text style={styles.newChatText}>Sessions</Text>
                     </TouchableOpacity>
                     <View style={{ width: 8 }} />
-                    <TouchableOpacity onPress={startNewSession} style={styles.newChatButton}>
+                    <TouchableOpacity
+                      onPress={startNewSession}
+                      style={styles.newChatButton}
+                    >
                       <Icon name="message-plus" size={18} color="#6366F1" />
                       <Text style={styles.newChatText}>New</Text>
                     </TouchableOpacity>
@@ -627,8 +670,12 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                 {showSessionPicker && (
                   <View style={styles.sessionsOverlay}>
                     <View style={styles.sessionsHeader}>
-                      <Text style={styles.sessionsTitle}>Previous Sessions</Text>
-                      <TouchableOpacity onPress={() => setShowSessionPicker(false)}>
+                      <Text style={styles.sessionsTitle}>
+                        Previous Sessions
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setShowSessionPicker(false)}
+                      >
                         <Icon name="close" size={20} color="#374151" />
                       </TouchableOpacity>
                     </View>
@@ -637,15 +684,21 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                         <ActivityIndicator size="small" color="#6366F1" />
                       </View>
                     ) : recentSessions.length === 0 ? (
-                      <Text style={styles.sessionsEmpty}>No previous sessions</Text>
+                      <Text style={styles.sessionsEmpty}>
+                        No previous sessions
+                      </Text>
                     ) : (
                       <ScrollView style={{ maxHeight: 160 }}>
                         {recentSessions.map((s) => (
                           <View key={s.id} style={styles.sessionItemRow}>
-                            <TouchableOpacity style={styles.sessionItem} onPress={() => selectSession(s.id)}>
+                            <TouchableOpacity
+                              style={styles.sessionItem}
+                              onPress={() => selectSession(s.id)}
+                            >
                               <Icon name="chat" size={16} color="#6366F1" />
                               <Text style={styles.sessionItemText}>
-                                {s.id.slice(0, 8)} • {new Date(s.last).toLocaleString()}
+                                {s.id.slice(0, 8)} •{' '}
+                                {new Date(s.last).toLocaleString()}
                               </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -654,9 +707,16 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                               disabled={deletingSessionId === s.id}
                             >
                               {deletingSessionId === s.id ? (
-                                <ActivityIndicator size="small" color="#EF4444" />
+                                <ActivityIndicator
+                                  size="small"
+                                  color="#EF4444"
+                                />
                               ) : (
-                                <Icon name="trash-can-outline" size={18} color="#EF4444" />
+                                <Icon
+                                  name="trash-can-outline"
+                                  size={18}
+                                  color="#EF4444"
+                                />
                               )}
                             </TouchableOpacity>
                           </View>
@@ -680,7 +740,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
 
                 {/* Scroll to bottom button */}
                 {showScrollToBottom && (
-                  <TouchableOpacity style={styles.scrollToBottom} onPress={scrollToBottom}>
+                  <TouchableOpacity
+                    style={styles.scrollToBottom}
+                    onPress={scrollToBottom}
+                  >
                     <Icon name="arrow-down" size={18} color="#FFFFFF" />
                   </TouchableOpacity>
                 )}
@@ -712,7 +775,10 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                   )}
                   <TextInput
                     ref={inputRef}
-                    style={[styles.textInput, !resolvedUserId && { opacity: 0.5 }]}
+                    style={[
+                      styles.textInput,
+                      !resolvedUserId && { opacity: 0.5 },
+                    ]}
                     value={inputText}
                     onChangeText={setInputText}
                     placeholder="Ask about your finances, health, or learning..."
@@ -727,13 +793,14 @@ const FloatingChatBubble: React.FC<FloatingChatBubbleProps> = ({ theme, userId }
                   <TouchableOpacity
                     style={[
                       styles.sendButton,
-                      (!inputText.trim() || isLoading || !resolvedUserId) && styles.sendButtonDisabled
+                      (!inputText.trim() || isLoading || !resolvedUserId) &&
+                        styles.sendButtonDisabled,
                     ]}
                     onPress={sendMessage}
                     disabled={!inputText.trim() || isLoading || !resolvedUserId}
                   >
                     <Icon
-                      name={isLoading ? "clock-outline" : "send"}
+                      name={isLoading ? 'clock-outline' : 'send'}
                       size={20}
                       color="#FFFFFF"
                     />

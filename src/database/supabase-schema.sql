@@ -221,9 +221,15 @@ CREATE INDEX IF NOT EXISTS idx_focus_sessions_start_time ON focus_sessions(start
 -- ==============================
 CREATE TABLE IF NOT EXISTS distraction_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users ON DELETE CASCADE,
   session_id UUID REFERENCES focus_sessions ON DELETE CASCADE,
+  distraction_type TEXT DEFAULT 'unknown',
+  duration_ms INTEGER DEFAULT 0,
+  severity TEXT DEFAULT 'low',
+  metadata JSONB DEFAULT '{}',
   timestamp TIMESTAMPTZ DEFAULT NOW(),
-  trigger_type TEXT DEFAULT 'unknown'
+  client_generated_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE distraction_events ENABLE ROW LEVEL SECURITY;

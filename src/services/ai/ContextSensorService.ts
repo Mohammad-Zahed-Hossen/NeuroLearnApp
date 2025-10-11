@@ -21,8 +21,9 @@ import * as Device from 'expo-device';
 import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { differenceInMinutes } from 'date-fns';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import CrossModuleBridgeService from '../integrations/CrossModuleBridgeService';
+import database from '../../database/database';
 
 // ==================== CORE INTERFACES ====================
 
@@ -125,7 +126,7 @@ export class ContextSensorService extends EventEmitter {
   private static instance: ContextSensorService;
 
   // Core services
-  private storage: HybridStorageService;
+  private storage: StorageService;
   private crossModuleBridge: CrossModuleBridgeService;
 
   // State management
@@ -157,7 +158,7 @@ export class ContextSensorService extends EventEmitter {
 
   // Cache and optimization
   private contextCache: Map<string, any> = new Map();
-  private readonly CACHE_TTL = 60000; // 1 minute
+  private readonly CACHE_TTL = 300000; // 5 minutes
   private lastLocationUpdate = 0;
   private lastNetworkCheck = 0;
 
@@ -187,7 +188,7 @@ export class ContextSensorService extends EventEmitter {
     super();
 
     // Initialize services
-    this.storage = HybridStorageService.getInstance();
+  this.storage = StorageService.getInstance();
     this.crossModuleBridge = CrossModuleBridgeService.getInstance();
 
     // Generate unique session ID
@@ -255,9 +256,13 @@ export class ContextSensorService extends EventEmitter {
         anticipatedChanges,
       };
 
-      // Update current snapshot and emit event
+      // Update current snapshot and emit event only if significant change
+      const shouldEmit = this.shouldEmitContextUpdate(snapshot);
       this.currentSnapshot = snapshot;
-      this.emit('context_updated', snapshot);
+
+      if (shouldEmit) {
+        this.emit('context_updated', snapshot);
+      }
 
       // Learn from this context
       if (this.patternLearningEnabled) {
@@ -281,6 +286,30 @@ export class ContextSensorService extends EventEmitter {
       console.error('❌ Failed to capture context snapshot:', error);
       return this.createFallbackSnapshot();
     }
+  }
+
+  // ==================== EVENT EMISSION CONTROL ====================
+
+  /**
+   * Check if context update should be emitted to prevent infinite loops
+   */
+  private shouldEmitContextUpdate(newSnapshot: ContextSnapshot): boolean {
+    if (!this.currentSnapshot) {
+      return true; // First snapshot should always be emitted
+    }
+
+    // Check if significant time has passed (at least 30 seconds)
+    const timeDiff = newSnapshot.timestamp.getTime() - this.currentSnapshot.timestamp.getTime();
+    if (timeDiff < 30000) { // 30 seconds
+      return false;
+    }
+
+    // Check if there's a significant change in key metrics
+    const optimalityDiff = Math.abs(newSnapshot.overallOptimality - this.currentSnapshot.overallOptimality);
+    const qualityDiff = Math.abs(newSnapshot.contextQualityScore - this.currentSnapshot.contextQualityScore);
+
+    // Only emit if there's a meaningful change (5% or more)
+    return optimalityDiff > 0.05 || qualityDiff > 0.05;
   }
 
   // ==================== TIME INTELLIGENCE ====================
@@ -1329,19 +1358,24 @@ export class ContextSensorService extends EventEmitter {
    */
   private async storeContextSnapshot(snapshot: ContextSnapshot): Promise<void> {
     try {
-      const storageKey = `context_snapshot_${snapshot.timestamp.getTime()}`;
-      const snapshotData = {
-        ...snapshot,
-        timestamp: snapshot.timestamp.toISOString(), // Serialize date
-      };
-
-      await AsyncStorage.setItem(storageKey, JSON.stringify(snapshotData));
-
-      // After storing, trigger cleanup to prevent storage full
-      await this.cleanupOldSnapshots();
-
+      // Use StorageService facade for persistence
+      const storage = StorageService.getInstance();
+      try {
+        await storage.saveContextSnapshot(snapshot as any);
+        return;
+      } catch (err) {
+        console.warn('StorageService.saveContextSnapshot failed, falling back to local AsyncStorage:', err);
+        // Fallback: persist locally only if facade fails
+        const storageKey = `context_snapshot_${snapshot.timestamp.getTime()}`;
+        const snapshotData = {
+          ...snapshot,
+          timestamp: snapshot.timestamp.toISOString(), // Serialize date
+        };
+        await AsyncStorage.setItem(storageKey, JSON.stringify(snapshotData));
+        await this.cleanupOldSnapshots();
+      }
     } catch (error) {
-      console.warn('⚠️ Failed to store context snapshot:', error);
+      console.warn('⚠️ Failed to store context snapshot (fallback path):', error);
     }
   }
 
@@ -1351,30 +1385,84 @@ export class ContextSensorService extends EventEmitter {
    */
   private async cleanupOldSnapshots(): Promise<void> {
     try {
-      const keys = await AsyncStorage.getAllKeys();
-      const snapshotKeys = keys.filter(key => key.startsWith('context_snapshot_'));
+      // Prefer cleaning from warm-tier DB first
+      try {
+        const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000); // keep 30 days in warm DB
+        await database.write(async () => {
+          const col = database.collections.get('context_snapshots');
+          const old = await col.query(
+            // if Q is available, fallbackDB.query() accepts no args as well; guard loosely
+          ).fetch();
 
-      // AGGRESSIVE: Keep only last 100 snapshots instead of 1000
-      const MAX_SNAPSHOTS = 100;
-
-      if (snapshotKeys.length > MAX_SNAPSHOTS) {
-        // Sort keys by timestamp extracted from key (oldest first)
-        const sortedKeys = snapshotKeys.sort((a, b) => {
-          const aTime = parseInt(a.replace('context_snapshot_', ''), 10);
-          const bTime = parseInt(b.replace('context_snapshot_', ''), 10);
-          return aTime - bTime;
+          // Fallback DB doesn't support complex where clauses here; do a manual filter/delete
+          for (const rec of old) {
+            try {
+              const ts = rec._raw ? rec._raw.timestamp : rec.timestamp;
+              if (ts && ts < cutoff) {
+                if (typeof rec.markAsDeleted === 'function') await rec.markAsDeleted();
+                else if (rec._raw && rec._raw.id && typeof (col as any).markAsDeletedById === 'function') {
+                  await (col as any).markAsDeletedById(rec._raw.id);
+                }
+              }
+            } catch (e) {
+              // ignore individual failures
+            }
+          }
         });
+      } catch (dbCleanupErr) {
+        // If DB cleanup is not possible, fallback to legacy AsyncStorage cleanup
+        try {
+          // Prefer Hybrid/StorageService for key listing if available
+          let keys: readonly string[] = [];
+          try {
+            const svc: any = StorageService.getInstance();
+            if (svc && typeof svc.getAllKeys === 'function') {
+              keys = await svc.getAllKeys();
+            } else if (svc && svc.getHybridService && typeof svc.getHybridService().getAllKeys === 'function') {
+              keys = await svc.getHybridService().getAllKeys();
+            } else {
+              keys = await AsyncStorage.getAllKeys() as readonly string[];
+            }
+          } catch (e) {
+            keys = await AsyncStorage.getAllKeys() as readonly string[];
+          }
+          const snapshotKeys = keys.filter(key => key.startsWith('context_snapshot_'));
 
-        // Delete oldest snapshots, keep only the most recent MAX_SNAPSHOTS
-        const keysToDelete = sortedKeys.slice(0, snapshotKeys.length - MAX_SNAPSHOTS);
+          // AGGRESSIVE: Keep only last 100 snapshots instead of 1000
+          const MAX_SNAPSHOTS = 100;
 
-        await AsyncStorage.multiRemove(keysToDelete);
+          if (snapshotKeys.length > MAX_SNAPSHOTS) {
+            // Sort keys by timestamp extracted from key (oldest first)
+            const sortedKeys = snapshotKeys.sort((a, b) => {
+              const aTime = parseInt(a.replace('context_snapshot_', ''), 10);
+              const bTime = parseInt(b.replace('context_snapshot_', ''), 10);
+              return aTime - bTime;
+            });
 
-        console.log(`🧹 Aggressively cleaned up ${keysToDelete.length} old context snapshots (keeping ${MAX_SNAPSHOTS})`);
+            // Delete oldest snapshots, keep only the most recent MAX_SNAPSHOTS
+            const keysToDelete = sortedKeys.slice(0, snapshotKeys.length - MAX_SNAPSHOTS);
+
+            // Remove keys via StorageService facade if possible for consistency
+            try {
+              const svc: any = StorageService.getInstance();
+              if (svc && typeof svc.removeItem === 'function') {
+                await Promise.all(keysToDelete.map(k => svc.removeItem(k)));
+              } else {
+                await AsyncStorage.multiRemove(keysToDelete);
+              }
+            } catch (e) {
+              await AsyncStorage.multiRemove(keysToDelete);
+            }
+
+            console.log(`🧹 Aggressively cleaned up ${keysToDelete.length} old context snapshots (keeping ${MAX_SNAPSHOTS})`);
+          }
+
+          // Also cleanup other CAE-related storage to prevent buildup
+          await this.cleanupRelatedStorage();
+        } catch (e) {
+          console.warn('⚠️ Failed to cleanup old context snapshots via AsyncStorage as fallback:', e);
+        }
       }
-
-      // Also cleanup other CAE-related storage to prevent buildup
-      await this.cleanupRelatedStorage();
 
     } catch (error) {
       console.warn('⚠️ Failed to cleanup old context snapshots:', error);
@@ -1388,7 +1476,15 @@ export class ContextSensorService extends EventEmitter {
    */
   private async cleanupRelatedStorage(): Promise<void> {
     try {
-      const keys = await AsyncStorage.getAllKeys();
+          let keys: readonly string[] = [];
+          try {
+            const svc: any = StorageService.getInstance();
+            if (svc && typeof svc.getAllKeys === 'function') keys = await svc.getAllKeys();
+            else if (svc && svc.getHybridService && typeof svc.getHybridService().getAllKeys === 'function') keys = await svc.getHybridService().getAllKeys();
+            else keys = await AsyncStorage.getAllKeys() as readonly string[];
+          } catch (e) {
+            keys = await AsyncStorage.getAllKeys() as readonly string[];
+          }
 
       // Cleanup old CAE cache entries
       const caeKeys = keys.filter(key =>
@@ -1406,7 +1502,16 @@ export class ContextSensorService extends EventEmitter {
         if (prefixKeys.length > MAX_CAE_ENTRIES) {
           // Sort by timestamp if available, otherwise just keep recent ones
           const keysToDelete = prefixKeys.slice(0, prefixKeys.length - MAX_CAE_ENTRIES);
-          await AsyncStorage.multiRemove(keysToDelete);
+          try {
+            const svc: any = StorageService.getInstance();
+            if (svc && typeof svc.removeItem === 'function') {
+              await Promise.all(keysToDelete.map(k => svc.removeItem(k)));
+            } else {
+              await AsyncStorage.multiRemove(keysToDelete);
+            }
+          } catch (e) {
+            await AsyncStorage.multiRemove(keysToDelete);
+          }
           console.log(`🧹 Cleaned up ${keysToDelete.length} old ${prefix} entries`);
         }
       }
@@ -1447,31 +1552,80 @@ export class ContextSensorService extends EventEmitter {
    */
   private async loadHistoricalData(): Promise<void> {
     try {
-      // Load optimal learning times
-      const savedOptimalTimes = await AsyncStorage.getItem('@neurolearn/optimal_learning_times');
-      if (savedOptimalTimes) {
-        const parsedTimes = JSON.parse(savedOptimalTimes) as Array<{
-          hour: number;
-          dayOfWeek: number;
-          performance: number;
-          lastUpdated: string;
-        }>;
-        this.optimalLearningTimes = parsedTimes.map((entry) => ({
-          ...entry,
-          lastUpdated: new Date(entry.lastUpdated),
-        }));
+      const svc = StorageService.getInstance();
+
+      // Try loading optimal learning windows from the facade (preferred)
+      if (svc.getOptimalLearningWindows) {
+        const windows = await svc.getOptimalLearningWindows();
+        if (windows && windows.length > 0) {
+          this.optimalLearningTimes = windows.map(w => ({
+            hour: w.circadianHour,
+            dayOfWeek: w.dayOfWeek,
+            performance: w.performanceScore,
+            lastUpdated: new Date(w.lastSeen),
+          }));
+        }
+      } else {
+        const savedOptimalTimes = await AsyncStorage.getItem('@neurolearn/optimal_learning_times');
+        if (savedOptimalTimes) {
+          const parsedTimes = JSON.parse(savedOptimalTimes) as Array<{
+            hour: number;
+            dayOfWeek: number;
+            performance: number;
+            lastUpdated: string;
+          }>;
+          this.optimalLearningTimes = parsedTimes.map((entry) => ({
+            ...entry,
+            lastUpdated: new Date(entry.lastUpdated),
+          }));
+        }
       }
 
-      // Load known locations
-      const savedLocations = await AsyncStorage.getItem('@neurolearn/known_locations');
-      if (savedLocations) {
-        this.knownLocations = JSON.parse(savedLocations) as typeof this.knownLocations;
+      // Known locations: prefer facade
+      if (svc.getKnownLocations) {
+        const locations = await svc.getKnownLocations();
+        if (locations && locations.length > 0) {
+          this.knownLocations = locations.map(l => ({
+            coordinates: l.coordinates,
+            environment: l.environment,
+            name: l.name,
+            performanceHistory: l.performanceHistory || [],
+          }));
+        }
+      } else {
+        const savedLocations = await AsyncStorage.getItem('@neurolearn/known_locations');
+        if (savedLocations) {
+          this.knownLocations = JSON.parse(savedLocations) as typeof this.knownLocations;
+        }
       }
 
       console.log(`📚 Loaded historical data: ${this.optimalLearningTimes.length} time patterns, ${this.knownLocations.length} locations`);
 
     } catch (error) {
-      console.warn('⚠️ Failed to load historical data:', error);
+      console.warn('⚠️ Failed to load historical data (falling back to AsyncStorage):', error);
+      // Best-effort fallback to AsyncStorage
+      try {
+        const savedOptimalTimes = await AsyncStorage.getItem('@neurolearn/optimal_learning_times');
+        if (savedOptimalTimes) {
+          const parsedTimes = JSON.parse(savedOptimalTimes) as Array<{
+            hour: number;
+            dayOfWeek: number;
+            performance: number;
+            lastUpdated: string;
+          }>;
+          this.optimalLearningTimes = parsedTimes.map((entry) => ({
+            ...entry,
+            lastUpdated: new Date(entry.lastUpdated),
+          }));
+        }
+
+        const savedLocations = await AsyncStorage.getItem('@neurolearn/known_locations');
+        if (savedLocations) {
+          this.knownLocations = JSON.parse(savedLocations) as typeof this.knownLocations;
+        }
+      } catch (err) {
+        console.warn('⚠️ AsyncStorage fallback also failed:', err);
+      }
     }
   }
 
@@ -1480,11 +1634,50 @@ export class ContextSensorService extends EventEmitter {
    */
   private async saveHistoricalData(): Promise<void> {
     try {
-      await AsyncStorage.setItem('@neurolearn/optimal_learning_times', JSON.stringify(this.optimalLearningTimes));
-      await AsyncStorage.setItem('@neurolearn/known_locations', JSON.stringify(this.knownLocations));
+      const svc = StorageService.getInstance();
 
+      // Persist optimal learning times via facade if available, fallback to AsyncStorage only if facade fails
+      for (const entry of this.optimalLearningTimes) {
+        try {
+          await svc.saveOptimalLearningWindow({
+            circadianHour: entry.hour,
+            dayOfWeek: entry.dayOfWeek,
+            performanceScore: entry.performance,
+            frequency: 1,
+            lastPerformance: entry.performance,
+            lastSeen: entry.lastUpdated.toISOString(),
+          });
+        } catch (err) {
+          console.warn('⚠️ Failed to persist optimal window via facade, falling back to AsyncStorage:', err);
+          await AsyncStorage.setItem('@neurolearn/optimal_learning_times', JSON.stringify(this.optimalLearningTimes));
+        }
+      }
+
+      // Persist known locations via facade if available, fallback to AsyncStorage only if facade fails
+      for (const loc of this.knownLocations) {
+        try {
+          await svc.saveKnownLocation({
+            name: loc.name,
+            coordinates: loc.coordinates,
+            environment: loc.environment,
+            performanceHistory: loc.performanceHistory || [],
+            averagePerformance: loc.performanceHistory && loc.performanceHistory.length > 0 ? (loc.performanceHistory.reduce((a,b)=>a+b,0)/loc.performanceHistory.length) : 0,
+            visitCount: loc.performanceHistory ? loc.performanceHistory.length : 0,
+            lastVisit: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.warn('⚠️ Failed to persist known location via facade, falling back to AsyncStorage:', err);
+          await AsyncStorage.setItem('@neurolearn/known_locations', JSON.stringify(this.knownLocations));
+        }
+      }
     } catch (error) {
-      console.warn('⚠️ Failed to save historical data:', error);
+      console.warn('⚠️ Failed to save historical data (falling back to AsyncStorage):', error);
+      try {
+        await AsyncStorage.setItem('@neurolearn/optimal_learning_times', JSON.stringify(this.optimalLearningTimes));
+        await AsyncStorage.setItem('@neurolearn/known_locations', JSON.stringify(this.knownLocations));
+      } catch (err) {
+        console.warn('⚠️ AsyncStorage fallback failed to save historical data:', err);
+      }
     }
   }
 

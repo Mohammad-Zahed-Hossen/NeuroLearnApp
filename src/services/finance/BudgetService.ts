@@ -1,5 +1,5 @@
 import { supabase } from '../storage/SupabaseService';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 
 interface BudgetCategory {
   id: string;
@@ -37,7 +37,7 @@ interface ETSForecast {
  */
 export class BudgetService {
   private static instance: BudgetService;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: StorageService;
 
   static getInstance(): BudgetService {
     if (!BudgetService.instance) {
@@ -47,7 +47,7 @@ export class BudgetService {
   }
 
   private constructor() {
-    this.hybridStorage = HybridStorageService.getInstance();
+  this.hybridStorage = StorageService.getInstance();
   }
 
   /**
@@ -86,7 +86,7 @@ export class BudgetService {
 
     for (const [category, categoryTransactions] of Object.entries(categorySpending)) {
       const monthlySpending = this.aggregateMonthlySpending(categoryTransactions as any[]);
-      
+
       if (monthlySpending.length >= 3) { // Need at least 3 months for ETS
         const forecast = this.calculateETSForecast(monthlySpending);
         forecasts.push({
@@ -137,14 +137,14 @@ export class BudgetService {
       const prevTrend = trend;
 
       // Update level
-      level = alpha * (monthlyData[i] / seasonal[seasonalIndex]) + 
+      level = alpha * (monthlyData[i] / seasonal[seasonalIndex]) +
               (1 - alpha) * (prevLevel + prevTrend);
 
       // Update trend
       trend = beta * (level - prevLevel) + (1 - beta) * prevTrend;
 
       // Update seasonality
-      seasonal[seasonalIndex] = gamma * (monthlyData[i] / level) + 
+      seasonal[seasonalIndex] = gamma * (monthlyData[i] / level) +
                                (1 - gamma) * seasonal[seasonalIndex];
     }
 
@@ -156,7 +156,7 @@ export class BudgetService {
     const confidence = this.calculateForecastConfidence(monthlyData, level, trend);
 
     // Determine trend direction
-    const trendDirection = Math.abs(trend) < 0.1 ? 'stable' : 
+    const trendDirection = Math.abs(trend) < 0.1 ? 'stable' :
                           trend > 0 ? 'up' : 'down';
 
     return {
@@ -177,7 +177,7 @@ export class BudgetService {
     for (let i = 2; i < data.length; i++) {
       const predicted = level + trend * (i - data.length + 1);
       const actual = data[i];
-      
+
       if (actual > 0) {
         totalError += Math.abs((actual - predicted) / actual);
         validPredictions++;
@@ -191,7 +191,7 @@ export class BudgetService {
   private async getBudgetCategories(userId: string): Promise<any[]> {
     try {
       const { data, error } = await supabase
-        .from('budget_categories')
+        .from('budget_analysis')
         .select('*')
         .eq('user_id', userId);
 
@@ -229,7 +229,7 @@ export class BudgetService {
 
     const monthlyTransactions = transactions.filter(t => {
       const transactionDate = new Date(t.date);
-      return transactionDate.getMonth() === currentMonth && 
+      return transactionDate.getMonth() === currentMonth &&
              transactionDate.getFullYear() === currentYear;
     });
 
@@ -259,7 +259,7 @@ export class BudgetService {
 
   private calculateCategoryTrend(category: string, transactions: any[]): 'increasing' | 'decreasing' | 'stable' {
     const monthlySpending = this.getLastThreeMonthsSpending(category, transactions);
-    
+
     if (monthlySpending.length < 2) return 'stable';
 
     const recent = monthlySpending[monthlySpending.length - 1];
@@ -274,7 +274,7 @@ export class BudgetService {
 
   private getLastThreeMonthsSpending(category: string, transactions: any[]): number[] {
     const monthlySpending: { [key: string]: number } = {};
-    
+
     transactions
       .filter(t => t.category === category)
       .forEach(t => {
@@ -288,9 +288,9 @@ export class BudgetService {
 
   private calculateSimpleForecast(category: string, transactions: any[]): number {
     const monthlySpending = this.getLastThreeMonthsSpending(category, transactions);
-    
+
     if (monthlySpending.length === 0) return 0;
-    
+
     // Simple moving average
     return monthlySpending.reduce((sum, amount) => sum + amount, 0) / monthlySpending.length;
   }
@@ -339,7 +339,7 @@ export class BudgetService {
     const incomeTransactions = transactions.filter(t => {
       const transactionDate = new Date(t.date);
       return t.amount > 0 && // Positive amounts are income
-             transactionDate.getMonth() === currentMonth && 
+             transactionDate.getMonth() === currentMonth &&
              transactionDate.getFullYear() === currentYear;
     });
 
@@ -359,7 +359,7 @@ export class BudgetService {
 
   private aggregateMonthlySpending(transactions: any[]): number[] {
     const monthlySpending: { [key: string]: number } = {};
-    
+
     transactions.forEach(t => {
       const date = new Date(t.date);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -412,7 +412,7 @@ export class BudgetService {
   async setBudgetLimit(userId: string, category: string, limit: number): Promise<void> {
     try {
       const { error } = await supabase
-        .from('budget_categories')
+        .from('budget_analysis')
         .upsert({
           user_id: userId,
           category,
@@ -470,7 +470,7 @@ export class BudgetService {
 
   private getTopMerchants(transactions: any[]): string[] {
     const merchantSpending: { [merchant: string]: number } = {};
-    
+
     transactions.forEach(t => {
       const merchant = t.description || 'Unknown';
       merchantSpending[merchant] = (merchantSpending[merchant] || 0) + Math.abs(t.amount);
@@ -492,7 +492,7 @@ export class BudgetService {
       monthlyCounts[month]++;
     });
 
-    return monthlySpending.map((total, index) => 
+    return monthlySpending.map((total, index) =>
       monthlyCounts[index] > 0 ? total / monthlyCounts[index] : 0
     );
   }

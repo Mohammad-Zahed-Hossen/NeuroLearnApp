@@ -33,7 +33,8 @@ export const FloatingActionButton: React.FC<FloatingActionButtonProps> = ({
   const cognitive = useCognitive();
 
   // Register with the floating elements orchestrator
-  const { isVisible, position, zIndex, cognitiveLoad } = useRegisterFloatingElement('fab');
+  const { isVisible, position, zIndex, cognitiveLoad } =
+    useRegisterFloatingElement('fab');
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;

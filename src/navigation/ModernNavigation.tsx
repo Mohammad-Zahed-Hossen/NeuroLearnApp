@@ -60,6 +60,13 @@ const getTabConfiguration = (cognitiveLoad: number, uiMode: string) => {
       color: '#8B5CF6',
     },
     {
+      id: 'integrations',
+      label: 'Hub',
+      icon: '🔗',
+      screen: 'integrations',
+      color: '#F59E0B',
+    },
+    {
       id: 'finance',
       label: 'Finance',
       icon: '💰',
@@ -137,7 +144,14 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
       const targetPosition = tabIndex * tabSpace + offset;
       slideAnim.setValue(targetPosition);
     }
-  }, [currentScreen, tabs, selectedTab, slideAnim, getTabMetrics, tabContainerWidth]);
+  }, [
+    currentScreen,
+    tabs,
+    selectedTab,
+    slideAnim,
+    getTabMetrics,
+    tabContainerWidth,
+  ]);
 
   const handleTabPress = useCallback(
     (tab: TabItem) => {
@@ -200,7 +214,7 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
         <Text style={[styles.tabIcon, isSelected && { color: tab.color }]}>
           {tab.icon}
         </Text>
-        <Text style={getTabTextStyle(tab, isSelected)}>{tab.label}</Text>
+        <Text style={getTabTextStyle(tab, isSelected)} numberOfLines={1}>{tab.label}</Text>
         {tab.badge && tab.badge > 0 && (
           <View style={[styles.badge, { backgroundColor: tab.color }]}>
             <Text style={styles.badgeText}>
@@ -354,6 +368,8 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     fontWeight: '500',
+    textAlign: 'center',
+    lineHeight: 14,
   },
   badge: {
     position: 'absolute',

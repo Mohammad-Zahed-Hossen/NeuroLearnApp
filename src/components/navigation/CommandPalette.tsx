@@ -201,7 +201,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         keywords: ['break', 'rest', 'mindful', 'relax'],
         cognitiveLoad: 0.1,
         action: async () => {
-          const recommendations = await cognitive.getPersonalizedRecommendations();
+          const recommendations =
+            await cognitive.getPersonalizedRecommendations();
           onNavigate('dashboard', { showBreakSuggestion: recommendations[0] });
         },
       },

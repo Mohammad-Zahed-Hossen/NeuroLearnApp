@@ -10,6 +10,7 @@ import {
   Animated,
   Vibration,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../GlassComponents';
 import { CognitiveLoadIndicator } from '../CognitiveIndicators';
 import { colors, spacing, borderRadius, typography } from '../../theme/colors';
@@ -257,6 +258,15 @@ const menuItems: MenuItem[] = [
     usageFrequency: 3,
   },
   {
+    id: 'notion-dashboard',
+    title: 'Notion Integration',
+    icon: '📝',
+    screen: 'notion-dashboard',
+    description: 'Knowledge Bridge & Sync Dashboard',
+    cognitiveLoad: 0.4,
+    usageFrequency: 3,
+  },
+  {
     id: 'speed-reading',
     title: 'Speed Reading',
     icon: '⚡',
@@ -278,10 +288,19 @@ const menuItems: MenuItem[] = [
     id: 'progress',
     title: 'Analytics',
     icon: '📊',
-    screen: 'progress',
+    screen: 'holistic-analytics',
     description: 'Learning Performance Metrics',
     cognitiveLoad: 0.3,
     usageFrequency: 3,
+  },
+  {
+    id: 'synapse-builder',
+    title: 'Synapse Builder',
+    icon: '🧬',
+    screen: 'synapse-builder',
+    description: 'Neural Plasticity & Connection Building',
+    cognitiveLoad: 0.8,
+    usageFrequency: 2,
   },
   {
     id: 'settings',
@@ -309,6 +328,24 @@ const menuItems: MenuItem[] = [
     description: 'Logical Reasoning & Problem Solving',
     cognitiveLoad: 0.7,
     usageFrequency: 3,
+  },
+  {
+    id: 'ai-assistant',
+    title: 'AI Assistant',
+    icon: '🤖',
+    screen: 'ai-assistant',
+    description: 'AI-Powered Learning Assistant',
+    cognitiveLoad: 0.4,
+    usageFrequency: 4,
+  },
+  {
+    id: 'patients',
+    title: 'Patients',
+    icon: '👥',
+    screen: 'patients',
+    description: 'Patient Management & Data',
+    cognitiveLoad: 0.3,
+    usageFrequency: 2,
   },
 ];
 
@@ -567,6 +604,7 @@ interface HeaderProps {
   subtitle?: string;
   theme: ThemeType;
   onMenuPress: () => void;
+  onBackPress?: () => void;
   rightComponent?: React.ReactNode;
   cognitiveLoad?: number; // 0-1 scale for adaptive UI
   floating?: boolean; // When false, header renders in flow (non-absolute)
@@ -583,6 +621,7 @@ export const AppHeader: React.FC<HeaderProps> = ({
   title,
   theme,
   onMenuPress,
+  onBackPress,
   rightComponent,
   cognitiveLoad = 0.5,
   floating = true,
@@ -661,64 +700,77 @@ export const AppHeader: React.FC<HeaderProps> = ({
         translucent={true}
       />
 
-      {/* Hamburger Menu Button */}
-      <TouchableOpacity
-        onPress={handleMenuPress}
-        style={styles.hamburgerButton}
-        activeOpacity={0.7}
-        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      >
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          {/* Adaptive hamburger icon based on cognitive load */}
-          {cognitiveLoad > 0.7 ? (
-            // Simplified icon for high cognitive load
-            <>
-              <View
-                style={[
-                  styles.hamburgerLine,
-                  {
-                    backgroundColor: themeColors.text,
-                    height: 2,
-                    marginVertical: 3,
-                  },
-                ]}
-              />
-              <View
-                style={[
-                  styles.hamburgerLine,
-                  {
-                    backgroundColor: themeColors.text,
-                    height: 2,
-                    marginVertical: 3,
-                  },
-                ]}
-              />
-            </>
-          ) : (
-            // Standard three-line icon
-            <>
-              <View
-                style={[
-                  styles.hamburgerLine,
-                  { backgroundColor: themeColors.text },
-                ]}
-              />
-              <View
-                style={[
-                  styles.hamburgerLine,
-                  { backgroundColor: themeColors.text },
-                ]}
-              />
-              <View
-                style={[
-                  styles.hamburgerLine,
-                  { backgroundColor: themeColors.text },
-                ]}
-              />
-            </>
-          )}
-        </Animated.View>
-      </TouchableOpacity>
+      {/* Back Button or Hamburger Menu Button */}
+      {onBackPress ? (
+        <TouchableOpacity
+          onPress={onBackPress}
+          style={styles.hamburgerButton}
+          activeOpacity={0.7}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <Icon name="arrow-left" size={24} color={themeColors.text} />
+          </Animated.View>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          onPress={handleMenuPress}
+          style={styles.hamburgerButton}
+          activeOpacity={0.7}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            {/* Adaptive hamburger icon based on cognitive load */}
+            {cognitiveLoad > 0.7 ? (
+              // Simplified icon for high cognitive load
+              <>
+                <View
+                  style={[
+                    styles.hamburgerLine,
+                    {
+                      backgroundColor: themeColors.text,
+                      height: 2,
+                      marginVertical: 3,
+                    },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.hamburgerLine,
+                    {
+                      backgroundColor: themeColors.text,
+                      height: 2,
+                      marginVertical: 3,
+                    },
+                  ]}
+                />
+              </>
+            ) : (
+              // Standard three-line icon
+              <>
+                <View
+                  style={[
+                    styles.hamburgerLine,
+                    { backgroundColor: themeColors.text },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.hamburgerLine,
+                    { backgroundColor: themeColors.text },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.hamburgerLine,
+                    { backgroundColor: themeColors.text },
+                  ]}
+                />
+              </>
+            )}
+          </Animated.View>
+        </TouchableOpacity>
+      )}
 
       {/* Center Title */}
       <Text

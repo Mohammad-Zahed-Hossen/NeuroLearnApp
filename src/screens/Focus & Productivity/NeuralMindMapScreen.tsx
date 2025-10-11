@@ -28,9 +28,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  SafeAreaView,
   StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, {
@@ -77,7 +77,7 @@ import {
   NeuralGraph,
   NeuralNode,
 } from '../../services/learning/MindMapGeneratorService';
-import HybridStorageService from '../../services/storage/HybridStorageService';
+import StorageService from '../../services/storage/StorageService';
 import {
   CognitiveAuraService,
   AuraState,
@@ -98,6 +98,15 @@ import { useFocus } from '../../contexts/FocusContext';
 import { useSoundscape } from '../../contexts/SoundscapeContext';
 import { SoundscapeType } from '../../services/learning/CognitiveSoundscapeEngine';
 import CrossModuleBridgeService from '../../services/integrations/CrossModuleBridgeService';
+import {
+  useAuraContext,
+  useCognitiveLoad,
+  useAuraConfidence,
+  useIsLoading,
+  useIsRefreshing,
+  useAuraActions,
+  useNeuralCanvasData,
+} from '../../hooks/useOptimizedSelectors';
 
 // ====================  INTERFACES ====================
 
@@ -303,7 +312,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
   // Service instances (memoized)
   const mindMapGenerator = useMemo(() => MindMapGenerator.getInstance(), []);
-  const storage = useMemo(() => HybridStorageService.getInstance(), []);
+  const storage = useMemo(() => StorageService.getInstance(), []);
   const CAE = useMemo(() => CognitiveAuraService.getInstance(), []);
   const contextSensorService = useMemo(
     () => ContextSensorService.getInstance(),
@@ -328,6 +337,22 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   const auraUpdateTimer = useRef<NodeJS.Timeout | null>(null);
   const contextUpdateTimer = useRef<NodeJS.Timeout | null>(null);
   const performanceTimer = useRef<NodeJS.Timeout | null>(null);
+  // Listener handler refs so we can remove them precisely on cleanup
+  const caeAuraUpdatedHandler = useRef<((a: AuraState) => void) | null>(null);
+  const caeContextChangeHandler = useRef<((c: AuraContext) => void) | null>(
+    null,
+  );
+  const contextSensorContextUpdatedHandler = useRef<
+    ((s: ContextSnapshot) => void) | null
+  >(null);
+  const contextSensorDblUpdatedHandler = useRef<
+    ((d: DigitalBodyLanguage) => void) | null
+  >(null);
+  const physicsUpdatedHandler = useRef<((u: any) => void) | null>(null);
+  const physicsTransitionCompleteHandler = useRef<((e: any) => void) | null>(
+    null,
+  );
+  const physicsNodeInteractionHandler = useRef<((e: any) => void) | null>(null);
 
   // ==================== COMPUTED VALUES ====================
 
@@ -586,7 +611,8 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       setAuraState(initialAuraState);
 
       // Set up aura state listeners
-      CAE.on('_aura_updated', (auraState: AuraState) => {
+      // register CAE handlers and keep refs for precise removal
+      caeAuraUpdatedHandler.current = (auraState: AuraState) => {
         console.log(
           `🧠  aura updated: ${auraState.context} (${(
             auraState.compositeCognitiveScore * 100
@@ -601,26 +627,41 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           ...prev,
           contextSwitchCount: prev.contextSwitchCount + 1,
         }));
-      });
+      };
 
-      CAE.on('context_change', (context: AuraContext) => {
+      caeContextChangeHandler.current = (context: AuraContext) => {
         console.log(`🔄 Context changed to: ${context}`);
         updateViewModeForContext(context);
-      });
+      };
+
+      if (caeAuraUpdatedHandler.current)
+        CAE.on('_aura_updated', caeAuraUpdatedHandler.current);
+      if (caeContextChangeHandler.current)
+        CAE.on('context_change', caeContextChangeHandler.current);
 
       // Set up context sensor listeners
-      contextSensorService.on(
-        'context_updated',
-        (snapshot: ContextSnapshot) => {
-          setContextSnapshot(snapshot);
-          updateEnvironmentalUI(snapshot);
-        },
-      );
+      // context sensor handlers
+      contextSensorContextUpdatedHandler.current = (
+        snapshot: ContextSnapshot,
+      ) => {
+        setContextSnapshot(snapshot);
+        updateEnvironmentalUI(snapshot);
+      };
 
-      contextSensorService.on('dbl_updated', (dbl: DigitalBodyLanguage) => {
-        // Update UI based on digital body language changes
+      contextSensorDblUpdatedHandler.current = (dbl: DigitalBodyLanguage) => {
         updateDBLIndicators(dbl);
-      });
+      };
+
+      if (contextSensorContextUpdatedHandler.current)
+        contextSensorService.on(
+          'context_updated',
+          contextSensorContextUpdatedHandler.current,
+        );
+      if (contextSensorDblUpdatedHandler.current)
+        contextSensorService.on(
+          'dbl_updated',
+          contextSensorDblUpdatedHandler.current,
+        );
 
       console.log('✅  Cognitive Aura Engine initialized');
     } catch (error) {
@@ -637,22 +678,35 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       console.log('🎯 Initializing  Physics Integration...');
 
       // Set up physics engine listeners
-      PhysicsEngine.on('physics_updated', (update: any) => {
+      // physics handlers stored in refs so we can remove them precisely
+      physicsUpdatedHandler.current = (update: any) => {
         console.log(
           `🎯 Physics updated: ${update.context} (Load: ${(
             update.cognitiveLoad * 100
           ).toFixed(1)}%)`,
         );
-      });
+      };
 
-      PhysicsEngine.on('transition_complete', (event: any) => {
+      physicsTransitionCompleteHandler.current = (event: any) => {
         console.log(`✅ Physics transition complete: ${event.context}`);
-      });
+      };
 
-      PhysicsEngine.on('node_interaction', (event: any) => {
-        // Handle node interactions
+      physicsNodeInteractionHandler.current = (event: any) => {
         handleNodeInteraction(event.nodeId, event.type);
-      });
+      };
+
+      if (physicsUpdatedHandler.current)
+        PhysicsEngine.on('physics_updated', physicsUpdatedHandler.current);
+      if (physicsTransitionCompleteHandler.current)
+        PhysicsEngine.on(
+          'transition_complete',
+          physicsTransitionCompleteHandler.current,
+        );
+      if (physicsNodeInteractionHandler.current)
+        PhysicsEngine.on(
+          'node_interaction',
+          physicsNodeInteractionHandler.current,
+        );
 
       // Start physics simulation
       PhysicsEngine.startSimulation();
@@ -1197,10 +1251,92 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       performanceTimer.current = null;
     }
 
-    // Dispose services
-    CAE.removeAllListeners();
-    contextSensorService.removeAllListeners();
-    PhysicsEngine.removeAllListeners();
+    // Dispose services - remove only handlers we registered
+    try {
+      if (caeAuraUpdatedHandler.current && typeof CAE.off === 'function') {
+        CAE.off('_aura_updated', caeAuraUpdatedHandler.current);
+      }
+      if (caeContextChangeHandler.current && typeof CAE.off === 'function') {
+        CAE.off('context_change', caeContextChangeHandler.current);
+      }
+    } catch (e) {
+      // Avoid global listener removal from a component cleanup. Log the error so
+      // the issue can be investigated—removing all listeners may disrupt other
+      // parts of the app that rely on the same service.
+      console.warn(
+        'Failed to remove specific CAE listeners during cleanup:',
+        e,
+      );
+    }
+
+    // Ensure we stop the monitoring loop and native subscriptions the service started
+    try {
+      if (typeof contextSensorService.stopMonitoring === 'function') {
+        contextSensorService.stopMonitoring();
+      } else {
+        if (
+          contextSensorContextUpdatedHandler.current &&
+          typeof contextSensorService.off === 'function'
+        ) {
+          contextSensorService.off(
+            'context_updated',
+            contextSensorContextUpdatedHandler.current,
+          );
+        }
+        if (
+          contextSensorDblUpdatedHandler.current &&
+          typeof contextSensorService.off === 'function'
+        ) {
+          contextSensorService.off(
+            'dbl_updated',
+            contextSensorDblUpdatedHandler.current,
+          );
+        }
+      }
+    } catch (e) {
+      // Don't call removeAllListeners() here; prefer stopMonitoring() which
+      // should tear down native subscriptions. If off() isn't available the
+      // handlers may not be removable here — log for investigation.
+      console.warn(
+        'Failed to remove specific ContextSensorService listeners during cleanup:',
+        e,
+      );
+    }
+
+    try {
+      if (
+        physicsUpdatedHandler.current &&
+        typeof PhysicsEngine.off === 'function'
+      ) {
+        PhysicsEngine.off('physics_updated', physicsUpdatedHandler.current);
+      }
+      if (
+        physicsTransitionCompleteHandler.current &&
+        typeof PhysicsEngine.off === 'function'
+      ) {
+        PhysicsEngine.off(
+          'transition_complete',
+          physicsTransitionCompleteHandler.current,
+        );
+      }
+      if (
+        physicsNodeInteractionHandler.current &&
+        typeof PhysicsEngine.off === 'function'
+      ) {
+        PhysicsEngine.off(
+          'node_interaction',
+          physicsNodeInteractionHandler.current,
+        );
+      }
+    } catch (e) {
+      // Avoid removing all listeners from the physics engine at component
+      // teardown. Log the failure so it can be inspected; other modules may
+      // still depend on the engine's events.
+      console.warn(
+        'Failed to remove specific PhysicsEngine listeners during cleanup:',
+        e,
+      );
+    }
 
     console.log('🧹  Neural Mind Map cleanup complete');
   }, [CAE, contextSensorService, PhysicsEngine]);
@@ -1382,10 +1518,11 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
             )}
             {/* Context Insights */}
             {adaptiveRecommendations.length > 0 && (
-              <GlassCard
-                theme={theme}
-                style={[styles.insightsCard, { borderLeftColor: contextColor }]}
-              >
+          <GlassCard
+            theme={theme}
+            variant="modal"
+            style={[styles.insightsCard, { borderLeftColor: contextColor }]}
+          >
                 <Text style={[styles.insightsTitle, { color: contextColor }]}>
                   Context Insights
                 </Text>
@@ -1640,7 +1777,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       >
         {nodeDetail && (
           <View style={styles.modalOverlay}>
-            <GlassCard theme={theme} style={styles.nodeDetailModal}>
+            <GlassCard theme={theme} variant="modal" style={styles.nodeDetailModal}>
               <View
                 style={[
                   styles.nodeDetailHeader,
@@ -2309,52 +2446,6 @@ export default NeuralMindMapScreen;
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // // Add these imports to your existing NeuralMindMapScreen.tsx
 // import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // import {
@@ -2395,7 +2486,7 @@ export default NeuralMindMapScreen;
 //   NeuralGraph,
 //   NeuralNode,
 // } from '../../services/learning/MindMapGeneratorService';
-// import HybridStorageService from '../../services/storage/HybridStorageService';
+// HybridStorageService references removed — use StorageService facade instead
 // import { useFocus } from '../../contexts/FocusContext';
 // import { useSoundscape } from '../../contexts/SoundscapeContext';
 // import { SoundscapeType } from '../../services/learning/CognitiveSoundscapeEngine';
@@ -2524,7 +2615,7 @@ export default NeuralMindMapScreen;
 
 //   // Memoize services
 //   const mindMapGenerator = useMemo(() => MindMapGenerator.getInstance(), []);
-//   const storage = useMemo(() => HybridStorageService.getInstance(), []);
+// (Previously used HybridStorageService.getInstance(); now replaced by StorageService.getInstance())
 
 //   // Get current view mode configuration
 //   const currentViewMode = useMemo(

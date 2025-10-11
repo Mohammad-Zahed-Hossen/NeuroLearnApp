@@ -1,4 +1,4 @@
-import { HybridStorageService } from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import { differenceInDays, format } from 'date-fns';
 
 interface HabitData {
@@ -17,10 +17,10 @@ interface HabitData {
 }
 
 export class HabitFormationService {
-  private storage: HybridStorageService;
+  private storage: StorageService;
 
   constructor() {
-    this.storage = HybridStorageService.getInstance();
+    this.storage = StorageService.getInstance();
   }
 
   // BJ Fogg Behavior Model Implementation

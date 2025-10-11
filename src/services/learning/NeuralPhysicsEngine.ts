@@ -17,6 +17,14 @@ import { EventEmitter } from 'eventemitter3';
 import { AuraContext, AuraState } from '../ai/CognitiveAuraService';
 import { NeuralGraph } from './MindMapGeneratorService';
 import { ContextSnapshot, DigitalBodyLanguage } from '../ai/ContextSensorService';
+import { PhysicsWorkerManager, physicsWorkerManager } from './PhysicsWorkerManager';
+import {
+  WorkerNode,
+  WorkerLink,
+  WorkerPhysicsConfig,
+  WorkerPhysicsState,
+  PositionsResponseData,
+} from '../../types/workerMessages';
 
 // ====================  INTERFACES ====================
 
@@ -204,6 +212,11 @@ export class NeuralPhysicsEngine extends EventEmitter {
   private links: Map<string, Link> = new Map();
   private physicsState: PhysicsState;
 
+  // Worker integration
+  private workerManager: PhysicsWorkerManager;
+  private workerInitialized = false;
+  private workerCallbacks: any = {};
+
   // Configuration
   private config: PhysicsConfig = {
     nodeSize: { min: 8, max: 24, adaptive: true },
@@ -311,6 +324,8 @@ export class NeuralPhysicsEngine extends EventEmitter {
   private animationFrameId: number | null = null;
   private lastFrameTime: number = 0;
   private currentFPS: number = 60;
+  // Performance monitoring interval id (tracked so we can clear it on dispose)
+  private performanceMonitoringIntervalId: ReturnType<typeof setInterval> | null = null;
 
   // CAE 2.0 integration
   private currentAuraState: AuraState | null = null;
@@ -419,6 +434,9 @@ export class NeuralPhysicsEngine extends EventEmitter {
 
   private constructor() {
     super();
+
+    // Initialize worker manager
+    this.workerManager = physicsWorkerManager;
 
     // Initialize physics state
     this.physicsState = {
@@ -1440,8 +1458,9 @@ export class NeuralPhysicsEngine extends EventEmitter {
   // ==================== PERFORMANCE MONITORING ====================
 
   private initializePerformanceMonitoring(): void {
-    // Set up performance monitoring
-    setInterval(() => {
+    // Set up performance monitoring - store the interval id so it can be cleared on dispose
+    if (this.performanceMonitoringIntervalId != null) return;
+    this.performanceMonitoringIntervalId = setInterval(() => {
       this.recordPerformanceMetrics();
     }, 5000); // Every 5 seconds
   }
@@ -1591,6 +1610,12 @@ export class NeuralPhysicsEngine extends EventEmitter {
   public dispose(): void {
     this.stopSimulation();
     this.removeAllListeners();
+
+    // Clear performance monitoring interval if set
+    if (this.performanceMonitoringIntervalId != null) {
+      clearInterval(this.performanceMonitoringIntervalId as unknown as number);
+      this.performanceMonitoringIntervalId = null;
+    }
 
     if (this.resizeHandler) {
       window.removeEventListener('resize', this.resizeHandler);

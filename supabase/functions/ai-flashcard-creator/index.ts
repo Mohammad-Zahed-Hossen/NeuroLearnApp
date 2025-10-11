@@ -80,7 +80,7 @@ Deno.serve(async (req: Request) => {
         }).select().single();
 
         if (error) {
-          return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+          return new Response(JSON.stringify({ error: String(error ?? 'Unknown error') }), { status: 500 });
         }
 
         return new Response(JSON.stringify({ success: true, card: data }), {
@@ -108,12 +108,12 @@ Deno.serve(async (req: Request) => {
         }
         continue;
       }
-      lastError = error.message;
-      console.error(`AI request failed (attempt ${attempt + 1}/${maxRetries}):`, error);
+  lastError = String(error ?? 'Unknown error');
+  console.error(`AI request failed (attempt ${attempt + 1}/${maxRetries}):`, error);
       if (attempt === maxRetries - 1) break;
     }
   }
 
   // All retries exhausted
-  return new Response(JSON.stringify({ error: `Failed to generate flashcard after ${maxRetries} attempts: ${lastError}` }), { status: 500 });
+  return new Response(JSON.stringify({ error: `Failed to generate flashcard after ${maxRetries} attempts: ${String(lastError ?? 'Unknown error')}` }), { status: 500 });
 });

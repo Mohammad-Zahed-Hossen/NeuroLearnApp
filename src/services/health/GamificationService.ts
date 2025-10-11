@@ -1,5 +1,5 @@
 import { supabase } from '../storage/SupabaseService';
-import HybridStorageService from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import { differenceInDays, format } from 'date-fns';
 
 interface Achievement {
@@ -59,7 +59,7 @@ interface BehaviorPattern {
  */
 export class GamificationService {
   private static instance: GamificationService;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: StorageService;
   private achievements: Achievement[] = [];
 
   static getInstance(): GamificationService {
@@ -70,7 +70,7 @@ export class GamificationService {
   }
 
   private constructor() {
-    this.hybridStorage = HybridStorageService.getInstance();
+  this.hybridStorage = StorageService.getInstance();
     this.initializeAchievements();
   }
 
@@ -409,39 +409,39 @@ export class GamificationService {
 
   private async calculateAchievementProgress(achievement: Achievement, metrics: any): Promise<number> {
     const { criteria } = achievement;
-    
+
     switch (criteria.metric) {
       case 'sleep_consistency':
         return Math.min(1, (metrics.sleepConsistencyDays || 0) / criteria.threshold);
-      
+
       case 'crdi_score':
         const improvement = (metrics.currentCRDI || 0) - (metrics.baselineCRDI || 0);
         return Math.min(1, Math.max(0, improvement / criteria.threshold));
-      
+
       case 'workout_streak':
         return Math.min(1, (metrics.workoutStreak || 0) / criteria.threshold);
-      
+
       case 'budget_adherence':
         return Math.min(1, (metrics.budgetAdherenceDays || 0) / criteria.threshold);
-      
+
       case 'monthly_savings':
         return Math.min(1, (metrics.monthlySavings || 0) / criteria.threshold);
-      
+
       case 'focus_streak':
         return Math.min(1, (metrics.focusStreak || 0) / criteria.threshold);
-      
+
       case 'cognitive_load':
         const daysUnderThreshold = metrics.lowCognitiveLoadDays || 0;
         return Math.min(1, daysUnderThreshold / (criteria.timeframe || 7));
-      
+
       case 'holistic_balance':
         return Math.min(1, (metrics.balancedDays || 0) / criteria.threshold);
-      
+
       case 'stress_reduction':
         const stressReduction = (metrics.baselineStress || 100) - (metrics.currentStress || 100);
         const targetReduction = (metrics.baselineStress || 100) * (criteria.threshold / 100);
         return Math.min(1, Math.max(0, stressReduction / targetReduction));
-      
+
       default:
         return 0;
     }
@@ -498,7 +498,7 @@ export class GamificationService {
         const current = new Date(data[i-1].bedtime);
         const previous = new Date(data[i].bedtime);
         const timeDiff = Math.abs(current.getTime() - previous.getTime()) / (1000 * 60); // minutes
-        
+
         if (timeDiff <= 30) { // Within 30 minutes
           consistencyDays++;
         } else {
@@ -535,11 +535,11 @@ export class GamificationService {
       // Calculate current streak
       let currentStreak = 0;
       const today = new Date();
-      
+
       for (const workout of data) {
         const workoutDate = new Date(workout.date);
         const daysDiff = differenceInDays(today, workoutDate);
-        
+
         if (daysDiff === currentStreak) {
           currentStreak++;
         } else {
@@ -575,11 +575,11 @@ export class GamificationService {
   private async getFocusMetrics(userId: string): Promise<any> {
     try {
       const focusSessions = await this.hybridStorage.getFocusSessions();
-      
+
       // Calculate current streak
       let currentStreak = 0;
       const today = new Date();
-      
+
       // Calculate weekly count
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       const weeklyCount = focusSessions.filter((s: any) => new Date(s.date) >= weekAgo).length;
@@ -601,12 +601,10 @@ export class GamificationService {
 
   private async getUserProgress(userId: string): Promise<UserProgress> {
     try {
-      const stored = await this.hybridStorage.getItem(`user_progress_${userId}`);
-      if (stored) {
-        return JSON.parse(stored);
-      }
+      const stored = await this.hybridStorage.getUserProgress(userId);
+      if (stored) return stored as UserProgress;
     } catch (error) {
-      console.error('Error loading user progress:', error);
+      console.error('Error loading user progress via facade:', error);
     }
 
     return {
@@ -624,7 +622,7 @@ export class GamificationService {
 
   private async saveUserProgress(userId: string, progress: UserProgress): Promise<void> {
     try {
-      await this.hybridStorage.setItem(`user_progress_${userId}`, JSON.stringify(progress));
+      await this.hybridStorage.saveUserProgress(userId, progress);
     } catch (error) {
       console.error('Error saving user progress:', error);
     }
@@ -646,16 +644,16 @@ export class GamificationService {
   }
 
   private assessMotivationalState(progress: UserProgress, metrics: any): 'motivated' | 'neutral' | 'struggling' | 'burnout' {
-    const recentAchievements = progress.achievements.filter(a => 
+    const recentAchievements = progress.achievements.filter(a =>
       a.unlockedAt && differenceInDays(new Date(), a.unlockedAt) <= 7
     ).length;
 
     const streakRatio = progress.currentStreak / Math.max(1, progress.longestStreak);
-    
+
     if (recentAchievements >= 2 && streakRatio > 0.8) return 'motivated';
     if (recentAchievements === 0 && streakRatio < 0.3) return 'struggling';
     if (progress.currentStreak === 0 && progress.longestStreak > 10) return 'burnout';
-    
+
     return 'neutral';
   }
 
@@ -673,7 +671,7 @@ export class GamificationService {
   private async gatherBehaviorMetrics(userId: string): Promise<any> {
     // Gather comprehensive behavior data for pattern analysis
     const metrics = await this.gatherUserMetrics(userId);
-    
+
     return {
       consistency: this.calculateConsistencyScore(metrics),
       weekendActivity: this.calculateWeekendActivity(metrics),
@@ -710,7 +708,7 @@ export class GamificationService {
       metrics.workoutStreak / 14,
       metrics.focusStreak / 7
     ];
-    
+
     return consistencyFactors.reduce((sum, factor) => sum + Math.min(1, factor), 0) / consistencyFactors.length;
   }
 
@@ -723,7 +721,7 @@ export class GamificationService {
     // High scores but inconsistent patterns suggest perfectionism
     const highStandards = (metrics.currentCRDI > 80 ? 1 : 0) + (metrics.weeklyFocusSessions > 5 ? 1 : 0);
     const inconsistency = metrics.workoutStreak < 3 ? 1 : 0;
-    
+
     return (highStandards + inconsistency) / 3;
   }
 
@@ -731,7 +729,7 @@ export class GamificationService {
     // Low streaks but occasional high performance
     const lowStreaks = (metrics.workoutStreak < 3 ? 1 : 0) + (metrics.focusStreak < 3 ? 1 : 0);
     const occasionalHigh = metrics.weeklyFocusSessions > 3 ? 1 : 0;
-    
+
     return (lowStreaks + (1 - occasionalHigh)) / 3;
   }
 
@@ -743,7 +741,7 @@ export class GamificationService {
       Math.min(1, metrics.weeklyFocusSessions / 3),
       Math.min(1, metrics.budgetAdherenceDays / 20)
     ];
-    
+
     const variance = this.calculateVariance(balanceFactors);
     return 1 - variance; // Lower variance = better balance
   }
@@ -762,7 +760,7 @@ export class GamificationService {
       procrastinator: ['Tiny habits', 'Implementation intentions', 'Accountability partners'],
       balanced: ['Variety in activities', 'Cross-training', 'Holistic progress tracking']
     };
-    
+
     return triggers[pattern] || [];
   }
 
@@ -774,7 +772,7 @@ export class GamificationService {
       procrastinator: ['Overwhelm', 'Lack of clarity', 'Perfectionism'],
       balanced: ['Lack of focus', 'Spreading too thin', 'Decision fatigue']
     };
-    
+
     return barriers[pattern] || [];
   }
 
@@ -806,7 +804,7 @@ export class GamificationService {
         'Track holistic progress'
       ]
     };
-    
+
     return recommendations[pattern.type] || [];
   }
 }

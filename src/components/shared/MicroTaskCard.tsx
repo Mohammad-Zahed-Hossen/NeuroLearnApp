@@ -31,11 +31,12 @@ import { AuraState, AuraContext } from '../../services/ai/CognitiveAuraService';
 interface MicroTaskCardProps {
   auraState: AuraState;
   theme: ThemeType;
-  onTaskComplete?: (completed: boolean, timeSpent: number) => void;
+  onTaskComplete?: (completed: boolean, timeSpent: number, satisfaction?: number) => void;
   onTaskSkip?: () => void;
   position?: 'top' | 'bottom' | 'floating';
   minimized?: boolean;
   onMinimizeToggle?: (minimized: boolean) => void;
+  onClose?: () => void;
 }
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -74,6 +75,15 @@ const CONTEXT_STYLES = {
   },
 } as const;
 
+// Fallback context style used when an unknown/unsupported context is provided
+const DEFAULT_CONTEXT_STYLE = {
+  primaryColor: '#374151',
+  backgroundColor: '#FFFFFF',
+  borderColor: '#E5E7EB',
+  iconName: 'information-outline',
+  gradientColors: ['#FFFFFF', '#F3F4F6'],
+};
+
 export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
   auraState,
   theme,
@@ -82,6 +92,7 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
   position = 'top',
   minimized = false,
   onMinimizeToggle,
+  onClose,
 }) => {
   // Component state
   const [isMinimized, setIsMinimized] = useState(minimized);
@@ -94,7 +105,8 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
 
   // Theme colors
   const themeColors = colors[theme];
-  const contextStyle = CONTEXT_STYLES[auraState.context];
+  const contextStyle =
+    CONTEXT_STYLES[auraState.context] ?? DEFAULT_CONTEXT_STYLE;
 
   // Start task timer when component becomes visible
   useEffect(() => {
@@ -143,10 +155,10 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
 
   // Handle task completion
   const handleTaskComplete = useCallback(
-    (completed: boolean) => {
+    (completed: boolean, satisfaction: number = 3) => {
       if (taskStartTime) {
         const timeSpent = Date.now() - taskStartTime.getTime();
-        onTaskComplete?.(completed, timeSpent);
+        onTaskComplete?.(completed, timeSpent, satisfaction);
         setTaskStartTime(null);
       }
     },
@@ -179,7 +191,10 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
   const getPriorityBadge = useCallback(() => {
     if (!auraState.targetNodePriority) return null;
 
-    const priorityConfig: Record<string, { label: string; color: string; text: string }> = {
+    const priorityConfig: Record<
+      string,
+      { label: string; color: string; text: string }
+    > = {
       P1_URGENT_PREREQUISITE: { label: 'P1', color: '#EF4444', text: 'Urgent' },
       P2_FORGETTING_RISK: {
         label: 'P2',
@@ -190,6 +205,10 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
     };
 
     const config = priorityConfig[auraState.targetNodePriority];
+    if (!config) {
+      // Unknown priority value — don't render a badge to avoid runtime errors
+      return null;
+    }
 
     return (
       <View style={[styles.priorityBadge, { backgroundColor: config.color }]}>
@@ -298,6 +317,15 @@ export const MicroTaskCard: React.FC<MicroTaskCardProps> = ({
             >
               <Icon name="minus" size={18} color={themeColors.textSecondary} />
             </TouchableOpacity>
+
+            {onClose && (
+              <TouchableOpacity
+                onPress={onClose}
+                style={styles.headerButton}
+              >
+                <Icon name="close" size={18} color={themeColors.textSecondary} />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 

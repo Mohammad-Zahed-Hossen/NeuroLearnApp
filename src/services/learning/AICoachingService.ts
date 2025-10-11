@@ -7,6 +7,7 @@
  */
 
 import { SupabaseService } from '../storage/SupabaseService';
+import EventSystem from '../../core/EventSystem';
 
 export interface GrammarCorrection {
   original: string;
@@ -48,6 +49,7 @@ export interface AICoachingResponse {
 export class AICoachingService {
   private static instance: AICoachingService;
   private supabaseService: SupabaseService;
+  private eventSystem: EventSystem;
 
   // Configuration for AI behavior
   private readonly config = {
@@ -75,6 +77,7 @@ export class AICoachingService {
 
   private constructor() {
     this.supabaseService = SupabaseService.getInstance();
+    this.eventSystem = EventSystem.getInstance();
     console.log('🤖 AI Coaching Service initialized (Edge Functions Only)');
   }
 
@@ -535,6 +538,24 @@ export class AICoachingService {
       size: this.responseCache.size,
       oldestEntry: Date.now() - oldestTimestamp,
     };
+  }
+
+  /**
+   * Initialize the AI coaching service
+   */
+  public async initialize(): Promise<void> {
+    console.log('Initializing AI Coaching Service');
+    // Any initialization logic here
+    this.eventSystem.publish('AI_COACHING_INITIALIZED', 'AICoachingService', {}, 'medium');
+  }
+
+  /**
+   * Pause the AI coaching service
+   */
+  public async pause(): Promise<void> {
+    console.log('Pausing AI Coaching Service');
+    // Any pause logic here
+    this.eventSystem.publish('AI_COACHING_PAUSED', 'AICoachingService', {}, 'medium');
   }
 }
 

@@ -1,14 +1,14 @@
-import { HybridStorageService } from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import { Platform } from 'react-native';
 // Note: react-native-health and react-native-google-fit imports commented out as they may not be installed
 // import { HealthKit, AppleHealthKit } from 'react-native-health';
 // import { GoogleFit } from 'react-native-google-fit';
 
 export class BiometricIntegrationService {
-  private storage: HybridStorageService;
+  private storage: StorageService;
 
   constructor() {
-    this.storage = HybridStorageService.getInstance();
+  this.storage = StorageService.getInstance();
   }
 
   // Heart Rate Variability (HRV) Analysis for Recovery

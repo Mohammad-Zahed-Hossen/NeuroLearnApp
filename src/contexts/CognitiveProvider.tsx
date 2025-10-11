@@ -1,11 +1,17 @@
 // src/contexts/CognitiveProvider.tsx
 // Enhances existing FocusContext and SoundscapeContext with cognitive load awareness
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocus } from './FocusContext';
 import { useSoundscape } from './SoundscapeContext';
-import { HybridStorageService } from '../services/storage/HybridStorageService';
+import StorageService from '../services/storage/StorageService';
 import { CircadianIntelligenceService } from '../services/health/CircadianIntelligenceService';
 
 interface CognitiveMetrics {
@@ -68,7 +74,9 @@ interface CognitiveProviderProps {
   children: ReactNode;
 }
 
-export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }) => {
+export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({
+  children,
+}) => {
   const [cognitiveState, setCognitiveState] = useState<CognitiveState>({
     cognitiveLoad: 0.5,
     mentalFatigue: 0.3,
@@ -89,8 +97,10 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
     },
   });
 
-  const [storageService] = useState(() => HybridStorageService.getInstance());
-  const [circadianService] = useState(() => CircadianIntelligenceService.getInstance());
+  const [storageService] = useState(() => StorageService.getInstance());
+  const [circadianService] = useState(() =>
+    CircadianIntelligenceService.getInstance(),
+  );
 
   // Get existing contexts for integration
   const focusContext = useFocus?.(); // Optional integration
@@ -121,13 +131,13 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
     if (soundscapeContext && cognitiveState.soundscapeIntegration) {
       integrateSoundscapeState(
         soundscapeContext.currentPreset,
-        soundscapeContext.isActive
+        soundscapeContext.isActive,
       );
     }
   }, [
     soundscapeContext?.currentPreset,
     soundscapeContext?.isActive,
-    cognitiveState.soundscapeIntegration
+    cognitiveState.soundscapeIntegration,
   ]);
 
   // Auto-adapt UI based on cognitive load changes
@@ -139,18 +149,69 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
 
   const loadCognitiveProfile = async () => {
     try {
-      const profile = await AsyncStorage.getItem('@neurolearn/cognitive_profile');
-      if (profile) {
-        const parsedProfile = JSON.parse(profile);
-        setCognitiveState(prev => ({
+      // Prefer the StorageService facade so profile/config flows through hybrid pipeline
+      const settings = await storageService.getSettings();
+      let applied = false;
+
+      if (settings && settings.cognitiveSettings) {
+        // Map the small cognitiveSettings blob into the richer cognitive state where possible
+        const cs = settings.cognitiveSettings;
+        setCognitiveState((prev) => ({
           ...prev,
-          ...parsedProfile,
-          sessionCount: 0, // Reset daily counters
-          cognitiveLoad: 0.5, // Start fresh
+          adaptiveComplexity: !!cs.adaptiveComplexity,
+          // keep other runtime defaults; cognitiveLoad will still start fresh
+          sessionCount: 0,
+          cognitiveLoad: 0.5,
         }));
+        applied = true;
+      }
+
+      if (!applied) {
+        // Best-effort legacy fallback: load a more complete profile from AsyncStorage if present
+        try {
+          const profile = await AsyncStorage.getItem(
+            '@neurolearn/cognitive_profile',
+          );
+          if (profile) {
+            const parsedProfile = JSON.parse(profile);
+            setCognitiveState((prev) => ({
+              ...prev,
+              ...parsedProfile,
+              sessionCount: 0, // Reset daily counters
+              cognitiveLoad: 0.5, // Start fresh
+            }));
+          }
+        } catch (e) {
+          console.warn(
+            'AsyncStorage fallback failed loading cognitive profile:',
+            e,
+          );
+        }
       }
     } catch (error) {
-      console.error('Error loading cognitive profile:', error);
+      console.warn(
+        'Failed to load cognitive profile via StorageService, falling back to AsyncStorage:',
+        error,
+      );
+      try {
+        const profile = await AsyncStorage.getItem(
+          '@neurolearn/cognitive_profile',
+        );
+        if (profile) {
+          const parsedProfile = JSON.parse(profile);
+          setCognitiveState((prev) => ({
+            ...prev,
+            ...parsedProfile,
+            sessionCount: 0,
+            cognitiveLoad: 0.5,
+          }));
+        }
+      } catch (err) {
+        console.error(
+          'Error loading cognitive profile from AsyncStorage fallback:',
+          err,
+        );
+      }
     }
   };
 
@@ -165,20 +226,20 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
 
     const isWeekend = [0, 6].includes(new Date().getDay());
 
-    setCognitiveState(prev => ({ ...prev, timeOfDay, isWeekend }));
+    setCognitiveState((prev) => ({ ...prev, timeOfDay, isWeekend }));
   };
 
   const updateEnvironmentalFactors = () => {
     const hour = new Date().getHours();
     const { peakPerformanceHours } = cognitiveState.weeklyTrends;
 
-    const isPeakHour = peakPerformanceHours.some(peakHour => {
+    const isPeakHour = peakPerformanceHours.some((peakHour) => {
       const peakHourNum = parseInt(peakHour.split(':')[0]);
       return Math.abs(hour - peakHourNum) <= 1;
     });
 
     if (isPeakHour) {
-      setCognitiveState(prev => ({
+      setCognitiveState((prev) => ({
         ...prev,
         attentionScore: Math.min(1, prev.attentionScore + 0.1),
         cognitiveLoad: Math.max(0, prev.cognitiveLoad - 0.1),
@@ -195,15 +256,15 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
       sessionCount > 8 ||
       cognitiveState.timeOfDay === 'night'
     ) {
-      setCognitiveState(prev => ({ ...prev, uiMode: 'simple' }));
+      setCognitiveState((prev) => ({ ...prev, uiMode: 'simple' }));
     } else if (
       cognitiveLoad < 0.3 &&
       mentalFatigue < 0.4 &&
       cognitiveState.timeOfDay === 'morning'
     ) {
-      setCognitiveState(prev => ({ ...prev, uiMode: 'advanced' }));
+      setCognitiveState((prev) => ({ ...prev, uiMode: 'advanced' }));
     } else {
-      setCognitiveState(prev => ({ ...prev, uiMode: 'normal' }));
+      setCognitiveState((prev) => ({ ...prev, uiMode: 'normal' }));
     }
   };
 
@@ -211,9 +272,15 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
   const updateCognitiveLoad = (load: number) => {
     const clampedLoad = Math.max(0, Math.min(1, load));
 
-    setCognitiveState(prev => {
-      const newFatigue = Math.min(1, prev.mentalFatigue + (clampedLoad > 0.7 ? 0.05 : -0.02));
-      const newAttention = Math.max(0, prev.attentionScore + (clampedLoad < 0.5 ? 0.02 : -0.03));
+    setCognitiveState((prev) => {
+      const newFatigue = Math.min(
+        1,
+        prev.mentalFatigue + (clampedLoad > 0.7 ? 0.05 : -0.02),
+      );
+      const newAttention = Math.max(
+        0,
+        prev.attentionScore + (clampedLoad < 0.5 ? 0.02 : -0.03),
+      );
 
       return {
         ...prev,
@@ -250,7 +317,12 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
         plannedDurationMinutes: cognitiveState.optimalSessionLength,
         distractionCount: Math.round((metrics.errorRate || 0.1) * 10),
         distractionEvents: [],
-        selfReportFocus: Math.round((metrics.focusScore || 0.5) * 5) as 1 | 2 | 3 | 4 | 5,
+        selfReportFocus: Math.round((metrics.focusScore || 0.5) * 5) as
+          | 1
+          | 2
+          | 3
+          | 4
+          | 5,
         completionRate: metrics.focusScore || 0.5,
         cognitiveLoadStart: cognitiveState.cognitiveLoad,
         cognitiveLoadEnd: cognitiveState.cognitiveLoad,
@@ -280,18 +352,18 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
       newPhase = 'maintaining';
     }
 
-    setCognitiveState(prev => ({ ...prev, learningPhase: newPhase }));
+    setCognitiveState((prev) => ({ ...prev, learningPhase: newPhase }));
   };
 
   const adaptUI = (forceMode?: 'simple' | 'normal' | 'advanced') => {
     if (forceMode) {
-      setCognitiveState(prev => ({
+      setCognitiveState((prev) => ({
         ...prev,
         uiMode: forceMode,
         adaptiveComplexity: false,
       }));
     } else {
-      setCognitiveState(prev => ({
+      setCognitiveState((prev) => ({
         ...prev,
         adaptiveComplexity: true,
       }));
@@ -300,7 +372,7 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
   };
 
   const resetDay = () => {
-    setCognitiveState(prev => ({
+    setCognitiveState((prev) => ({
       ...prev,
       sessionCount: 0,
       cognitiveLoad: 0.5,
@@ -318,10 +390,18 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
     else if (cognitiveLoad < 0.4) baseSize = baseSize + 5;
 
     switch (learningPhase) {
-      case 'acquiring': baseSize = Math.max(15, baseSize - 5); break;
-      case 'consolidating': baseSize = baseSize; break;
-      case 'mastering': baseSize = baseSize + 5; break;
-      case 'maintaining': baseSize = baseSize - 5; break;
+      case 'acquiring':
+        baseSize = Math.max(15, baseSize - 5);
+        break;
+      case 'consolidating':
+        baseSize = baseSize;
+        break;
+      case 'mastering':
+        baseSize = baseSize + 5;
+        break;
+      case 'maintaining':
+        baseSize = baseSize - 5;
+        break;
     }
 
     if (timeOfDay === 'morning') baseSize = baseSize + 5;
@@ -334,25 +414,35 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
     return (
       cognitiveState.cognitiveLoad > 0.75 ||
       cognitiveState.mentalFatigue > 0.7 ||
-      cognitiveState.sessionCount % cognitiveState.weeklyTrends.optimalBreakFrequency === 0
+      cognitiveState.sessionCount %
+        cognitiveState.weeklyTrends.optimalBreakFrequency ===
+        0
     );
   };
 
   const getPersonalizedRecommendations = async (): Promise<string[]> => {
     const recommendations: string[] = [];
-    const { cognitiveLoad, learningPhase, timeOfDay, sessionCount } = cognitiveState;
+    const { cognitiveLoad, learningPhase, timeOfDay, sessionCount } =
+      cognitiveState;
 
     // Get circadian data for personalized recommendations
     let circadianData = null;
     try {
       // Assuming we have a userId - in real implementation, this would come from auth context
       const userId = 'current_user'; // Placeholder
-      const sleepPressure = await circadianService.calculateSleepPressure(userId);
-      const optimalWindow = await circadianService.predictOptimalSleepWindow(userId);
+      const sleepPressure = await circadianService.calculateSleepPressure(
+        userId,
+      );
+      const optimalWindow = await circadianService.predictOptimalSleepWindow(
+        userId,
+      );
       const crdi = await circadianService.calculateCRDI(userId);
       circadianData = { sleepPressure, optimalWindow, crdi };
     } catch (error) {
-      console.warn('Could not fetch circadian data for recommendations:', error);
+      console.warn(
+        'Could not fetch circadian data for recommendations:',
+        error,
+      );
     }
 
     if (cognitiveLoad > 0.7) {
@@ -386,37 +476,63 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
 
       // Sleep pressure recommendations
       if (sleepPressure.currentPressure > 80) {
-        recommendations.push('😴 High sleep pressure detected - consider a short nap');
-        recommendations.push('🌙 Prepare for optimal sleep window at ' + optimalWindow.bedtime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+        recommendations.push(
+          '😴 High sleep pressure detected - consider a short nap',
+        );
+        recommendations.push(
+          '🌙 Prepare for optimal sleep window at ' +
+            optimalWindow.bedtime.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+        );
       }
 
       // Circadian rhythm health
       if (crdi < 50) {
-        recommendations.push('⏰ Your circadian rhythm needs attention - maintain consistent sleep schedule');
-        recommendations.push('🌅 Try morning sunlight exposure to improve circadian health');
+        recommendations.push(
+          '⏰ Your circadian rhythm needs attention - maintain consistent sleep schedule',
+        );
+        recommendations.push(
+          '🌅 Try morning sunlight exposure to improve circadian health',
+        );
       }
 
       // Time-based cognitive recommendations
       const hour = now.getHours();
       if (hour >= 14 && hour <= 16) {
-        recommendations.push('🌞 Afternoon dip detected - consider light exercise or caffeine');
+        recommendations.push(
+          '🌞 Afternoon dip detected - consider light exercise or caffeine',
+        );
       } else if (hour >= 20) {
-        recommendations.push('🌙 Evening hours - focus on memory consolidation tasks');
+        recommendations.push(
+          '🌙 Evening hours - focus on memory consolidation tasks',
+        );
       }
     }
 
     // Integrate soundscape recommendations
-    if (soundscapeContext && !soundscapeContext.isActive && cognitiveLoad > 0.6) {
-      recommendations.push('🎵 Try a focus soundscape to improve concentration');
+    if (
+      soundscapeContext &&
+      !soundscapeContext.isActive &&
+      cognitiveLoad > 0.6
+    ) {
+      recommendations.push(
+        '🎵 Try a focus soundscape to improve concentration',
+      );
     }
 
     // Add circadian-aware soundscape recommendation
     if (circadianData && soundscapeContext && !soundscapeContext.isActive) {
       const hour = new Date().getHours();
       if (hour >= 20 || hour < 6) {
-        recommendations.push('🌙 Try deep rest soundscape for better sleep preparation');
+        recommendations.push(
+          '🌙 Try deep rest soundscape for better sleep preparation',
+        );
       } else if (cognitiveLoad > 0.5) {
-        recommendations.push('🎵 Auto-select circadian soundscape for optimal focus');
+        recommendations.push(
+          '🎵 Auto-select circadian soundscape for optimal focus',
+        );
       }
     }
 
@@ -426,7 +542,7 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
   // Integration methods
   const integrateFocusState = (focusActive: boolean) => {
     if (focusActive) {
-      setCognitiveState(prev => ({
+      setCognitiveState((prev) => ({
         ...prev,
         sessionCount: prev.sessionCount + 1,
         cognitiveLoad: Math.min(1, prev.cognitiveLoad + 0.1),
@@ -437,7 +553,7 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({ children }
   const integrateSoundscapeState = (preset: string, isActive: boolean) => {
     if (isActive && preset !== 'none') {
       // Soundscape can help reduce cognitive load
-      setCognitiveState(prev => ({
+      setCognitiveState((prev) => ({
         ...prev,
         cognitiveLoad: Math.max(0, prev.cognitiveLoad - 0.05),
         mentalFatigue: Math.max(0, prev.mentalFatigue - 0.02),

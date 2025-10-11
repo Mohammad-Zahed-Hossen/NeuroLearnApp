@@ -44,6 +44,14 @@ CREATE TABLE workout_logs (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE water_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  amount INTEGER NOT NULL DEFAULT 1,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- AI Insights
 CREATE TABLE ai_insights (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -58,12 +66,14 @@ ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sleep_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workout_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE water_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can manage own transactions" ON transactions USING (auth.uid() = user_id);
 CREATE POLICY "Users can manage own budgets" ON budgets USING (auth.uid() = user_id);
 CREATE POLICY "Users can manage own sleep logs" ON sleep_logs USING (auth.uid() = user_id);
 CREATE POLICY "Users can manage own workout logs" ON workout_logs USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage own water logs" ON water_logs USING (auth.uid() = user_id);
 CREATE POLICY "Users can manage own insights" ON ai_insights USING (auth.uid() = user_id);
 
 -- Helper Function

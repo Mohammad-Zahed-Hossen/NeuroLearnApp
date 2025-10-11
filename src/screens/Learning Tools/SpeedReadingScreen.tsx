@@ -21,7 +21,7 @@ import {
 } from '../../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import HybridStorageService from '../../services/storage/HybridStorageService';
+import StorageService from '../../services/storage/StorageService';
 import { aiCoachingService } from '../../services/learning/AICoachingService';
 import SpeedReadingService from '../../services/learning/SpeedReadingService';
 import { useSoundscape } from '../../contexts/SoundscapeContext';
@@ -248,7 +248,7 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   };
 
   const themeColors = colors[theme];
-  const storage = HybridStorageService.getInstance();
+  const storage = StorageService.getInstance();
   const speedReadingService = SpeedReadingService.getInstance();
   const soundscape = useSoundscape();
 
@@ -261,6 +261,14 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+      }
+      try {
+        // Remove any listeners we registered on the service
+        speedReadingService.off('wordDisplay', handleWordDisplay);
+        speedReadingService.off('sessionCompleted', handleSessionComplete);
+        speedReadingService.off('quizReady', handleQuizReady);
+      } catch (e) {
+        /* best-effort cleanup */
       }
     };
   }, []);

@@ -29,11 +29,9 @@ import {
   shadows,
 } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import {
-  StorageService,
+import StorageService, {
   LogicNode,
 } from '../../services/storage/StorageService';
-import HybridStorageService from '../../services/storage/HybridStorageService';
 import { logicTrainingFSRS } from '../../services/learning/LogicTrainingFSRS';
 import { MindMapGenerator } from '../../services/learning/MindMapGeneratorService';
 
@@ -165,7 +163,7 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
   onNavigate,
 }) => {
   const themeColors = colors[theme];
-  const storage = HybridStorageService.getInstance();
+  const storage = StorageService.getInstance();
   const mindMapGenerator = MindMapGenerator.getInstance();
 
   // Core state
@@ -434,7 +432,7 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
         finalScore = await promptUserForSelfAssessment();
       }
 
-      let updatedLogicNode: LogicNode;
+      let updatedLogicNode: LogicNode | null;
 
       if (isReviewMode && dueLogicNodes[currentNodeIndex]) {
         // Update existing logic node
@@ -465,6 +463,19 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
           difficulty: currentExercise.difficulty,
         });
 
+        // If creation failed (e.g., offline and queued), abort gracefully
+        if (!updatedLogicNode) {
+          console.warn(
+            'addLogicNode returned null - node was not created immediately',
+          );
+          Alert.alert(
+            'Saved Offline',
+            'Your exercise was saved locally and will be synced when online. It may not appear immediately in reviews.',
+          );
+          // Exit early; finally block will clear submitting state
+          return;
+        }
+
         // Schedule first review with FSRS
         updatedLogicNode = logicTrainingFSRS.scheduleNextLogicReview(
           updatedLogicNode,
@@ -473,7 +484,10 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
           new Date(),
         );
 
-        await storage.updateLogicNode(updatedLogicNode.id, updatedLogicNode);
+        await storage.updateLogicNode(
+          updatedLogicNode.id,
+          updatedLogicNode as LogicNode,
+        );
       }
 
       // Update session state

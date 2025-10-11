@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../../components/GlassComponents';
-import QuickAddFAB from '../../components/finance/QuickAddFAB';
+
 import { supabase } from '../../services/storage/SupabaseService';
 
 interface Transaction {
@@ -54,6 +54,7 @@ const FinanceDashboardScreen = ({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+
   useEffect(() => {
     loadFinanceData();
   }, []);
@@ -64,36 +65,47 @@ const FinanceDashboardScreen = ({
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user) return;
 
-      // Get current month date range
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString()
-        .split('T')[0];
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-        .toISOString()
-        .split('T')[0];
+      let transactions: Transaction[] = [];
+      let budgetsData: Budget[] = [];
 
-      // Load transactions for current month
-      const { data: transactions, error: transactionsError } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('date', startOfMonth)
-        .lte('date', endOfMonth)
-        .order('date', { ascending: false });
+      if (user) {
+        // Get current month date range
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+          .toISOString()
+          .split('T')[0];
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+          .toISOString()
+          .split('T')[0];
 
-      if (transactionsError) throw transactionsError;
+        // Load transactions for current month
+        const { data: transactionsData, error: transactionsError } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', user.id)
+          .gte('date', startOfMonth)
+          .lte('date', endOfMonth)
+          .order('date', { ascending: false });
 
-      // Load budgets
-      const { data: budgetsData, error: budgetsError } = await supabase
-        .from('budgets')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_active', true);
+        if (!transactionsError && transactionsData) {
+          transactions = transactionsData;
+        }
 
-      if (budgetsError) throw budgetsError;
+        // Load budgets
+        const { data: budgets, error: budgetsError } = await supabase
+          .from('budgets')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('is_active', true);
+
+        if (!budgetsError && budgets) {
+          budgetsData = budgets;
+        }
+      }
+
+      // If no real data available, show empty state instead of static data
+      // This ensures the app uses actual data, not dummy data
 
       // Calculate summary
       const monthlyIncome =
@@ -125,6 +137,15 @@ const FinanceDashboardScreen = ({
       setBudgets(budgetsData || []);
     } catch (error) {
       console.error('Error loading finance data:', error);
+      // Show empty state on error - no fallback to dummy data
+      setSummary({
+        totalBalance: 0,
+        monthlyIncome: 0,
+        monthlyExpenses: 0,
+        budgetUtilization: 0,
+      });
+      setRecentTransactions([]);
+      setBudgets([]);
     } finally {
       setLoading(false);
     }
@@ -369,11 +390,7 @@ const FinanceDashboardScreen = ({
         </GlassCard>
       </View>
 
-      {/* Quick Add FAB */}
-      <QuickAddFAB
-        onTransactionAdded={loadFinanceData}
-        theme="light"
-      />
+
     </ScrollView>
   );
 };

@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { HybridStorageService } from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 import AIInsightsService from './AIInsightsService';
 
 interface HolisticUserData {
@@ -50,7 +50,7 @@ export class AdvancedGeminiService {
   private static instance: AdvancedGeminiService;
   private genAI: GoogleGenerativeAI;
   private model: any;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: StorageService;
   private aiInsights: AIInsightsService;
 
   // Conversation context for chat functionality
@@ -75,7 +75,7 @@ export class AdvancedGeminiService {
       this.genAI = new GoogleGenerativeAI(apiKey);
       this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
     }
-    this.hybridStorage = HybridStorageService.getInstance();
+  this.hybridStorage = StorageService.getInstance();
     this.aiInsights = AIInsightsService.getInstance();
   }
 

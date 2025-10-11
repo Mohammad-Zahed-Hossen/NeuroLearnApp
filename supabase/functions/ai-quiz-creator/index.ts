@@ -121,7 +121,7 @@ Deno.serve(async (req: Request) => {
           .single();
 
         if (quizInsertError) {
-          return new Response(JSON.stringify({ error: `Failed to save quiz: ${quizInsertError.message}` }), { status: 500 });
+          return new Response(JSON.stringify({ error: `Failed to save quiz: ${String(quizInsertError ?? 'Unknown error')}` }), { status: 500 });
         }
 
         const { error: updateError } = await supabase
@@ -130,7 +130,7 @@ Deno.serve(async (req: Request) => {
           .eq('id', session_id);
 
         if (updateError) {
-          console.error('Failed to update session with quiz_id:', updateError.message);
+          console.error('Failed to update session with quiz_id:', String(updateError ?? 'Unknown error'));
         }
 
         return new Response(JSON.stringify({ success: true, quiz: quizInsertData }), {
@@ -156,12 +156,12 @@ Deno.serve(async (req: Request) => {
         }
         continue;
       }
-      lastError = error.message;
-      console.error(`AI request failed (attempt ${attempt + 1}/${maxRetries}):`, error);
+  lastError = String(error ?? 'Unknown error');
+  console.error(`AI request failed (attempt ${attempt + 1}/${maxRetries}):`, error);
       if (attempt === maxRetries - 1) break;
     }
   }
 
   // All retries exhausted
-  return new Response(JSON.stringify({ error: `Failed to generate quiz after ${maxRetries} attempts: ${lastError}` }), { status: 500 });
+  return new Response(JSON.stringify({ error: `Failed to generate quiz after ${maxRetries} attempts: ${String(lastError ?? 'Unknown error')}` }), { status: 500 });
 });

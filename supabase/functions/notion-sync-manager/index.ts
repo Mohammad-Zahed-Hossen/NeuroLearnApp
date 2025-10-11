@@ -1,286 +1,840 @@
-// @ts-ignore
+/**
+ * Supabase Edge Function: notion-sync-manager
+ *
+ * Handles server-side Notion API calls and data processing
+ * Offloads heavy computation from mobile app for better performance
+ *
+ * Deploy: supabase functions deploy notion-sync-manager
+ */
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-// @ts-ignore
-import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
+import { Client as NotionClient } from 'https://esm.sh/@notionhq/client@2.2.3';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const NOTION_API_BASE_URL = 'https://api.notion.com/v1';
-
-// --- Global Supabase Admin Client (Bypasses RLS) ---
-// This client is used to securely fetch the user's private notion_token from the user_profiles table.
-const adminSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
-
-// ====================================================================
-// 1. Helper Function: Securely Fetch User's Notion Credentials
-// ====================================================================
-async function getNotionCredentials(userId: string): Promise<{ token: string; dbId: string; logsDbId: string; error: string | null }> {
-  const { data: profile, error: profileError } = await adminSupabase
-    .from('user_profiles')
-    .select('notion_token, notion_db_id, notion_db_id_logs')
-    .eq('id', userId)
-    .single();
-
-  if (profileError || !profile || !profile.notion_token) {
-    return {
-      token: '',
-      dbId: '',
-      logsDbId: '',
-      error: 'Notion token not found for user. Please connect Notion in settings.'
-    };
-  }
-
-  return {
-    token: profile.notion_token,
-    dbId: profile.notion_db_id || '',
-    logsDbId: profile.notion_db_id_logs || '',
-    error: null,
+// Types
+interface SyncRequest {
+  action: 'sync_pages' | 'backup_pages' | 'create_reflection' | 'validate_token';
+  user_id: string;
+  notion_token: string;
+  sync_type?: 'full' | 'incremental';
+  page_ids?: string[];
+  reflection_data?: {
+    type: string;
+    content: string;
+    metadata: any;
   };
 }
 
-// ====================================================================
-// 2. Handlers: Test, Sync-Up (App -> Notion), Sync-Down (Notion -> App)
-// ====================================================================
-async function handleTestConnection(userId: string): Promise<Response> {
-  const { token, dbId, error } = await getNotionCredentials(userId);
+interface SyncResponse {
+  success: boolean;
+  data?: any;
+  error?: string;
+  sync_session_id?: string;
+  pages_processed?: number;
+  blocks_processed?: number;
+  links_created?: number;
+}
 
-  if (error) {
-    return new Response(JSON.stringify({ message: error }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+// Initialize Supabase client
+const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
+
+// CORS headers
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
+};
+
+// Main handler
+serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // Test 1: Validate the token by fetching user details
-    const userResponse = await fetch(`${NOTION_API_BASE_URL}/users/me`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Notion-Version': '2022-06-28',
-      },
+    const requestData: SyncRequest = await req.json();
+    console.log(`🔄 Processing ${requestData.action} for user ${requestData.user_id}`);
+
+    // Validate request
+    if (!requestData.user_id || !requestData.notion_token) {
+      throw new Error('Missing required fields: user_id or notion_token');
+    }
+
+    // Initialize Notion client
+    const notion = new NotionClient({ auth: requestData.notion_token });
+
+    let response: SyncResponse;
+
+    switch (requestData.action) {
+      case 'validate_token':
+        response = await validateNotionToken(notion, requestData.user_id);
+        break;
+
+      case 'sync_pages':
+        response = await syncNotionPages(
+          notion,
+          supabase,
+          requestData.user_id,
+          requestData.sync_type || 'incremental'
+        );
+        break;
+
+      case 'backup_pages':
+        response = await backupNotionPages(
+          notion,
+          supabase,
+          requestData.user_id,
+          requestData.page_ids
+        );
+        break;
+
+      case 'create_reflection':
+        response = await createNotionReflection(
+          notion,
+          supabase,
+          requestData.user_id,
+          requestData.reflection_data!
+        );
+        break;
+
+      default:
+        throw new Error(`Unknown action: ${requestData.action}`);
+    }
+
+    return new Response(JSON.stringify(response), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
-    if (!userResponse.ok) {
-      console.error('Notion Token Test Failed:', await userResponse.text());
-      return new Response(JSON.stringify({ message: 'Token is invalid or expired.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-    }
+  } catch (error) {
+    console.error('❌ Edge function error:', error);
 
-    // Test 2: If a DB ID is provided, test access to the database
-    if (dbId) {
-      const dbResponse = await fetch(`${NOTION_API_BASE_URL}/databases/${dbId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Notion-Version': '2022-06-28',
-        },
-      });
+    const errorResponse: SyncResponse = {
+      success: false,
+  error: error instanceof Error ? error.message : String(error ?? 'Unknown error'),
+    };
 
-      if (!dbResponse.ok) {
-        console.warn('Token OK, but DB ID access failed:', await dbResponse.text());
-        return new Response(JSON.stringify({ message: 'Token valid, but access to the primary Database ID failed.' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
-      }
-    }
-
-    return new Response(JSON.stringify({ message: 'Connection successful!', user: await userResponse.json() }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-
-  } catch (e: any) {
-    console.error('Notion Test Exception:', e.message);
-    return new Response(JSON.stringify({ message: `Internal server error during connection test: ${e.message}` }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(errorResponse), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
-}
+});
 
-async function handleSyncUp(userId: string): Promise<Response> {
-  const { token, dbId, logsDbId, error } = await getNotionCredentials(userId);
+// ==============================
+// TOKEN VALIDATION
+// ==============================
 
-  if (error) {
-    return new Response(JSON.stringify({ message: error }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-  }
+async function validateNotionToken(
+  notion: NotionClient,
+  userId: string
+): Promise<SyncResponse> {
+  try {
+    console.log('🔍 Validating Notion token...');
 
-  // --- PUSH LOGIC (Simplified Example: Pushing unsynced reading sessions to a Logs DB) ---
+    const user = await notion.users.me();
+    console.log('✅ Token valid for user:', user.name);
 
-  // 1. Fetch unsynced reading sessions for the user
-  const { data: sessions, error: fetchError } = await adminSupabase
-    .from('reading_sessions')
-    .select('*')
-    .eq('user_id', userId)
-    .is('notion_synced_at', null)
-    .limit(10);
-
-  if (fetchError) {
-    console.error('Failed to fetch sessions for sync-up:', fetchError.message);
-    return new Response(JSON.stringify({ message: 'DB fetch failed' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  }
-
-  if (!sessions || sessions.length === 0) {
-    return new Response(JSON.stringify({ message: 'No new sessions to sync.' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  }
-
-  // 2. Map and push sessions to Notion
-  if (!logsDbId) {
-    return new Response(JSON.stringify({ message: 'No Notion Logs Database ID provided for sync-up.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-  }
-
-  const pushPromises = sessions.map(async (session: any) => {
-    // **IMPORTANT:** Tailor the properties below to match your actual Notion database properties!
-    const notionPagePayload = {
-      parent: { database_id: logsDbId },
-      properties: {
-        "Title": {
-          title: [{ text: { content: session.source_title || 'Untitled Reading' } }]
-        },
-        "WPM": {
-          number: session.wpm_achieved || 0
-        },
-        "Duration (min)": {
-          number: Math.round((session.duration_seconds || 0) / 60)
-        },
-        "Comprehension": {
-          number: Math.round((session.comprehension_score || 0) * 100) / 100
-        },
-        "Date": {
-          date: { start: new Date(session.created_at).toISOString() }
-        },
-        "Supabase ID": {
-          rich_text: [{ text: { content: session.id } }]
+    return {
+      success: true,
+      data: {
+        user: {
+          id: user.id,
+          name: user.name,
+          type: user.type,
+          workspace_name: user.type === 'bot' ? user.bot?.workspace_name : 'Personal'
         }
       }
     };
 
-    const response = await fetch(`${NOTION_API_BASE_URL}/pages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Notion-Version': '2022-06-28',
-      },
-      body: JSON.stringify(notionPagePayload),
-    });
-
-    if (!response.ok) {
-      console.error(`Notion API error for session ${session.id}:`, await response.text());
-      throw new Error(`Notion push failed for session ${session.id}`);
-    }
-
-    // 3. Update the session's notion_synced_at timestamp in Supabase
-    const { error: updateError } = await adminSupabase
-      .from('reading_sessions')
-      .update({ notion_synced_at: new Date().toISOString() })
-      .eq('id', session.id);
-
-    if (updateError) {
-      console.error('Failed to update sync status:', updateError.message);
-    }
-
-    return { id: session.id, notionId: (await response.json()).id };
-  });
-
-  const results = await Promise.allSettled(pushPromises);
-  interface SyncResultFulfilled {
-    status: 'fulfilled';
-    value: { id: string; notionId: string };
+  } catch (error) {
+    console.error('❌ Token validation failed:', error);
+    return {
+      success: false,
+  error: error instanceof Error ? error.message : String(error ?? 'Invalid token')
+    };
   }
-  interface SyncResultRejected {
-    status: 'rejected';
-    reason: any;
-  }
-  type SyncResult = SyncResultFulfilled | SyncResultRejected;
-
-  const succeeded = (results as SyncResult[]).filter(r => r.status === 'fulfilled').length;
-  const failed = (results as SyncResult[]).filter(r => r.status === 'rejected').length;
-
-  return new Response(JSON.stringify({
-    message: `Sync-up complete. Succeeded: ${succeeded}, Failed: ${failed}`
-  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
-async function handleSyncDown(userId: string): Promise<Response> {
-  const { token, dbId, error } = await getNotionCredentials(userId);
+// ==============================
+// PAGE SYNCHRONIZATION
+// ==============================
 
-  if (error) {
-    return new Response(JSON.stringify({ message: error }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-  }
+async function syncNotionPages(
+  notion: NotionClient,
+  supabase: any,
+  userId: string,
+  syncType: 'full' | 'incremental'
+): Promise<SyncResponse> {
+  const syncSessionId = `session_${Date.now()}`;
+  const startTime = Date.now();
 
-  if (!dbId) {
-    return new Response(JSON.stringify({ message: 'No Notion Primary Database ID provided for sync-down.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-  }
+  console.log(`🔄 Starting ${syncType} sync session: ${syncSessionId}`);
 
-  // --- PULL LOGIC (Simplified Example: Fetching pages from the user's main DB) ---
   try {
-    const response = await fetch(`${NOTION_API_BASE_URL}/databases/${dbId}/query`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Notion-Version': '2022-06-28',
-      },
-      // Add filtering if needed, e.g., to only fetch 'To Read' items
-      body: JSON.stringify({
+    // Record sync session start
+    await supabase.from('notion_sync_sessions').insert({
+      id: syncSessionId,
+      user_id: userId,
+      sync_type: syncType,
+      status: 'in_progress',
+      started_at: new Date().toISOString()
+    });
+
+    let pagesProcessed = 0;
+    let blocksProcessed = 0;
+    let linksCreated = 0;
+
+    // Get last sync time for incremental sync
+    let lastSyncTime: Date | null = null;
+    if (syncType === 'incremental') {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('notion_last_sync')
+        .eq('id', userId)
+        .single();
+
+      if (profile?.notion_last_sync) {
+        lastSyncTime = new Date(profile.notion_last_sync);
+        console.log('📅 Last sync time:', lastSyncTime.toISOString());
+      }
+    }
+
+    // Sync pages in batches
+    let hasMore = true;
+    let cursor: string | undefined;
+    const BATCH_SIZE = 50;
+
+    while (hasMore) {
+      console.log(`📄 Fetching batch (cursor: ${cursor || 'start'})...`);
+
+      const response = await notion.search({
+        query: '',
         filter: {
-          property: "Status",
-          select: {
-            equals: "To Read"
+          property: 'object',
+          value: 'page'
+        },
+        sort: {
+          direction: 'descending',
+          timestamp: 'last_edited_time'
+        },
+        start_cursor: cursor,
+        page_size: BATCH_SIZE
+      });
+
+      for (const page of response.results) {
+        if ('properties' in page && page.object === 'page') {
+          // Skip if incremental and not modified since last sync
+          if (lastSyncTime && new Date(page.last_edited_time) <= lastSyncTime) {
+            console.log(`⏭️ Skipping unmodified page: ${page.id}`);
+            continue;
+          }
+
+          // Process page
+          await processNotionPage(notion, supabase, userId, page);
+          pagesProcessed++;
+
+          // Process blocks for this page
+          const pageBlocksCount = await processPageBlocks(notion, supabase, userId, page.id);
+          blocksProcessed += pageBlocksCount;
+
+          console.log(`✅ Processed page: ${page.id} (${pageBlocksCount} blocks)`);
+        }
+      }
+
+      hasMore = response.has_more;
+      cursor = response.next_cursor || undefined;
+    }
+
+    // Create neural links from blocks
+    console.log('🧠 Creating neural links...');
+    linksCreated = await createNeuralLinks(supabase, userId);
+
+    // Update sync session completion
+    const syncDuration = Date.now() - startTime;
+
+    await supabase.from('notion_sync_sessions').update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      pages_synced: pagesProcessed,
+      blocks_synced: blocksProcessed,
+      links_created: linksCreated,
+      sync_duration_ms: syncDuration
+    }).eq('id', syncSessionId);
+
+    // Update user profile last sync time
+    await supabase.from('user_profiles').update({
+      notion_last_sync: new Date().toISOString()
+    }).eq('id', userId);
+
+    console.log(`✅ Sync completed in ${syncDuration}ms`);
+    console.log(`   Pages: ${pagesProcessed}, Blocks: ${blocksProcessed}, Links: ${linksCreated}`);
+
+    return {
+      success: true,
+      sync_session_id: syncSessionId,
+      pages_processed: pagesProcessed,
+      blocks_processed: blocksProcessed,
+      links_created: linksCreated,
+      data: {
+        duration_ms: syncDuration,
+        sync_type: syncType
+      }
+    };
+
+  } catch (error) {
+    console.error('❌ Sync failed:', error);
+
+    // Update sync session with error
+    await supabase.from('notion_sync_sessions').update({
+      status: 'failed',
+      completed_at: new Date().toISOString(),
+  error_details: error instanceof Error ? error.message : String(error ?? 'Unknown error')
+    }).eq('id', syncSessionId);
+
+    throw error;
+  }
+}
+
+// ==============================
+// PAGE PROCESSING
+// ==============================
+
+async function processNotionPage(
+  notion: NotionClient,
+  supabase: any,
+  userId: string,
+  page: any
+): Promise<void> {
+  try {
+    const pageData = {
+      user_id: userId,
+      notion_page_id: page.id,
+      page_title: extractPageTitle(page),
+      page_url: page.url || '',
+      database_id: page.parent?.type === 'database_id' ? page.parent.database_id : null,
+      page_type: page.parent?.type === 'database_id' ? 'database' : 'page',
+      last_synced_at: new Date().toISOString(),
+      last_edited_time: page.last_edited_time,
+      notion_created_time: page.created_time,
+      parent_id: extractParentId(page.parent),
+      archived: page.archived || false,
+      properties: page.properties,
+      sync_status: 'synced'
+    };
+
+    // Upsert page data
+    const { error } = await supabase
+      .from('notion_pages')
+      .upsert(pageData, { onConflict: 'user_id,notion_page_id' });
+
+    if (error) {
+      console.error('❌ Failed to store page:', error);
+      throw error;
+    }
+  } catch (error) {
+    console.error(`❌ Error processing page ${page.id}:`, error);
+    throw error;
+  }
+}
+
+// ==============================
+// BLOCK PROCESSING
+// ==============================
+
+async function processPageBlocks(
+  notion: NotionClient,
+  supabase: any,
+  userId: string,
+  pageId: string
+): Promise<number> {
+  let blocksProcessed = 0;
+
+  try {
+    // Get page record from database
+    const { data: pageRecord } = await supabase
+      .from('notion_pages')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('notion_page_id', pageId)
+      .single();
+
+    if (!pageRecord) {
+      console.error(`❌ Page record not found for ${pageId}`);
+      return 0;
+    }
+
+    const dbPageId = pageRecord.id;
+
+    // Fetch blocks recursively
+    blocksProcessed = await processBlocksRecursive(
+      notion,
+      supabase,
+      userId,
+      dbPageId,
+      pageId,
+      0
+    );
+
+  } catch (error) {
+    console.error(`❌ Error processing blocks for page ${pageId}:`, error);
+  }
+
+  return blocksProcessed;
+}
+
+async function processBlocksRecursive(
+  notion: NotionClient,
+  supabase: any,
+  userId: string,
+  dbPageId: string,
+  blockId: string,
+  blockOrder: number
+): Promise<number> {
+  let blocksProcessed = 0;
+  let cursor: string | undefined;
+
+  try {
+    do {
+      const response = await notion.blocks.children.list({
+        block_id: blockId,
+        start_cursor: cursor,
+        page_size: 100
+      });
+
+      for (const block of response.results) {
+        if ('type' in block) {
+          // Process block data
+          const blockData = {
+            user_id: userId,
+            notion_block_id: block.id,
+            page_id: dbPageId,
+            block_type: block.type,
+            content_text: extractBlockText(block),
+            rich_text: extractRichText(block),
+            parent_block_id: block.parent?.type === 'block_id' ? block.parent.block_id : null,
+            has_children: block.has_children || false,
+            block_order: blockOrder++,
+            properties: {},
+            annotations: extractAnnotations(block),
+            href: extractHref(block)
+          };
+
+          // Store block
+          const { error } = await supabase
+            .from('notion_blocks')
+            .upsert(blockData, { onConflict: 'user_id,notion_block_id' });
+
+          if (error) {
+            console.error('❌ Failed to store block:', error);
+          } else {
+            blocksProcessed++;
+          }
+
+          // Process child blocks recursively
+          if (block.has_children) {
+            const childBlocksCount = await processBlocksRecursive(
+              notion,
+              supabase,
+              userId,
+              dbPageId,
+              block.id,
+              0
+            );
+            blocksProcessed += childBlocksCount;
           }
         }
-      })
-    });
+      }
 
-    if (!response.ok) {
-      console.error('Notion Query Failed:', await response.text());
-      return new Response(JSON.stringify({ message: 'Failed to query Notion database.' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      cursor = response.next_cursor || undefined;
+    } while (cursor);
+
+  } catch (error) {
+    console.error(`❌ Error processing blocks for ${blockId}:`, error);
+  }
+
+  return blocksProcessed;
+}
+
+// ==============================
+// NEURAL LINK CREATION
+// ==============================
+
+async function createNeuralLinks(
+  supabase: any,
+  userId: string
+): Promise<number> {
+  let linksCreated = 0;
+
+  try {
+    // Get all blocks with content
+    const { data: blocks, error } = await supabase
+      .from('notion_blocks')
+      .select('id, content_text, notion_block_id')
+      .eq('user_id', userId)
+      .not('content_text', 'is', null);
+
+    if (error) throw error;
+
+    // Concept pattern matching
+    const CONCEPT_PATTERN = /\[\[Concept:\s*([^\]]+)\]\]/g;
+    const TASK_PATTERN = /\[\[Task:\s*([^\]]+)\]\]/g;
+    const SESSION_PATTERN = /\[\[Session:\s*([^\]]+)\]\]/g;
+
+    for (const block of blocks) {
+      if (!block.content_text) continue;
+
+      // Find concept mentions
+      const conceptMatches = Array.from(block.content_text.matchAll(CONCEPT_PATTERN));
+
+      for (const match of conceptMatches) {
+        const conceptName = match[1].trim();
+
+        // Create neural link
+        const linkData = {
+          user_id: userId,
+          notion_block_id: block.id,
+          neural_node_id: conceptName, // Simplified - would need actual node lookup
+          link_type: 'concept_mapping',
+          confidence_score: 0.9,
+          auto_linked: true,
+          link_context: `Concept mentioned in Notion: "${conceptName}"`,
+          notion_mention_text: match[0],
+          is_active: true
+        };
+
+        const { error: linkError } = await supabase
+          .from('notion_links')
+          .upsert(linkData, { onConflict: 'user_id,notion_block_id,neural_node_id' });
+
+        if (!linkError) {
+          linksCreated++;
+        }
+      }
+
+      // Similar processing for tasks and sessions...
     }
 
-    const data = await response.json();
-    // **TODO:** Implement logic here to process 'data.results' and insert/update
-    // your 'reading_sessions' or 'tasks' table using the adminSupabase client.
+    console.log(`🔗 Created ${linksCreated} neural links`);
 
-    return new Response(JSON.stringify({ message: `Successfully pulled ${data.results.length} items.`, data: data.results.slice(0, 5) }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } catch (error) {
+    console.error('❌ Failed to create neural links:', error);
+  }
 
-  } catch (e: any) {
-    console.error('Notion Sync-Down Exception:', e.message);
-    return new Response(JSON.stringify({ message: `Internal server error during sync-down: ${e.message}` }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  return linksCreated;
+}
+
+// ==============================
+// BACKUP FUNCTIONALITY
+// ==============================
+
+async function backupNotionPages(
+  notion: NotionClient,
+  supabase: any,
+  userId: string,
+  pageIds?: string[]
+): Promise<SyncResponse> {
+  try {
+    console.log('💾 Creating Notion backup...');
+
+    const pagesData: any[] = [];
+
+    // If specific page IDs provided, backup those; otherwise backup all
+    if (pageIds && pageIds.length > 0) {
+      for (const pageId of pageIds) {
+        try {
+          const page = await notion.pages.retrieve({ page_id: pageId });
+          const blocks = await getAllBlocksForPage(notion, pageId);
+
+          pagesData.push({
+            page,
+            blocks,
+            retrieved_at: new Date().toISOString()
+          });
+        } catch (error) {
+          console.warn(`⚠️ Failed to backup page ${pageId}:`, error);
+        }
+      }
+    } else {
+      // Backup all user's pages
+      const { data: userPages } = await supabase
+        .from('notion_pages')
+        .select('notion_page_id')
+        .eq('user_id', userId)
+        .eq('archived', false);
+
+      if (userPages) {
+        for (const userPage of userPages.slice(0, 50)) { // Limit to 50 pages for backup
+          try {
+            const page = await notion.pages.retrieve({ page_id: userPage.notion_page_id });
+            const blocks = await getAllBlocksForPage(notion, userPage.notion_page_id);
+
+            pagesData.push({
+              page,
+              blocks,
+              retrieved_at: new Date().toISOString()
+            });
+          } catch (error) {
+            console.warn(`⚠️ Failed to backup page ${userPage.notion_page_id}:`, error);
+          }
+        }
+      }
+    }
+
+    // Create snapshot
+    const snapshot = {
+      id: `backup_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      user_id: userId,
+      total_pages: pagesData.length,
+      pages: pagesData,
+      metadata: {
+        backup_type: 'server_generated',
+        triggered_by: 'api_request',
+        server_version: '1.0.0'
+      }
+    };
+
+    // Store in Supabase
+    const { data, error } = await supabase
+      .from('notion_snapshots')
+      .insert({
+        user_id: userId,
+        snapshot_type: 'manual',
+        full_content_json: snapshot,
+        file_size_bytes: JSON.stringify(snapshot).length,
+        retention_until: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) // 90 days
+      })
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    console.log('✅ Backup created successfully:', data.id);
+
+    return {
+      success: true,
+      data: {
+        snapshot_id: data.id,
+        pages_backed_up: pagesData.length,
+        file_size_bytes: JSON.stringify(snapshot).length
+      }
+    };
+
+  } catch (error) {
+    console.error('❌ Backup failed:', error);
+    return {
+      success: false,
+  error: error instanceof Error ? error.message : String(error ?? 'Backup failed')
+    };
   }
 }
 
-// ====================================================================
-// 3. Main Server Listener
-// ====================================================================
-serve(async (req: Request) => {
+// ==============================
+// REFLECTION CREATION
+// ==============================
+
+async function createNotionReflection(
+  notion: NotionClient,
+  supabase: any,
+  userId: string,
+  reflectionData: { type: string; content: string; metadata: any }
+): Promise<SyncResponse> {
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response('Missing Authorization header', { status: 401 });
-    }
-    const userToken = authHeader.replace('Bearer ', '');
+    console.log(`💡 Creating ${reflectionData.type} reflection in Notion...`);
 
-    // Validate the user's JWT using the admin/service-role Supabase client.
-    // adminSupabase was created with the SUPABASE_SERVICE_ROLE_KEY above and
-    // can safely call auth.getUser(token) to decode/validate the JWT.
-    const { data: userResult, error: userErr } = await adminSupabase.auth.getUser(userToken);
-    if (userErr || !userResult?.user) {
-      return new Response('Invalid or expired token', { status: 403 });
-    }
-    const userId = userResult.user.id;
+    // Get the Cognitive Insights database ID from user profile
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('notion_databases')
+      .eq('id', userId)
+      .single();
 
-    // Parse the request body to get syncType
-    const body = await req.json();
-    const { syncType } = body;
+    let insightsDatabaseId: string | null = null;
 
-    switch (syncType) {
-      case 'test-connection':
-        return handleTestConnection(userId);
-      case 'sync-up':
-        return handleSyncUp(userId);
-      case 'sync-down':
-        return handleSyncDown(userId);
-      default:
-        return new Response('Invalid syncType', { status: 400 });
+    if (profile?.notion_databases) {
+      const databases = profile.notion_databases;
+      const insightsDb = databases.find((db: any) => db.id === 'cognitive_insights');
+      insightsDatabaseId = insightsDb?.notion_id;
     }
 
-  } catch (error: any) {
-    console.error('Global Error in Notion Sync Manager:', error.message);
-    return new Response(
-      JSON.stringify({ error: 'Internal Server Error', details: error.message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    if (!insightsDatabaseId) {
+      throw new Error('Cognitive Insights database not found or not configured');
+    }
+
+    // Create page in Notion
+    const response = await notion.pages.create({
+      parent: { database_id: insightsDatabaseId },
+      properties: {
+        'Title': {
+          title: [
+            {
+              text: {
+                content: `${reflectionData.type} - ${new Date().toLocaleDateString()}`
+              }
+            }
+          ]
+        },
+        'Type': {
+          select: {
+            name: reflectionData.type
+          }
+        },
+        'Generated': {
+          date: {
+            start: new Date().toISOString()
+          }
+        }
+      },
+      children: [
+        {
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [
+              {
+                type: 'text',
+                text: {
+                  content: reflectionData.content
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    // Store in local database
+    await supabase.from('notion_pages').insert({
+      user_id: userId,
+      notion_page_id: response.id,
+      page_title: `${reflectionData.type} - ${new Date().toLocaleDateString()}`,
+      page_url: response.url || '',
+      page_type: 'page',
+      database_id: insightsDatabaseId,
+      content_preview: reflectionData.content.substring(0, 500),
+      properties: reflectionData.metadata,
+      sync_status: 'synced'
+    });
+
+    console.log('✅ Reflection created successfully:', response.id);
+
+    return {
+      success: true,
+      data: {
+        page_id: response.id,
+        page_url: response.url,
+        title: `${reflectionData.type} - ${new Date().toLocaleDateString()}`
+      }
+    };
+
+  } catch (error) {
+    console.error('❌ Failed to create reflection:', error);
+    return {
+      success: false,
+  error: error instanceof Error ? error.message : String(error ?? 'Failed to create reflection')
+    };
   }
-});
+}
 
+// ==============================
+// UTILITY FUNCTIONS
+// ==============================
 
+function extractPageTitle(page: any): string {
+  try {
+    if (page.properties?.title?.title?.[0]?.plain_text) {
+      return page.properties.title.title[0].plain_text;
+    }
+    if (page.properties?.Name?.title?.[0]?.plain_text) {
+      return page.properties.Name.title[0].plain_text;
+    }
+    return 'Untitled';
+  } catch {
+    return 'Untitled';
+  }
+}
+
+function extractBlockText(block: any): string {
+  try {
+    const blockType = block.type;
+    const content = block[blockType];
+
+    if (content?.rich_text) {
+      return content.rich_text.map((text: any) => text.plain_text || '').join('');
+    }
+
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+function extractRichText(block: any): any[] {
+  try {
+    const blockType = block.type;
+    const content = block[blockType];
+    return content?.rich_text || [];
+  } catch {
+    return [];
+  }
+}
+
+function extractAnnotations(block: any): any {
+  try {
+    const blockType = block.type;
+    const content = block[blockType];
+    return content?.rich_text?.[0]?.annotations || {};
+  } catch {
+    return {};
+  }
+}
+
+function extractHref(block: any): string | undefined {
+  try {
+    const blockType = block.type;
+    const content = block[blockType];
+    return content?.rich_text?.[0]?.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractParentId(parent: any): string | undefined {
+  if (parent?.type === 'database_id') return parent.database_id;
+  if (parent?.type === 'page_id') return parent.page_id;
+  if (parent?.type === 'workspace') return 'workspace';
+  return undefined;
+}
+
+async function getAllBlocksForPage(notion: NotionClient, pageId: string): Promise<any[]> {
+  const allBlocks: any[] = [];
+  let cursor: string | undefined;
+
+  try {
+    do {
+      const response = await notion.blocks.children.list({
+        block_id: pageId,
+        start_cursor: cursor,
+        page_size: 100
+      });
+
+      allBlocks.push(...response.results);
+      cursor = response.next_cursor || undefined;
+    } while (cursor);
+  } catch (error) {
+    console.error(`❌ Error fetching blocks for page ${pageId}:`, error);
+  }
+
+  return allBlocks;
+}
+
+console.log('🚀 Notion Sync Manager Edge Function initialized');

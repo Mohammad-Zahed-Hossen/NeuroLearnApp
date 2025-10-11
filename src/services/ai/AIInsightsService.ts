@@ -1,5 +1,5 @@
 import { supabase } from '../storage/SupabaseService';
-import { HybridStorageService } from '../storage/HybridStorageService';
+import StorageService from '../storage/StorageService';
 
 interface FinancialData {
   totalIncome: number;
@@ -61,9 +61,9 @@ interface AIInsight {
   generated_at: string;
 }
 
-class AIInsightsService {
+export class AIInsightsService {
   private static instance: AIInsightsService;
-  private hybridStorage: HybridStorageService;
+  private hybridStorage: StorageService;
 
   static getInstance(): AIInsightsService {
     if (!AIInsightsService.instance) {
@@ -73,7 +73,7 @@ class AIInsightsService {
   }
 
   private constructor() {
-    this.hybridStorage = HybridStorageService.getInstance();
+    this.hybridStorage = StorageService.getInstance();
   }
 
   async generateFinancialInsights(userId: string): Promise<string[]> {

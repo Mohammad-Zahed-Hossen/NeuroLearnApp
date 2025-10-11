@@ -21,7 +21,7 @@ import {
 } from '../../components/GlassComponents';
 import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import HybridStorageService from '../../services/storage/HybridStorageService';
+import StorageService from '../../services/storage/StorageService';
 import { MemoryPalace, MemoryLocation, MemoryItem } from '../../types';
 
 interface MemoryPalaceScreenProps {
@@ -172,7 +172,7 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
   });
 
   const themeColors = colors[theme];
-  const storage = HybridStorageService.getInstance();
+  const storage = StorageService.getInstance();
 
   useEffect(() => {
     loadMemoryPalaces();

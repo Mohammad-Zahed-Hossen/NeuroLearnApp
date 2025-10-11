@@ -218,28 +218,6 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   // Phase 5: Performance optimization - derived scale threshold
   const scaleThreshold = useDerivedValue(() => scale.value > 1.2);
 
-  // Phase 5: Occlusion culling - viewport bounds calculation
-  const viewportBounds = useMemo(() => {
-    const padding = 100; // Extra padding to avoid pop-in
-    return {
-      minX: -translateX.value / scale.value - padding,
-      maxX: (-translateX.value + width) / scale.value + padding,
-      minY: -translateY.value / scale.value - padding,
-      maxY: (-translateY.value + height) / scale.value + padding,
-    };
-  }, [translateX.value, translateY.value, scale.value, width, height]);
-
-  // Phase 5: Visible nodes filtering for occlusion culling
-  const visibleNodes = useMemo(() => {
-    return nodes.filter(
-      (node) =>
-        (node.x || 0) >= viewportBounds.minX &&
-        (node.x || 0) <= viewportBounds.maxX &&
-        (node.y || 0) >= viewportBounds.minY &&
-        (node.y || 0) <= viewportBounds.maxY,
-    );
-  }, [nodes, viewportBounds]);
-
   // Phase 5: Spatial hashing for hit testing performance
   const spatialGrid = useMemo(() => {
     const cellSize = 50; // Adjust based on average node size
@@ -258,6 +236,67 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
 
     return { grid, cellSize };
   }, [nodes]);
+
+  // Phase 2: Enhanced viewport culling with adaptive buffering
+  const viewportBounds = useMemo(() => {
+    const basePadding = 100; // Base padding to avoid pop-in
+    const adaptivePadding = Math.max(basePadding, basePadding * (1 / scale.value)); // Scale padding with zoom
+
+    return {
+      minX: -translateX.value / scale.value - adaptivePadding,
+      maxX: (-translateX.value + width) / scale.value + adaptivePadding,
+      minY: -translateY.value / scale.value - adaptivePadding,
+      maxY: (-translateY.value + height) / scale.value + adaptivePadding,
+    };
+  }, [translateX.value, translateY.value, scale.value, width, height]);
+
+  // Phase 2: Enhanced visible nodes filtering with performance tiers
+  const visibleNodes = useMemo(() => {
+    // Adaptive node limiting based on multiple factors
+    const baseLimit = 100;
+    const cognitiveMultiplier = cognitiveLoad > 0.8 ? 0.3 : cognitiveLoad > 0.6 ? 0.5 : 1.0;
+    const zoomMultiplier = scale.value < 0.5 ? 0.4 : scale.value > 2 ? 1.5 : 1.0;
+    const maxNodes = Math.floor(baseLimit * cognitiveMultiplier * zoomMultiplier);
+
+    // Use spatial grid for efficient filtering when available
+    if (spatialGrid.grid.size > 0) {
+      const visibleNodeIds = new Set<string>();
+
+      // Calculate grid cells that intersect with viewport
+      const startCellX = Math.floor(viewportBounds.minX / spatialGrid.cellSize);
+      const endCellX = Math.floor(viewportBounds.maxX / spatialGrid.cellSize);
+      const startCellY = Math.floor(viewportBounds.minY / spatialGrid.cellSize);
+      const endCellY = Math.floor(viewportBounds.maxY / spatialGrid.cellSize);
+
+      // Collect nodes from relevant grid cells
+      for (let cellX = startCellX - 1; cellX <= endCellX + 1; cellX++) {
+        for (let cellY = startCellY - 1; cellY <= endCellY + 1; cellY++) {
+          const cellKey = `${cellX},${cellY}`;
+          const cellNodes = spatialGrid.grid.get(cellKey) || [];
+          cellNodes.forEach(node => {
+            if (node &&
+                typeof node.x === 'number' && typeof node.y === 'number' &&
+                node.x >= viewportBounds.minX && node.x <= viewportBounds.maxX &&
+                node.y >= viewportBounds.minY && node.y <= viewportBounds.maxY) {
+              visibleNodeIds.add(node.id);
+            }
+          });
+        }
+      }
+
+      // Convert back to node array and apply limits
+      const visibleNodeArray = nodes.filter(node => visibleNodeIds.has(node.id));
+      return visibleNodeArray.slice(0, maxNodes);
+    }
+
+    // Fallback to simple filtering
+    return nodes.filter(
+      (node) =>
+        typeof node.x === 'number' && typeof node.y === 'number' &&
+        node.x >= viewportBounds.minX && node.x <= viewportBounds.maxX &&
+        node.y >= viewportBounds.minY && node.y <= viewportBounds.maxY,
+    ).slice(0, maxNodes);
+  }, [nodes, viewportBounds, cognitiveLoad, scale.value, spatialGrid]);
 
   // Phase 5: Focus state
   const [focusConnectedNodes, setFocusConnectedNodes] = useState<Set<string>>(

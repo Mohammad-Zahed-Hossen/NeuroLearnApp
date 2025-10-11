@@ -7,6 +7,20 @@ import React, {
 } from 'react';
 import { View, Dimensions, Keyboard, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useCurrentAuraState } from '../../store/useAuraStore';
+import FloatingCommandCenter from './FloatingCommandCenter';
+import { MiniPlayer } from '../MiniPlayerComponent';
+import FloatingElementsContext, {
+  useFloatingElements as useFloatingElementsFromContext,
+} from './FloatingElementsContext';
+import { BlurView } from 'expo-blur';
+import {
+  Modal,
+  TouchableOpacity,
+  Text,
+  View as RNView,
+  StyleSheet,
+} from 'react-native';
 
 // Position constants based on ergonomics research
 export const POSITION_CONSTANTS = {
@@ -49,6 +63,9 @@ interface FloatingElementsContextType {
   setMiniPlayerActive: (active: boolean) => void;
   hasUnreadMessages: boolean;
   setUnreadMessages: (has: boolean) => void;
+  // Programmatic UI requests
+  showAIChat: boolean;
+  setShowAIChat: (open: boolean) => void;
   positions: {
     aiChat: { bottom: number; right: number };
     fab: { bottom: number; right: number };
@@ -61,24 +78,16 @@ interface FloatingElementsContextType {
   };
 }
 
-const FloatingElementsContext =
-  createContext<FloatingElementsContextType | null>(null);
-
-export const useFloatingElements = () => {
-  const context = useContext(FloatingElementsContext);
-  if (!context) {
-    throw new Error(
-      'useFloatingElements must be used within FloatingElementsProvider',
-    );
-  }
-  return context;
-};
+// Use the shared context implementation in a separate module to avoid
+// require-cycle warnings when floating children import the orchestrator.
+const useFloatingElements = useFloatingElementsFromContext;
 
 // Main orchestrator component
 interface FloatingElementsOrchestratorProps {
   children: React.ReactNode;
   cognitiveLoad?: CognitiveLoadLevel;
   currentScreen?: string;
+  onNavigate?: (screen: string) => void;
 }
 
 export const FloatingElementsOrchestrator: React.FC<
@@ -87,9 +96,11 @@ export const FloatingElementsOrchestrator: React.FC<
   children,
   cognitiveLoad: externalCognitiveLoad,
   currentScreen: externalCurrentScreen,
+  onNavigate,
 }) => {
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = Dimensions.get('window');
+  const auraState = useCurrentAuraState();
 
   // Internal state
   const [cognitiveLoad, setCognitiveLoad] = useState<CognitiveLoadLevel>('low');
@@ -97,9 +108,54 @@ export const FloatingElementsOrchestrator: React.FC<
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
   const [isMiniPlayerActive, setMiniPlayerActive] = useState(false);
   const [hasUnreadMessages, setUnreadMessages] = useState(false);
+  const [showAIChat, setShowAIChat] = useState(false);
 
-  // Use external values if provided, otherwise use internal state
-  const effectiveCognitiveLoad = externalCognitiveLoad || cognitiveLoad;
+  // Wrapped setters with logs to help trace programmatic calls from other components
+  const setMiniPlayerActiveWrapped = (active: boolean) => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[FloatingElementsOrchestrator] setMiniPlayerActive', active);
+    } catch {}
+    setMiniPlayerActive(active);
+  };
+
+  const setShowAIChatWrapped = (open: boolean) => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[FloatingElementsOrchestrator] setShowAIChat', open);
+    } catch {}
+    setShowAIChat(open);
+  };
+
+  const setUnreadMessagesWrapped = (has: boolean) => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[FloatingElementsOrchestrator] setUnreadMessages', has);
+    } catch {}
+    setUnreadMessages(has);
+  };
+
+  // Map aura context to cognitive load
+  const getCognitiveLoadFromAura = (): CognitiveLoadLevel => {
+    if (!auraState) return 'low';
+
+    switch (auraState.context) {
+      case 'DeepFocus':
+        return 'low';
+      case 'CreativeFlow':
+        return 'low';
+      case 'FragmentedAttention':
+        return 'medium';
+      case 'CognitiveOverload':
+        return 'high';
+      default:
+        return 'low';
+    }
+  };
+
+  // Use external values if provided, otherwise derive from aura state or internal state
+  const effectiveCognitiveLoad =
+    externalCognitiveLoad || getCognitiveLoadFromAura() || cognitiveLoad;
   const effectiveCurrentScreen = externalCurrentScreen || currentScreen;
 
   // Calculate positions based on ergonomics and current state
@@ -200,16 +256,61 @@ export const FloatingElementsOrchestrator: React.FC<
     setCurrentScreen,
     isKeyboardVisible,
     isMiniPlayerActive,
-    setMiniPlayerActive,
+    setMiniPlayerActive: setMiniPlayerActiveWrapped,
     hasUnreadMessages,
-    setUnreadMessages,
+    setUnreadMessages: setUnreadMessagesWrapped,
+    showAIChat,
+    setShowAIChat: setShowAIChatWrapped,
     positions,
     visibility: effectiveVisibility,
   };
 
+  // Debug visibility traces (helpful to see computed visibility changes)
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line no-console
+      console.log(
+        '[FloatingElementsOrchestrator] visibility',
+        effectiveVisibility,
+      );
+    } catch {}
+  }, [effectiveVisibility]);
+
   return (
     <FloatingElementsContext.Provider value={contextValue}>
       {children}
+
+      {/* Unified Smart Morphing Bubble */}
+      <FloatingCommandCenter onNavigate={onNavigate} />
+
+      {/* MiniPlayer modal is owned by the orchestrator to avoid circular imports.
+          FloatingCommandCenter only requests the orchestrator to open the mini
+          player via ctx.setMiniPlayerActive(true). */}
+      <Modal
+        visible={isMiniPlayerActive}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMiniPlayerActiveWrapped(false)}
+      >
+        <BlurView intensity={50} style={styles.modalBackdrop as any}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setMiniPlayerActiveWrapped(false)}
+          />
+          <RNView style={styles.miniPlayerModal}>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => {
+                setMiniPlayerActiveWrapped(false);
+              }}
+            >
+              <Text style={styles.closeIcon}>✕</Text>
+            </TouchableOpacity>
+            <MiniPlayer theme={'dark' as any} />
+          </RNView>
+        </BlurView>
+      </Modal>
     </FloatingElementsContext.Provider>
   );
 };
@@ -241,3 +342,40 @@ export const useRegisterFloatingElement = (
 };
 
 export default FloatingElementsOrchestrator;
+
+const styles = StyleSheet.create({
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  miniPlayerModal: {
+    width: 340,
+    height: 440,
+    borderRadius: 20,
+    overflow: 'hidden',
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    backgroundColor: 'transparent',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  closeIcon: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});

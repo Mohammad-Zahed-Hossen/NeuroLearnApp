@@ -6,8 +6,10 @@ import {
   TouchableOpacity,
   Alert,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { GlassCard } from '../../components/GlassComponents';
 import { supabase } from '../../services/storage/SupabaseService';
 
@@ -22,9 +24,35 @@ const SleepTrackerScreen: React.FC<SleepTrackerScreenProps> = ({ onBack }) => {
   const [sleepQuality, setSleepQuality] = useState(3);
   const [loading, setLoading] = useState(false);
 
+  // Time picker states
+  const [showBedtimePicker, setShowBedtimePicker] = useState(false);
+  const [showWakeTimePicker, setShowWakeTimePicker] = useState(false);
+  const [bedtimeDate, setBedtimeDate] = useState(new Date());
+  const [wakeTimeDate, setWakeTimeDate] = useState(new Date());
+
   useEffect(() => {
     loadSleepLogs();
   }, []);
+
+  const formatTime = (date: Date): string => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const onBedtimeChange = (event: any, selectedDate?: Date) => {
+    setShowBedtimePicker(Platform.OS === 'ios');
+    if (selectedDate) {
+      setBedtimeDate(selectedDate);
+      setBedtime(formatTime(selectedDate));
+    }
+  };
+
+  const onWakeTimeChange = (event: any, selectedDate?: Date) => {
+    setShowWakeTimePicker(Platform.OS === 'ios');
+    if (selectedDate) {
+      setWakeTimeDate(selectedDate);
+      setWakeTime(formatTime(selectedDate));
+    }
+  };
 
   const loadSleepLogs = async () => {
     try {
@@ -149,31 +177,48 @@ const SleepTrackerScreen: React.FC<SleepTrackerScreenProps> = ({ onBack }) => {
             <View style={styles.timeInput}>
               <Text style={styles.inputLabel}>Bedtime</Text>
               <TouchableOpacity
-                onPress={() => {
-                  // In a real app, you'd use a time picker
-                  setBedtime('22:30');
-                }}
+                onPress={() => setShowBedtimePicker(true)}
                 style={styles.timeButton}
               >
                 <Text style={styles.timeText}>{bedtime || 'Set bedtime'}</Text>
+                <Icon name="clock-outline" size={20} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
             <View style={styles.timeInput}>
               <Text style={styles.inputLabel}>Wake Time</Text>
               <TouchableOpacity
-                onPress={() => {
-                  // In a real app, you'd use a time picker
-                  setWakeTime('07:00');
-                }}
+                onPress={() => setShowWakeTimePicker(true)}
                 style={styles.timeButton}
               >
                 <Text style={styles.timeText}>
                   {wakeTime || 'Set wake time'}
                 </Text>
+                <Icon name="clock-outline" size={20} color="#6B7280" />
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Time Pickers */}
+          {showBedtimePicker && (
+            <DateTimePicker
+              value={bedtimeDate}
+              mode="time"
+              is24Hour={false}
+              display="default"
+              onChange={onBedtimeChange}
+            />
+          )}
+
+          {showWakeTimePicker && (
+            <DateTimePicker
+              value={wakeTimeDate}
+              mode="time"
+              is24Hour={false}
+              display="default"
+              onChange={onWakeTimeChange}
+            />
+          )}
 
           <Text style={styles.inputLabel}>Sleep Quality</Text>
           <View style={styles.qualityButtons}>
@@ -318,6 +363,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.5)',
     borderRadius: 12,
     padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   timeText: {
     color: '#111827',

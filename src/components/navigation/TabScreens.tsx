@@ -38,6 +38,7 @@ import {
   NavigationParams,
   learnCards,
   focusCards,
+  integrationCards,
   profileCards,
   sortCardsBySpacingEffect,
   getNextDueSession,
@@ -87,8 +88,8 @@ const AnimatedHubCard: React.FC<AnimatedHubCardProps> = ({
     const alpha = theme === 'dark' ? '25' : '20';
     const secondaryAlpha = theme === 'dark' ? '08' : '05';
     return [
-      card.color + alpha,
-      card.color + secondaryAlpha,
+      (card?.color || themeColors.primary) + alpha,
+      (card?.color || themeColors.primary) + secondaryAlpha,
       themeColors.surface,
     ] as const;
   }, [card.color, theme, themeColors.surface]);
@@ -106,7 +107,7 @@ const AnimatedHubCard: React.FC<AnimatedHubCardProps> = ({
           styles.hubCard,
           isHighLoad ? styles.highLoadCard : {},
           {
-            borderColor: card.color + '50',
+            borderColor: (card?.color || themeColors.primary) + '50',
             borderWidth: 2,
             shadowColor: card.color,
             shadowOffset: { width: 0, height: 2 },
@@ -125,31 +126,72 @@ const AnimatedHubCard: React.FC<AnimatedHubCardProps> = ({
         >
           {/* Icon with enhanced styling */}
           <LinearGradient
-            colors={[card.color + '30', card.color + '15']}
-            style={[styles.cardIcon, { borderColor: card.color + '60', borderWidth: 2 }]}
+            colors={[
+              (card?.color || themeColors.primary) + '30',
+              (card?.color || themeColors.primary) + '15',
+            ]}
+            style={[
+              styles.cardIcon,
+              {
+                borderColor: (card?.color || themeColors.primary) + '60',
+                borderWidth: 2,
+              },
+            ]}
           >
-            <Text style={[styles.cardIconText, { color: card.color, fontSize: 28, fontWeight: '700' }]}>
+            <Text
+              style={[
+                styles.cardIconText,
+                { color: card.color, fontSize: 28, fontWeight: '700' },
+              ]}
+            >
               {card.icon}
             </Text>
             {/* Enhanced glow effect for high load cards */}
             {isHighLoad && (
-              <View style={[styles.iconGlow, { backgroundColor: card.color + '30' }]} />
+              <View
+                style={[
+                  styles.iconGlow,
+                  {
+                    backgroundColor:
+                      (card?.color || themeColors.primary) + '30',
+                  },
+                ]}
+              />
             )}
           </LinearGradient>
 
           {/* Content area */}
           <View style={styles.cardContent}>
-            <Text style={[styles.cardTitle, { color: themeColors.text, fontSize: 18, fontWeight: '700' }]}>
+            <Text
+              style={[
+                styles.cardTitle,
+                { color: themeColors.text, fontSize: 18, fontWeight: '700' },
+              ]}
+            >
               {card.title}
             </Text>
-            <Text style={[styles.cardDescription, { color: themeColors.textSecondary, fontSize: 14, lineHeight: 18 }]}>
+            <Text
+              style={[
+                styles.cardDescription,
+                {
+                  color: themeColors.textSecondary,
+                  fontSize: 14,
+                  lineHeight: 18,
+                },
+              ]}
+            >
               {card.description}
             </Text>
           </View>
 
           {/* Cognitive load badge with enhanced styling */}
           {card.cognitiveLoad && card.cognitiveLoad > 0.6 && (
-            <View style={[styles.loadBadge, { backgroundColor: themeColors.warning }]}>
+            <View
+              style={[
+                styles.loadBadge,
+                { backgroundColor: themeColors.warning },
+              ]}
+            >
               <Text style={styles.loadBadgeText}>
                 {Math.round(card.cognitiveLoad * 100)}%
               </Text>
@@ -208,11 +250,7 @@ export const LearnHubScreen: React.FC<HubScreenProps> = ({
   // Micro-interactions: Animated press feedback using reusable component
   const renderCard: ListRenderItem<HubCard> = useCallback(
     ({ item: card }) => (
-      <AnimatedHubCard
-        card={card}
-        theme={theme}
-        onNavigate={handleNavigate}
-      />
+      <AnimatedHubCard card={card} theme={theme} onNavigate={handleNavigate} />
     ),
     [theme, handleNavigate],
   );
@@ -260,7 +298,8 @@ export const LearnHubScreen: React.FC<HubScreenProps> = ({
                 <Text
                   style={[styles.nextDueText, { color: themeColors.accent }]}
                 >
-                  Next: {nextDueSession.card.title} due in {nextDueSession.dueIn}
+                  Next: {nextDueSession.card.title} due in{' '}
+                  {nextDueSession.dueIn}
                 </Text>
               </View>
             )}
@@ -276,9 +315,7 @@ export const LearnHubScreen: React.FC<HubScreenProps> = ({
             <View style={styles.quickActionsGrid}>
               <Button
                 title="Review Cards"
-                onPress={() =>
-                  handleNavigate('flashcards', { mode: 'review' })
-                }
+                onPress={() => handleNavigate('flashcards', { mode: 'review' })}
                 variant="primary"
                 theme={theme}
                 style={styles.quickActionButton}
@@ -341,11 +378,7 @@ export const FocusHubScreen: React.FC<HubScreenProps> = ({
   // Micro-interactions: Animated press feedback using reusable component
   const renderCard: ListRenderItem<HubCard> = useCallback(
     ({ item: card }) => (
-      <AnimatedHubCard
-        card={card}
-        theme={theme}
-        onNavigate={handleNavigate}
-      />
+      <AnimatedHubCard card={card} theme={theme} onNavigate={handleNavigate} />
     ),
     [theme, handleNavigate],
   );
@@ -478,7 +511,12 @@ export const ProfileHubScreen: React.FC<HubScreenProps> = ({
     (screen: string, params?: NavigationParams[keyof NavigationParams]) => {
       // Learning Intelligence: Log tap for analytics
       setCards((prev) => updateCardUsage(prev, screen));
-      onNavigate(screen, params);
+      // Fix: Redirect to HolisticAnalyticsScreen when clicking the analytics card
+      if (screen === 'dashboard' && params && 'tab' in params && params.tab === 'analytics') {
+        onNavigate('holistic-analytics', params);
+      } else {
+        onNavigate(screen, params);
+      }
     },
     [onNavigate],
   );
@@ -486,11 +524,7 @@ export const ProfileHubScreen: React.FC<HubScreenProps> = ({
   // Micro-interactions: Animated press feedback using reusable component
   const renderCard: ListRenderItem<HubCard> = useCallback(
     ({ item: card }) => (
-      <AnimatedHubCard
-        card={card}
-        theme={theme}
-        onNavigate={handleNavigate}
-      />
+      <AnimatedHubCard card={card} theme={theme} onNavigate={handleNavigate} />
     ),
     [theme, handleNavigate],
   );
@@ -676,10 +710,124 @@ export const ProfileHubScreen: React.FC<HubScreenProps> = ({
   );
 };
 
+// Integration Hub Screen
+export const IntegrationHubScreen: React.FC<HubScreenProps> = ({
+  theme,
+  onNavigate,
+}) => {
+  const themeColors = colors[theme];
+  const cognitive = useCognitive();
+  const [cards, setCards] = useState(integrationCards);
+
+  // Neuroscience: Sort cards by spacing effect
+  const sortedCards = useMemo(
+    () => sortCardsBySpacingEffect(cards, cognitive.cognitiveLoad),
+    [cards, cognitive.cognitiveLoad],
+  );
+
+  const filteredCards = useMemo(
+    () =>
+      cognitive.uiMode === 'simple'
+        ? sortedCards.filter((card) => (card.cognitiveLoad || 0) <= 0.5)
+        : sortedCards,
+    [sortedCards, cognitive.uiMode],
+  );
+
+  // Performance: Memoized navigation callback
+  const handleNavigate = useCallback(
+    (screen: string, params?: NavigationParams[keyof NavigationParams]) => {
+      // Learning Intelligence: Log tap for analytics
+      setCards((prev) => updateCardUsage(prev, screen));
+      onNavigate(screen, params);
+    },
+    [onNavigate],
+  );
+
+  // Micro-interactions: Animated press feedback using reusable component
+  const renderCard: ListRenderItem<HubCard> = useCallback(
+    ({ item: card }) => (
+      <AnimatedHubCard card={card} theme={theme} onNavigate={handleNavigate} />
+    ),
+    [theme, handleNavigate],
+  );
+
+  // Empty state for filtering
+  const renderEmptyState = () => (
+    <View style={styles.emptyState}>
+      <Text style={[styles.emptyStateIcon, { color: themeColors.textMuted }]}>
+        🔗
+      </Text>
+      <Text style={[styles.emptyStateTitle, { color: themeColors.text }]}>
+        No integrations available
+      </Text>
+      <Text
+        style={[styles.emptyStateText, { color: themeColors.textSecondary }]}
+      >
+        All integration activities are filtered in Simple Mode. Try switching to
+        Normal or Advanced mode.
+      </Text>
+    </View>
+  );
+
+  return (
+    <ScreenContainer theme={theme}>
+      <FlatList
+        data={filteredCards}
+        renderItem={renderCard}
+        keyExtractor={(card) => card.id}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: themeColors.text }]}>
+              🔗 Integration Hub
+            </Text>
+            <Text
+              style={[styles.subtitle, { color: themeColors.textSecondary }]}
+            >
+              Connect and sync with external tools
+            </Text>
+          </View>
+        }
+        ListFooterComponent={
+          <GlassCard theme={theme} style={styles.quickActionsCard}>
+            <Text
+              style={[styles.quickActionsTitle, { color: themeColors.text }]}
+            >
+              ⚡ Quick Actions
+            </Text>
+            <View style={styles.quickActionsGrid}>
+              <Button
+                title="Add Task"
+                onPress={() => handleNavigate('tasks', { mode: 'add' })}
+                variant="primary"
+                theme={theme}
+                style={styles.quickActionButton}
+              />
+              <Button
+                title="Notion Sync"
+                onPress={() => handleNavigate('notion-dashboard')}
+                variant="secondary"
+                theme={theme}
+                style={styles.quickActionButton}
+              />
+            </View>
+          </GlassCard>
+        }
+        ListEmptyComponent={renderEmptyState}
+        contentContainerStyle={styles.scrollContainer}
+        showsVerticalScrollIndicator={false}
+        removeClippedSubviews
+        initialNumToRender={4}
+        maxToRenderPerBatch={6}
+        windowSize={5}
+      />
+    </ScreenContainer>
+  );
+};
+
 const styles = StyleSheet.create({
   scrollContainer: {
-    // CRITICAL: Account for BOTH header and bottom tabs
-    paddingTop: 88, // Floating header (56) + statusBar (24) + margin (8)
+    // Hub screens don't have floating headers, so minimal top padding
+    paddingTop: spacing.lg, // Just the ScreenContainer padding
     paddingBottom: 80, // Bottom tab bar (64) + margin (16)
     paddingHorizontal: spacing.lg,
   },

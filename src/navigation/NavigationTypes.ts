@@ -12,6 +12,7 @@ export type FeatureScreen =
   | 'neural-mind-map'
   | 'progress'
   | 'settings'
+  | 'cognitive-privacy'
   | 'WorkoutLogger'
   | 'SleepTracker'
   | 'WellnessDashboard';
