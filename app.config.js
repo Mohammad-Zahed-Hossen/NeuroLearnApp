@@ -43,9 +43,8 @@ export default {
     updates: {
       url: 'https://u.expo.dev/c77c860d-df8d-4d62-81b0-50610e216d9b',
     },
-    runtimeVersion: {
-      policy: 'appVersion',
-    },
+    // For bare workflow, runtimeVersion must be a static string (policy objects are not supported)
+    runtimeVersion: '1.0.0',
     extra: {
       eas: {
         projectId: 'c77c860d-df8d-4d62-81b0-50610e216d9b',
