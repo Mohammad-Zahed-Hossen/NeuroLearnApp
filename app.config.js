@@ -41,6 +41,9 @@ export default {
     // Include the expo-dev-client plugin so development client builds work on EAS
     plugins: ['expo-dev-client'],
     extra: {
+      eas: {
+        projectId: 'c77c860d-df8d-4d62-81b0-50610e216d9b',
+      },
       SUPABASE_URL: process.env.SUPABASE_URL,
       SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
       ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
