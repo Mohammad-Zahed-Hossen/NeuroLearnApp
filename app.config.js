@@ -39,7 +39,13 @@ export default {
       favicon: './assets/favicon.png',
     },
     // Include the expo-dev-client plugin so development client builds work on EAS
-    plugins: ['expo-dev-client'],
+    plugins: ['expo-dev-client', 'expo-updates'],
+    updates: {
+      url: 'https://u.expo.dev/c77c860d-df8d-4d62-81b0-50610e216d9b',
+    },
+    runtimeVersion: {
+      policy: 'appVersion',
+    },
     extra: {
       eas: {
         projectId: 'c77c860d-df8d-4d62-81b0-50610e216d9b',

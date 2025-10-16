@@ -87,11 +87,11 @@
     "react-native-haptic-feedback": "^2.3.3",
     "react-native-keychain": "^10.0.0",
     "react-native-mmkv": "^2.0.1",
-    "react-native-performance-monitor": "^2.0.0",
+    "react-native-performance-monitor": "^1.0.5",
     "react-native-progress": "^5.0.1",
     "react-native-reanimated": "^4.1.2",
     "react-native-safe-area-context": "^5.6.1",
-    "react-native-screens": "^4.16.0",
+    "react-native-screens": "~4.16.0",
     "react-native-skeleton-placeholder": "^5.2.0",
     "react-native-svg": "15.12.1",
     "react-native-vector-icons": "^10.3.0",
@@ -129,7 +129,10 @@
   "overrides": {
     "react-native-reanimated": "$react-native-reanimated",
     "react-native-worklets": "$react-native-worklets",
-    "react-native-safe-area-context": "$react-native-safe-area-context"
+    "react-native-safe-area-context": "$react-native-safe-area-context",
+    "react-native-skeleton-placeholder": {
+      "@react-native-masked-view/masked-view": "0.3.2"
+    }
   },
   "private": true
 }
