@@ -179,12 +179,23 @@ export const integrationCards: HubCard[] = [
 
 export const profileCards: HubCard[] = [
   {
+    id: 'user-profile',
+    title: 'User Profile',
+    description: 'Manage your profile and personal information',
+    icon: '👤',
+    screen: 'user-profile',
+    color: '#8B5CF6',
+    cognitiveLoad: 0.3,
+    usageFrequency: 1,
+    streakCount: 0,
+  },
+  {
     id: 'holistic-analytics',
     title: 'Holistic Analytics',
     description: 'Advanced cognitive performance dashboard',
     icon: '🧠',
     screen: 'holistic-analytics',
-    color: '#8B5CF6',
+    color: '#06B6D4',
     cognitiveLoad: 0.6,
     usageFrequency: 2,
     streakCount: 0,
@@ -195,7 +206,7 @@ export const profileCards: HubCard[] = [
     description: 'Real-time engine diagnostics and health monitoring',
     icon: '📊',
     screen: 'monitoring',
-    color: '#06B6D4',
+    color: '#10B981',
     cognitiveLoad: 0.4,
     usageFrequency: 1,
     streakCount: 0,

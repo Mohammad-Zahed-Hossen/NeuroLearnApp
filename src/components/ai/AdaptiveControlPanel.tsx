@@ -10,6 +10,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../GlassComponents';
 import { ThemeType, colors, typography, spacing, borderRadius } from '../../theme/colors';
 import useAuraStore from '../../store/useAuraStore';
+import { neuralPhysicsEngineInstance } from '../../services/learning/NeuralPhysicsEngine';
+import { StorageService } from '../../services/storage/StorageService';
 
 // --- ASSUMED AURA 2.0 TYPES ---
 interface ServiceStatus {
@@ -75,24 +77,50 @@ export const AdaptiveControlPanel: React.FC<AdaptiveControlPanelProps> = ({
   const { currentAuraState } = useAuraStore();
   const themeColors = colors[theme];
 
-  // Derive service status from aura state
+  // Get real physics state
+  const physicsState = neuralPhysicsEngineInstance.getPhysicsState();
+  
+  // Derive service status from real service states
   const serviceStatus: ServiceStatus = {
     cae: currentAuraState ? 'Active' : 'Inactive',
-    physics: currentAuraState?.adaptivePhysicsMode ? 'Active' : 'Inactive',
+    physics: physicsState ? 'Active' : 'Inactive',
     sensor: currentAuraState?.environmentalContext ? 'Active' : 'Inactive',
     soundscape: currentAuraState?.recommendedSoundscape ? 'Active' : 'Inactive',
   };
 
-  // Adaptive settings state
+  // Adaptive settings with persistent storage
   const [adaptiveSettings, setAdaptiveSettings] = React.useState<AdaptiveSettings>({
     autoOptimize: true,
     predictiveMode: true,
     environmentalControl: true,
     learningAdaptation: true,
   });
+  
+  // Load adaptive settings from storage on mount
+  React.useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const stored = await StorageService.getInstance().getItem('adaptive_settings');
+        if (stored) {
+          setAdaptiveSettings(stored);
+        }
+      } catch (error) {
+        console.warn('Failed to load adaptive settings:', error);
+      }
+    };
+    loadSettings();
+  }, []);
 
-  const handleSettingChange = (key: keyof AdaptiveSettings, value: boolean) => {
-    setAdaptiveSettings(prev => ({ ...prev, [key]: value }));
+  const handleSettingChange = async (key: keyof AdaptiveSettings, value: boolean) => {
+    const newSettings = { ...adaptiveSettings, [key]: value };
+    setAdaptiveSettings(newSettings);
+    
+    // Persist settings to storage
+    try {
+      await StorageService.getInstance().setItem('adaptive_settings', newSettings);
+    } catch (error) {
+      console.warn('Failed to save adaptive settings:', error);
+    }
   };
 
   if (!currentAuraState) {

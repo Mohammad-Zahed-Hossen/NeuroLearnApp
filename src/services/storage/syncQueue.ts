@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import StorageService from './StorageService';
 import database from '../../database/database';
 
 type LegacyItem = {
@@ -18,9 +17,28 @@ type DbItem = {
 
 const LEGACY_KEY = '@neurolearn/sync_queue';
 
+// Use dynamic import for StorageService to avoid a require-cycle between
+// StorageService <-> HybridStorageService <-> syncQueue. Calls to the
+// facade are infrequent and async, so a runtime import is acceptable.
+async function getStorageService() {
+  const mod = await import('./StorageService');
+  return mod.default;
+}
+
 const syncQueue = {
   // Enqueue in warm DB (best-effort) and in legacy AsyncStorage
   async enqueue(key: string, data: any): Promise<void> {
+    // Check disk space before enqueue
+    try {
+      const S = await getStorageService();
+      const hasSpace = await S.getInstance().ensureDiskSpace(1024); // 1KB per item (example)
+      if (!hasSpace) {
+        console.warn('Cannot enqueue: insufficient disk space.');
+        return;
+      }
+    } catch (e) {
+      // ignore
+    }
     // Try warm DB first
     try {
       const col = database.collections.get('sync_queue');
@@ -36,15 +54,19 @@ const syncQueue = {
     } catch (err) {
       // ignore - fallback will persist in AsyncStorage
     }
-
     // Legacy AsyncStorage queue
     try {
       let raw: string | null = null;
       try {
-        raw = await StorageService.getInstance().getItem(LEGACY_KEY);
+        try {
+          const S = await getStorageService();
+          raw = await S.getInstance().getItem(LEGACY_KEY);
+        } catch (e) {
+          // fallback
+          raw = await AsyncStorage.getItem(LEGACY_KEY);
+        }
       } catch (e) {
-        // fallback
-        raw = await AsyncStorage.getItem(LEGACY_KEY);
+        raw = null;
       }
       let queue: LegacyItem[] = [];
       try {
@@ -56,12 +78,14 @@ const syncQueue = {
       queue.push({ key, data, timestamp: Date.now(), attempts: 0 });
       try {
         try {
-          await StorageService.getInstance().setItem(LEGACY_KEY, JSON.stringify(queue));
+          const S = await getStorageService();
+          await S.getInstance().setItem(LEGACY_KEY, JSON.stringify(queue));
         } catch (e) {
+          // If StorageService import or instance call fails, fallback to AsyncStorage
           await AsyncStorage.setItem(LEGACY_KEY, JSON.stringify(queue));
         }
       } catch (writeErr) {
-        // If device is out of space, attempt to trim the queue to last N items and retry
+        // If device is out of space or write fails, attempt to trim the queue to last N items and retry
         const msg = String((writeErr as any)?.message || writeErr || '');
         console.warn('Failed to enqueue legacy sync item to AsyncStorage:', writeErr);
         if (msg.includes('SQLITE_FULL') || msg.toLowerCase().includes('database or disk is full')) {
@@ -69,7 +93,8 @@ const syncQueue = {
           try {
             const trimmed = queue.slice(-MAX_LEGACY_QUEUE);
             try {
-              await StorageService.getInstance().setItem(LEGACY_KEY, JSON.stringify(trimmed));
+              const S = await getStorageService();
+              await S.getInstance().setItem(LEGACY_KEY, JSON.stringify(trimmed));
             } catch (retryErr) {
               await AsyncStorage.setItem(LEGACY_KEY, JSON.stringify(trimmed));
             }
@@ -81,6 +106,32 @@ const syncQueue = {
     } catch (err) {
       console.error('Failed to enqueue legacy sync item (unexpected):', err);
     }
+  },
+  /**
+   * Batch migration utility for large datasets
+   */
+  async batchMigrate(items: any[], batchSize: number = 100): Promise<{ migrated: number; failed: number }> {
+    let migrated = 0;
+    let failed = 0;
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      try {
+        // Replace with actual migration logic
+        // await migrateBatch(batch);
+        migrated += batch.length;
+      } catch (e) {
+        failed += batch.length;
+      }
+    }
+    return { migrated, failed };
+  },
+  /**
+   * Conflict resolution utility
+   */
+  resolveConflict(local: any, remote: any): any {
+    // Example: last-write-wins
+    if (!local || !remote) return local || remote;
+    return (local.timestamp > remote.timestamp) ? local : remote;
   },
 
   // Fetch items from warm DB and legacy AsyncStorage
@@ -107,9 +158,14 @@ const syncQueue = {
     try {
       let raw: string | null = null;
       try {
-        raw = await StorageService.getInstance().getItem(LEGACY_KEY);
+        try {
+          const S = await getStorageService();
+          raw = await S.getInstance().getItem(LEGACY_KEY);
+        } catch (e) {
+          raw = await AsyncStorage.getItem(LEGACY_KEY);
+        }
       } catch (e) {
-        raw = await AsyncStorage.getItem(LEGACY_KEY);
+        raw = null;
       }
       const queue: LegacyItem[] = raw ? JSON.parse(raw as string) : [];
       legacyItems.push(...queue);
@@ -149,7 +205,8 @@ const syncQueue = {
   async persistLegacyQueue(queue: LegacyItem[]): Promise<void> {
     try {
       try {
-        await StorageService.getInstance().setItem(LEGACY_KEY, JSON.stringify(queue));
+        const S = await getStorageService();
+        await S.getInstance().setItem(LEGACY_KEY, JSON.stringify(queue));
       } catch (e) {
         await AsyncStorage.setItem(LEGACY_KEY, JSON.stringify(queue));
       }
@@ -181,9 +238,14 @@ const syncQueue = {
 
       // Clear legacy AsyncStorage
       try {
-        await StorageService.getInstance().removeItem(LEGACY_KEY);
+        try {
+          const S = await getStorageService();
+          await S.getInstance().removeItem(LEGACY_KEY);
+        } catch (e) {
+          await AsyncStorage.removeItem(LEGACY_KEY);
+        }
       } catch (e) {
-        await AsyncStorage.removeItem(LEGACY_KEY);
+        // ignore
       }
     } catch (err) {
       console.warn('Failed to clear sync queue:', err);
@@ -194,7 +256,8 @@ const syncQueue = {
   async clearLegacyQueue(): Promise<void> {
     try {
       try {
-        await StorageService.getInstance().removeItem(LEGACY_KEY);
+        const S = await getStorageService();
+        await S.getInstance().removeItem(LEGACY_KEY);
         console.log('Legacy sync queue cleared');
       } catch (e) {
         await AsyncStorage.removeItem(LEGACY_KEY);

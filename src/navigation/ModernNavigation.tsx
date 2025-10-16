@@ -1,7 +1,14 @@
 // src/navigation/ModernNavigation.tsx
 // Modern tab navigation that works alongside existing hamburger menu
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  memo,
+  lazy,
+} from 'react';
 import {
   View,
   Text,
@@ -12,6 +19,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   colors,
   spacing,
@@ -22,28 +30,51 @@ import {
 import { useCognitive } from '../contexts/CognitiveProvider';
 import { useSoundscape } from '../contexts/SoundscapeContext';
 import { GlassCard } from '../components/GlassComponents';
+import { TabItem, CognitiveLoad, UIMode } from './NavigationTypes';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-interface TabItem {
-  id: string;
-  label: string;
-  icon: string;
-  screen: string;
-  badge?: number;
-  color: string;
-}
 
 interface ModernNavigationProps {
   theme: ThemeType;
   onNavigate: (screen: string, params?: any) => void;
-  currentScreen: string;
+  currentScreen?: string | undefined;
   showHamburgerMenu?: boolean; // Fallback to existing menu
   onShowHamburger?: () => void;
 }
 
+const MemoizedCognitiveIndicator = memo(
+  ({
+    cognitiveLoad,
+    themeColors,
+  }: {
+    cognitiveLoad: number;
+    themeColors: any;
+  }) => {
+    if (cognitiveLoad <= 0.6) return null;
+
+    return (
+      <View style={styles.cognitiveIndicator}>
+        <View
+          style={[
+            styles.cognitiveBar,
+            {
+              width: `${cognitiveLoad * 100}%`,
+              backgroundColor:
+                cognitiveLoad > 0.8
+                  ? themeColors.error
+                  : cognitiveLoad > 0.6
+                  ? themeColors.warning
+                  : themeColors.success,
+            },
+          ]}
+        />
+      </View>
+    );
+  },
+);
+
 // Smart tab configuration that adapts based on usage patterns
-const getTabConfiguration = (cognitiveLoad: number, uiMode: string) => {
+const getTabConfiguration = (cognitiveLoad: CognitiveLoad, uiMode: UIMode) => {
   const baseTabs: TabItem[] = [
     {
       id: 'dashboard',
@@ -108,10 +139,12 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
   const themeColors = colors[theme];
   const cognitive = useCognitive();
   const soundscape = useSoundscape();
+  const queryClient = useQueryClient();
 
   const [selectedTab, setSelectedTab] = useState('dashboard');
   const [tabContainerWidth, setTabContainerWidth] = useState(SCREEN_WIDTH);
   const slideAnim = useRef(new Animated.Value(0)).current;
+  const navigationStartTime = useRef<number>(0);
 
   const tabs = getTabConfiguration(
     cognitive?.cognitiveLoad || 0.3,
@@ -134,6 +167,68 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
     return { tabWidth, offset, tabSpace };
   }, [tabContainerWidth, tabs.length, showHamburgerMenu]);
 
+  // Prefetch data and lazy load screens when component mounts or cognitive load changes
+  useEffect(() => {
+    const prefetchTabData = async () => {
+      // Only prefetch if cognitive load is low to avoid overwhelming the user
+      if ((cognitive?.cognitiveLoad || 0) < 0.7) {
+        try {
+          // Prefetch dashboard data
+          queryClient.prefetchQuery({
+            queryKey: ['dashboard-data'],
+            queryFn: async () => {
+              // Import dashboard data fetching logic
+              const { useOptimizedQuery } = await import(
+                '../hooks/useOptimizedQuery'
+              );
+              // This would be the actual query function for dashboard data
+              return { summary: {}, recentActivity: [] };
+            },
+            staleTime: 5 * 60 * 1000, // 5 minutes
+          });
+
+          // Lazy load dashboard screen component
+          lazy(() =>
+            import('../screens/DashboardScreen').then((module) => ({
+              default: module.DashboardScreen,
+            })),
+          );
+
+          // Prefetch finance data if user has finance access
+          queryClient.prefetchQuery({
+            queryKey: ['finance-summary'],
+            queryFn: async () => {
+              const { useFinanceData } = await import(
+                '../hooks/useFinanceData'
+              );
+              return { totalBalance: 0, monthlyIncome: 0, monthlyExpenses: 0 };
+            },
+            staleTime: 10 * 60 * 1000, // 10 minutes
+          });
+
+          // Lazy load finance screen component
+          lazy(() => import('../screens/finance/FinanceDashboardScreen'));
+
+          // Prefetch wellness data
+          queryClient.prefetchQuery({
+            queryKey: ['wellness-summary'],
+            queryFn: async () => {
+              return { sleep: [], workout: [], water: [] };
+            },
+            staleTime: 15 * 60 * 1000, // 15 minutes
+          });
+
+          // Lazy load wellness screen component
+          lazy(() => import('../screens/wellness/WellnessDashboardScreen'));
+        } catch (error) {
+          console.warn('Prefetch failed:', error);
+        }
+      }
+    };
+
+    prefetchTabData();
+  }, [cognitive?.cognitiveLoad, queryClient]);
+
   // Sync selectedTab with currentScreen and initialize slideAnim
   useEffect(() => {
     const matchingTab = tabs.find((tab) => tab.screen === currentScreen);
@@ -153,8 +248,37 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
     tabContainerWidth,
   ]);
 
+  const trackNavigationPerformance = useCallback(
+    (tab: TabItem, duration: number) => {
+      console.log(`Navigation to ${tab.screen} took ${duration.toFixed(2)}ms`);
+
+      // Detailed performance metrics
+      const metrics = {
+        screen: tab.screen,
+        duration,
+        cognitiveLoad: cognitive?.cognitiveLoad || 0,
+        timestamp: Date.now(),
+        tabIndex: tabs.findIndex((t) => t.id === tab.id),
+        totalTabs: tabs.length,
+      };
+
+      // Log to console for debugging
+      console.log('Navigation Performance Metrics:', metrics);
+
+      // Placeholder for analytics integration
+      // Example: Send to external analytics service
+      // analytics.track('navigation_transition', metrics);
+      // Or send to custom performance monitoring service
+      // performanceMonitor.track('navigation', metrics);
+    },
+    [cognitive?.cognitiveLoad, tabs],
+  );
+
   const handleTabPress = useCallback(
     (tab: TabItem) => {
+      // Start performance tracking
+      navigationStartTime.current = performance.now();
+
       setSelectedTab(tab.id);
       onNavigate(tab.screen);
 
@@ -168,14 +292,27 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
         useNativeDriver: true,
         tension: 120,
         friction: 7,
-      }).start();
+      }).start(() => {
+        // Track navigation performance when animation completes
+        const navigationDuration =
+          performance.now() - navigationStartTime.current;
+        trackNavigationPerformance(tab, navigationDuration);
+      });
 
       // Update soundscape context for navigation
       if (soundscape && typeof soundscape.switchScreen === 'function') {
         soundscape.switchScreen(tab.screen);
       }
     },
-    [tabs, onNavigate, slideAnim, soundscape, getTabMetrics, tabContainerWidth],
+    [
+      tabs,
+      onNavigate,
+      slideAnim,
+      soundscape,
+      getTabMetrics,
+      tabContainerWidth,
+      trackNavigationPerformance,
+    ],
   );
 
   const getTabStyle = (tab: TabItem, isSelected: boolean) => {
@@ -199,14 +336,21 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
     return [styles.tabText, { color: themeColors.textMuted }];
   };
 
-  const renderTab = (tab: TabItem, index: number) => {
-    const isSelected = selectedTab === tab.id;
-
-    return (
+  const MemoizedTab = memo(
+    ({
+      tab,
+      isSelected,
+      onPress,
+      themeColors,
+    }: {
+      tab: TabItem;
+      isSelected: boolean;
+      onPress: () => void;
+      themeColors: any;
+    }) => (
       <TouchableOpacity
-        key={tab.id}
         style={getTabStyle(tab, isSelected)}
-        onPress={() => handleTabPress(tab)}
+        onPress={onPress}
         activeOpacity={0.7}
         accessibilityLabel={tab.label}
         accessibilityState={{ selected: isSelected }}
@@ -214,7 +358,9 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
         <Text style={[styles.tabIcon, isSelected && { color: tab.color }]}>
           {tab.icon}
         </Text>
-        <Text style={getTabTextStyle(tab, isSelected)} numberOfLines={1}>{tab.label}</Text>
+        <Text style={getTabTextStyle(tab, isSelected)} numberOfLines={1}>
+          {tab.label}
+        </Text>
         {tab.badge && tab.badge > 0 && (
           <View style={[styles.badge, { backgroundColor: tab.color }]}>
             <Text style={styles.badgeText}>
@@ -223,6 +369,20 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
           </View>
         )}
       </TouchableOpacity>
+    ),
+  );
+
+  const renderTab = (tab: TabItem, index: number) => {
+    const isSelected = selectedTab === tab.id;
+
+    return (
+      <MemoizedTab
+        key={tab.id}
+        tab={tab}
+        isSelected={isSelected}
+        onPress={() => handleTabPress(tab)}
+        themeColors={themeColors}
+      />
     );
   };
 
@@ -239,24 +399,10 @@ export const ModernNavigation: React.FC<ModernNavigationProps> = ({
         ]}
       >
         {/* Cognitive Load Indicator */}
-        {cognitive && cognitive.cognitiveLoad > 0.6 && (
-          <View style={styles.cognitiveIndicator}>
-            <View
-              style={[
-                styles.cognitiveBar,
-                {
-                  width: `${(cognitive?.cognitiveLoad || 0) * 100}%`,
-                  backgroundColor:
-                    (cognitive?.cognitiveLoad || 0) > 0.8
-                      ? themeColors.error
-                      : (cognitive?.cognitiveLoad || 0) > 0.6
-                      ? themeColors.warning
-                      : themeColors.success,
-                },
-              ]}
-            />
-          </View>
-        )}
+        <MemoizedCognitiveIndicator
+          cognitiveLoad={cognitive?.cognitiveLoad || 0}
+          themeColors={themeColors}
+        />
 
         {/* Tab Navigation */}
         <View style={styles.tabContainer} onLayout={handleTabContainerLayout}>

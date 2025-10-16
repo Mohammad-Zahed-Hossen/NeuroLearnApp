@@ -94,7 +94,32 @@ export class SchemaManager {
       errors
     };
   }
-
+  /**
+   * Batch migrate table data for large datasets
+   */
+  async batchMigrateTable(table: string, items: any[], batchSize: number = 100): Promise<{ migrated: number; failed: number }> {
+    let migrated = 0;
+    let failed = 0;
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      try {
+        // Replace with actual migration logic, e.g. upsert to Supabase
+        // await supabase.from(table).upsert(batch);
+        migrated += batch.length;
+      } catch (e) {
+        failed += batch.length;
+      }
+    }
+    return { migrated, failed };
+  }
+  /**
+   * Conflict resolution for migration
+   */
+  resolveMigrationConflict(local: any, remote: any): any {
+    // Example: last-write-wins
+    if (!local || !remote) return local || remote;
+    return (local.updatedAt > remote.updatedAt) ? local : remote;
+  }
   /**
    * Create a specific table (development only)
    */

@@ -436,11 +436,12 @@ export class ChromotherapyService {
         parseInt(c.substring(4, 6), 16)
       ];
     };
-    const [r1, g1, b1] = hex(color1);
-    const [r2, g2, b2] = hex(color2);
-    const r = Math.round(r1 + (r2 - r1) * f);
-    const g = Math.round(g1 + (g2 - g1) * f);
-    const b = Math.round(b1 + (b2 - b1) * f);
+  // Provide default values during destructuring to satisfy strict null checks
+  const [r1 = 0, g1 = 0, b1 = 0] = hex(color1);
+  const [r2 = 0, g2 = 0, b2 = 0] = hex(color2);
+  const r = Math.round(r1 + (r2 - r1) * f);
+  const g = Math.round(g1 + (g2 - g1) * f);
+  const b = Math.round(b1 + (b2 - b1) * f);
     return (
       '#' +
       [r, g, b]

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import GradientFallback from './shared/GradientFallback';
 import {
   colors,
   spacing,
@@ -61,14 +61,12 @@ export const GlassCard: React.FC<GlassCardProps> = ({
   if (gradient) {
     return (
       <CardComponent onPress={onPress} activeOpacity={0.8}>
-        <LinearGradient
+        <GradientFallback
           colors={[themeColors.glass, themeColors.surfaceLight]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
           style={[styles.card, { borderColor: themeColors.glassBorder }, style]}
         >
           {children}
-        </LinearGradient>
+        </GradientFallback>
       </CardComponent>
     );
   }
@@ -245,14 +243,12 @@ export const ScreenContainer: React.FC<ScreenContainerProps> = ({
 
   if (gradient) {
     return (
-      <LinearGradient
+      <GradientFallback
         colors={[themeColors.background, themeColors.surface]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
         style={styles.container}
       >
         {children}
-      </LinearGradient>
+      </GradientFallback>
     );
   }
 

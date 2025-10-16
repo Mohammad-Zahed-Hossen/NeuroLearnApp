@@ -337,18 +337,29 @@ export class ErrorHandler {
     const message = ErrorHandler.getErrorMessage(error);
     const stackTrace = ErrorHandler.getErrorStack(error);
 
+    const baseContext: Partial<ErrorContext> = {
+      source: 'unknown',
+      operation: 'unknown',
+      ...context
+    };
+
+    // Only include stackTrace when it's defined to satisfy exactOptionalPropertyTypes
+    if (stackTrace) {
+      (baseContext as ErrorContext).stackTrace = stackTrace;
+    } else if (!baseContext.stackTrace) {
+      const generated = new Error().stack;
+      if (generated) {
+        (baseContext as ErrorContext).stackTrace = generated;
+      }
+    }
+
     const report: ErrorReport = {
       id: this.generateErrorId(),
       timestamp: new Date(),
       message,
       category: customCategory || this.categorizeError(message),
       severity: customSeverity || this.determineSeverity(message, error),
-      context: {
-        source: 'unknown',
-        operation: 'unknown',
-        ...context,
-        stackTrace: stackTrace || new Error().stack
-      },
+      context: baseContext as ErrorContext,
       originalError: error,
       recoveryAttempts: 0,
       resolved: false,
@@ -531,15 +542,9 @@ export class ErrorHandler {
   }
 
   private setupGlobalErrorHandlers(): void {
-    // Global error handler for unhandled promise rejections
-    if (typeof window !== 'undefined') {
-      window.addEventListener('unhandledrejection', (event) => {
-        this.handleError(event.reason, {
-          source: 'global',
-          operation: 'unhandledRejection'
-        });
-      });
-    }
+    // React Native doesn't have window.addEventListener
+    // Global error handling is handled by React Native's error boundary system
+    this.logger.debug('Global error handlers setup (React Native compatible)');
   }
 
   private limitErrorHistory(): void {

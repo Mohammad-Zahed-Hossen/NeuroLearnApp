@@ -59,8 +59,9 @@ import {
   TapGestureHandler,
   State,
 } from 'react-native-gesture-handler';
-import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+import GradientFallback from './GradientFallback';
 // ...existing code...
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -437,18 +438,21 @@ const FloatingCommandCenter: React.FC<Props> = ({
   // Enhanced radial menu items with context awareness
   const radialItems = useMemo(() => {
     const baseItems = [
-      {
+      (() => ({
         id: 'ai',
         icon: '🤖',
         label: 'AI Chat',
-        badge: ctx.hasUnreadMessages ? 1 : undefined,
-      },
-      {
+        // only include badge when there's an unread count to avoid undefined
+        ...(ctx.hasUnreadMessages ? { badge: 1 } : {}),
+      }))(),
+      (() => ({
         id: 'sound',
         icon: '🎵',
         label: 'Soundscape',
-        active: soundscape?.isActive,
-      },
+        ...(typeof soundscape?.isActive === 'boolean'
+          ? { active: soundscape?.isActive }
+          : {}),
+      }))(),
       {
         id: 'quick',
         icon: '⚡',
@@ -653,6 +657,8 @@ const FloatingCommandCenter: React.FC<Props> = ({
   // Position and visibility
   const position = ctx.positions.fab;
   const visible = ctx.visibility.fab;
+  const posRight = position?.right ?? 0;
+  const posBottom = position?.bottom ?? 0;
 
   // Debug: log overlay positions when expanded so we can verify where touch targets are placed
   useEffect(() => {
@@ -661,24 +667,25 @@ const FloatingCommandCenter: React.FC<Props> = ({
       const itemCount = radialItems.length;
       const r = 90;
       const fabSize = 64;
-      const centerX = SCREEN_WIDTH - (position.right + fabSize / 2);
-      const centerY = SCREEN_HEIGHT - (position.bottom + fabSize / 2);
+      const centerX = SCREEN_WIDTH - (posRight + fabSize / 2);
+      const centerY = SCREEN_HEIGHT - (posBottom + fabSize / 2);
       const computed: Array<{ id: string; left: number; top: number }> = [];
 
       if (itemCount === 1) {
         computed.push({
-          id: radialItems[0].id,
+          id: radialItems[0]?.id ?? '',
           left: centerX,
           top: centerY - r,
         });
       } else if (itemCount <= 4) {
         const angles = [-Math.PI / 2, 0, Math.PI, Math.PI / 2];
         for (let i = 0; i < itemCount; i++) {
-          const angle = angles[i];
-          const x = Math.cos(angle) * r;
-          const y = Math.sin(angle) * r;
+          const angle = angles[i] ?? 0;
+          const safeAngle = typeof angle === 'number' ? angle : 0;
+          const x = Math.cos(safeAngle) * r;
+          const y = Math.sin(safeAngle) * r;
           computed.push({
-            id: radialItems[i].id,
+            id: radialItems[i]?.id ?? '',
             left: centerX + x,
             top: centerY + y,
           });
@@ -688,10 +695,11 @@ const FloatingCommandCenter: React.FC<Props> = ({
         const startAngle = -Math.PI / 2;
         for (let i = 0; i < itemCount; i++) {
           const angle = startAngle + i * angleStep;
-          const x = Math.cos(angle) * r;
-          const y = Math.sin(angle) * r;
+          const safeAngle = typeof angle === 'number' ? angle : 0;
+          const x = Math.cos(safeAngle) * r;
+          const y = Math.sin(safeAngle) * r;
           computed.push({
-            id: radialItems[i].id,
+            id: radialItems[i]?.id ?? '',
             left: centerX + x,
             top: centerY + y,
           });
@@ -736,8 +744,8 @@ const FloatingCommandCenter: React.FC<Props> = ({
         style={[
           styles.container,
           {
-            bottom: position.bottom,
-            right: position.right,
+            bottom: posBottom,
+            right: posRight,
           },
         ]}
       >
@@ -832,8 +840,8 @@ const FloatingCommandCenter: React.FC<Props> = ({
               const fabSize = 64;
 
               // screen center for FAB
-              const centerX = SCREEN_WIDTH - (position.right + fabSize / 2);
-              const centerY = SCREEN_HEIGHT - (position.bottom + fabSize / 2);
+              const centerX = SCREEN_WIDTH - (posRight + fabSize / 2);
+              const centerY = SCREEN_HEIGHT - (posBottom + fabSize / 2);
 
               const positions: Array<{ x: number; y: number }>[] = [] as any;
               const computed: Array<{ x: number; y: number }> = [];
@@ -843,10 +851,11 @@ const FloatingCommandCenter: React.FC<Props> = ({
               } else if (itemCount <= 4) {
                 const angles = [-Math.PI / 2, 0, Math.PI, Math.PI / 2];
                 for (let i = 0; i < itemCount; i++) {
-                  const angle = angles[i];
+                  const angle = angles[i] ?? 0;
+                  const safeAngle = typeof angle === 'number' ? angle : 0;
                   computed.push({
-                    x: Math.cos(angle) * r,
-                    y: Math.sin(angle) * r,
+                    x: Math.cos(safeAngle) * r,
+                    y: Math.sin(safeAngle) * r,
                   });
                 }
               } else {
@@ -854,9 +863,10 @@ const FloatingCommandCenter: React.FC<Props> = ({
                 const startAngle = -Math.PI / 2;
                 for (let i = 0; i < itemCount; i++) {
                   const angle = startAngle + i * angleStep;
+                  const safeAngle = typeof angle === 'number' ? angle : 0;
                   computed.push({
-                    x: Math.cos(angle) * r,
-                    y: Math.sin(angle) * r,
+                    x: Math.cos(safeAngle) * r,
+                    y: Math.sin(safeAngle) * r,
                   });
                 }
               }

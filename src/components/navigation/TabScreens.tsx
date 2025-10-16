@@ -13,6 +13,7 @@ import {
   ListRenderItem,
   SectionListRenderItem,
 } from 'react-native';
+import GradientFallback from '../shared/GradientFallback';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useAnimatedStyle,
@@ -91,7 +92,7 @@ const AnimatedHubCard: React.FC<AnimatedHubCardProps> = ({
       (card?.color || themeColors.primary) + alpha,
       (card?.color || themeColors.primary) + secondaryAlpha,
       themeColors.surface,
-    ] as const;
+    ];
   }, [card.color, theme, themeColors.surface]);
 
   // Determine if card has high cognitive load for special styling
@@ -160,7 +161,7 @@ const AnimatedHubCard: React.FC<AnimatedHubCardProps> = ({
             )}
           </LinearGradient>
 
-          {/* Content area */}
+          {/* Title + Description */}
           <View style={styles.cardContent}>
             <Text
               style={[
@@ -512,7 +513,12 @@ export const ProfileHubScreen: React.FC<HubScreenProps> = ({
       // Learning Intelligence: Log tap for analytics
       setCards((prev) => updateCardUsage(prev, screen));
       // Fix: Redirect to HolisticAnalyticsScreen when clicking the analytics card
-      if (screen === 'dashboard' && params && 'tab' in params && params.tab === 'analytics') {
+      if (
+        screen === 'dashboard' &&
+        params &&
+        'tab' in params &&
+        params.tab === 'analytics'
+      ) {
         onNavigate('holistic-analytics', params);
       } else {
         onNavigate(screen, params);

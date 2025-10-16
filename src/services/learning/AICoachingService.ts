@@ -6,8 +6,10 @@
  * No direct AI API calls from frontend - all secrets stay on server side.
  */
 
+import { StorageService } from '../storage/StorageService';
+import { EventSystem } from '../../core/EventSystem';
+import { base64Encode } from '../../utils/base64';
 import { SupabaseService } from '../storage/SupabaseService';
-import EventSystem from '../../core/EventSystem';
 
 export interface GrammarCorrection {
   original: string;
@@ -130,6 +132,23 @@ export class AICoachingService {
       return response;
     } catch (error) {
       console.error('Error getting AI feedback:', error);
+
+      // Import ErrorReporterService dynamically to avoid circular dependency
+      try {
+        const { ErrorReporterService } = await import('../monitoring/ErrorReporterService');
+        const errorReporter = ErrorReporterService.getInstance();
+        errorReporter.logError('AICoachingService', 'Failed to get AI feedback, using fallback', 'WARN', {
+          premise1: premise1.substring(0, 50),
+          premise2: premise2.substring(0, 50),
+          conclusion: conclusion.substring(0, 50),
+          exerciseType,
+          domain,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      } catch (logError) {
+        console.warn('Failed to log error to ErrorReporterService:', logError);
+      }
+
       // Fallback to simple local evaluation
       const fallback = this.getFallbackResponse(
         premise1,
@@ -310,22 +329,40 @@ export class AICoachingService {
         } else {
           // Success - transform the quiz data from the Edge Function
           const quizData = data.quiz;
-          const questions = quizData.quiz_data.map((q: any, index: number) => ({
-            id: q.question_id || `q_${sessionId}_${index}`,
-            question: q.question,
-            options: [
-              q.options.A,
-              q.options.B,
-              q.options.C,
-              q.options.D,
-            ],
-            correctAnswer: q.correct_answer === 'A' ? 0 :
-                          q.correct_answer === 'B' ? 1 :
-                          q.correct_answer === 'C' ? 2 : 3,
-            explanation: `Question ${index + 1} from AI-generated quiz`,
-            difficulty: 3, // Default medium difficulty
-            conceptTested: q.question.split(' ').slice(0, 3).join(' '), // Extract concept from question
-          }));
+          const questions = quizData.quiz_data.map((q: any, index: number): {
+            id: string;
+            question: string;
+            options: string[];
+            correctAnswer: number;
+            explanation?: string;
+            difficulty: 1 | 2 | 3 | 4 | 5;
+            conceptTested: string;
+          } => {
+            let conceptTested: string = 'general';
+            if (typeof q.question === 'string' && q.question.trim().length > 0) {
+              const trimmed = q.question.trim().split(' ').slice(0, 3).join(' ').trim();
+              if (trimmed) {
+                conceptTested = String(trimmed);
+              }
+            }
+
+            return {
+              id: q.question_id || `q_${sessionId}_${index}`,
+              question: q.question || '',
+              options: [
+                q.options?.A || '',
+                q.options?.B || '',
+                q.options?.C || '',
+                q.options?.D || '',
+              ],
+              correctAnswer: q.correct_answer === 'A' ? 0 :
+                            q.correct_answer === 'B' ? 1 :
+                            q.correct_answer === 'C' ? 2 : 3,
+              explanation: `Question ${index + 1} from AI-generated quiz`,
+              difficulty: 3, // Default medium difficulty
+              conceptTested,
+            };
+          });
 
           return {
             id: quizData.id,
@@ -377,16 +414,18 @@ export class AICoachingService {
     const concepts = ['comprehension', 'analysis', 'recall', 'inference', 'vocabulary'];
 
     const difficultyMap: Record<string, 1 | 2 | 3 | 4 | 5> = {
-      easy: 2,
+      easy: 1,
       medium: 3,
-      hard: 4,
+      hard: 5,
       adaptive: 3,
     } as const;
 
-    const baseDiff = difficultyMap[options.difficulty || 'adaptive'];
+    const baseDiff = difficultyMap[options.difficulty || 'adaptive'] || 3;
 
     const questions = Array.from({ length: count }).map((_, i) => {
-      const concept = concepts[i % concepts.length];
+  const concept = concepts[i % concepts.length];
+  // Ensure we have a concrete string for conceptTested (avoid undefined usage)
+  const conceptTested = String(concept || 'general');
       const type = options.questionTypes?.[i % (options.questionTypes?.length || 1)] || 'factual';
 
       const qPrefix = type === 'inference'
@@ -404,14 +443,14 @@ export class AICoachingService {
 
       const optionsArr = [correct, ...distractors];
 
-      return {
+            return {
         id: `q_${sessionId}_${i}`,
         question: `${qPrefix} "${concept}"?`,
         options: optionsArr,
         correctAnswer: 0,
         explanation: `Checks understanding of the concept "${concept}" from the passage`,
         difficulty: baseDiff,
-        conceptTested: concept,
+              conceptTested: conceptTested,
       };
     });
 
@@ -434,7 +473,7 @@ export class AICoachingService {
     domain: string,
   ): string {
     const combined = `${premise1}|${premise2}|${conclusion}|${exerciseType}|${domain}`;
-    return btoa(combined).substring(0, 32); // Base64 encode and truncate
+    return base64Encode(combined).substring(0, 32); // Base64 encode and truncate
   }
 
   private getCachedResponse(cacheKey: string): AICoachingResponse | null {

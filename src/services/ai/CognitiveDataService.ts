@@ -191,13 +191,14 @@ export class CognitiveDataService {
 
     // Apply median filter to remove outliers
     const sorted = [...this.signalBuffer].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
+    const medianIndex = Math.floor(sorted.length / 2);
+    const median = sorted.length > 0 ? sorted[medianIndex] ?? 0 : 0;
 
     // Apply moving average
-    const average = this.signalBuffer.reduce((sum, val) => sum + val, 0) / this.signalBuffer.length;
+    const average = this.signalBuffer.length > 0 ? this.signalBuffer.reduce((sum, val) => sum + val, 0) / this.signalBuffer.length : 0;
 
     // Combine median and average for robust filtering
-    return 0.6 * median + 0.4 * average;
+    return 0.6 * (typeof median === 'number' ? median : 0) + 0.4 * average;
   }
 
   // Cognitive load calculation
@@ -282,7 +283,7 @@ export class CognitiveDataService {
 
     const sumX = x.reduce((sum, val) => sum + val, 0);
     const sumY = values.reduce((sum, val) => sum + val, 0);
-    const sumXY = x.reduce((sum, val, i) => sum + val * values[i], 0);
+  const sumXY = x.reduce((sum, val, i) => sum + val * (values[i] ?? 0), 0);
     const sumXX = x.reduce((sum, val) => sum + val * val, 0);
 
     const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);

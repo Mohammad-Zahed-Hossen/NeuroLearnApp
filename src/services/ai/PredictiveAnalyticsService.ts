@@ -215,10 +215,11 @@ export class PredictiveAnalyticsService {
     const hourlyPerformance: { [hour: number]: number[] } = {};
 
     data.forEach(entry => {
-      if (!hourlyPerformance[entry.hour]) {
-        hourlyPerformance[entry.hour] = [];
+      const h = entry.hour ?? 0;
+      if (!hourlyPerformance[h]) {
+        hourlyPerformance[h] = [];
       }
-      hourlyPerformance[entry.hour].push(entry.performance_score);
+      hourlyPerformance[h].push(entry.performance_score ?? 0);
     });
 
     // Calculate average performance per hour
@@ -440,7 +441,7 @@ export class PredictiveAnalyticsService {
 
     const attentionQuality = (accuracyRatio + (1 - loadFromResponse)) / 2;
 
-    const recommendations = [];
+  const recommendations: string[] = [];
     if (currentLoad > 0.7) {
       recommendations.push('Consider taking a short break');
     }
@@ -517,7 +518,7 @@ export class PredictiveAnalyticsService {
   }
 
   private generateMilestones(currentLevel: number, slope: number, days: number): any[] {
-    const milestones = [];
+  const milestones: { date: Date; skill_level: number; description: string }[] = [];
     const interval = Math.max(1, Math.floor(days / 5));
 
     for (let i = interval; i <= days; i += interval) {

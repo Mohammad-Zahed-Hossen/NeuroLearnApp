@@ -107,7 +107,8 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
   // To follow the Rules of Hooks we create a fixed-size pool of shared values
   // and map items onto the pool. This avoids calling hooks inside loops or callbacks.
   const MAX_RADIAL_ITEMS = 12;
-  const scalePool = [
+  // typed shared value pools so indexing returns SharedValue<number>
+  const scalePool: Animated.SharedValue<number>[] = [
     useSharedValue(0),
     useSharedValue(0),
     useSharedValue(0),
@@ -121,7 +122,7 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
     useSharedValue(0),
     useSharedValue(0),
   ];
-  const opacityPool = [
+  const opacityPool: Animated.SharedValue<number>[] = [
     useSharedValue(0),
     useSharedValue(0),
     useSharedValue(0),
@@ -135,7 +136,7 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
     useSharedValue(0),
     useSharedValue(0),
   ];
-  const rotationPool = [
+  const rotationPool: Animated.SharedValue<number>[] = [
     useSharedValue(0),
     useSharedValue(0),
     useSharedValue(0),
@@ -150,10 +151,17 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
     useSharedValue(0),
   ];
 
-  const itemAnimations = items.map((_, i) => ({
-    scale: scalePool[i] || scalePool[0],
-    opacity: opacityPool[i] || opacityPool[0],
-    rotation: rotationPool[i] || rotationPool[0],
+  interface AnimValues {
+    scale: Animated.SharedValue<number>;
+    opacity: Animated.SharedValue<number>;
+    rotation: Animated.SharedValue<number>;
+  }
+
+  const itemAnimations: AnimValues[] = items.map((_, i) => ({
+    scale: (scalePool[i] ?? scalePool[0]) as Animated.SharedValue<number>,
+    opacity: (opacityPool[i] ?? opacityPool[0]) as Animated.SharedValue<number>,
+    rotation: (rotationPool[i] ??
+      rotationPool[0]) as Animated.SharedValue<number>,
   }));
 
   // Calculate optimal positions with collision detection
@@ -176,10 +184,12 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
       ];
 
       for (let i = 0; i < itemCount; i++) {
-        const angle = angles[i];
-        const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius;
-        positions.push({ x, y, angle });
+        const angle = angles[i] ?? 0; // fallback if indexing is unsafe
+        const safeAngle = typeof angle === 'number' ? angle : 0;
+        const safeRadius = typeof radius === 'number' ? radius : 0;
+        const x = Math.cos(safeAngle) * safeRadius;
+        const y = Math.sin(safeAngle) * safeRadius;
+        positions.push({ x, y, angle: safeAngle });
       }
     } else {
       // Circular arrangement for 5+ items
@@ -188,9 +198,11 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
 
       for (let i = 0; i < itemCount; i++) {
         const angle = startAngle + i * angleStep;
-        const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius;
-        positions.push({ x, y, angle });
+        const safeAngle = typeof angle === 'number' ? angle : 0;
+        const safeRadius = typeof radius === 'number' ? radius : 0;
+        const x = Math.cos(safeAngle) * safeRadius;
+        const y = Math.sin(safeAngle) * safeRadius;
+        positions.push({ x, y, angle: safeAngle });
       }
     }
 
@@ -204,14 +216,16 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
     const unsubscribe = attachSharedValueListener(
       expandAnimation,
       ({ value }: any) => {
-        itemAnimations.forEach((anim, index) => {
+        itemAnimations.forEach((animEntry, index) => {
+          const safeAnim = (animEntry ??
+            (itemAnimations[0] as AnimValues)) as AnimValues;
           const delay = index * 80; // Staggered delay
           const priority = items[index]?.priority || 0;
           const priorityDelay = Math.max(0, (5 - priority) * 20); // Higher priority = less delay
 
           if (value > 0) {
             // Expand animation
-            anim.scale.value = withDelay(
+            safeAnim.scale.value = withDelay(
               delay + priorityDelay,
               withSpring(1, {
                 damping: 14,
@@ -219,11 +233,11 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
                 mass: 0.8,
               }),
             );
-            anim.opacity.value = withDelay(
+            safeAnim.opacity.value = withDelay(
               delay + priorityDelay + 40,
               withSpring(1, { damping: 15 }),
             );
-            anim.rotation.value = withDelay(
+            safeAnim.rotation.value = withDelay(
               delay + priorityDelay,
               withSequenceAny(
                 withTiming(360, { duration: 400 }),
@@ -233,15 +247,15 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
           } else {
             // Collapse animation
             const collapseDelay = (itemAnimations.length - index - 1) * 40; // Reverse order
-            anim.scale.value = withDelay(
+            safeAnim.scale.value = withDelay(
               collapseDelay,
               withSpring(0, { damping: 12, stiffness: 200 }),
             );
-            anim.opacity.value = withDelay(
+            safeAnim.opacity.value = withDelay(
               collapseDelay,
               withTiming(0, { duration: 150 }),
             );
-            anim.rotation.value = withTiming(0, { duration: 150 });
+            safeAnim.rotation.value = withTiming(0, { duration: 150 });
           }
         });
       },
@@ -265,7 +279,8 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       // Visual feedback
-      const anim = itemAnimations[index];
+      const anim = (itemAnimations[index] ??
+        (itemAnimations[0] as AnimValues)) as AnimValues;
       anim.scale.value = withSequence(
         withTiming(1.2, { duration: 100 }),
         withSpring(1, { damping: 15, stiffness: 200 }),
@@ -282,7 +297,8 @@ const RadialMenu: React.FC<RadialMenuProps> = ({
     const position = positions[index];
     if (!position) return null;
 
-    const anim = itemAnimations[index];
+    const anim = (itemAnimations[index] ??
+      (itemAnimations[0] as AnimValues)) as AnimValues;
     const itemGradient = item.gradient ||
       DEFAULT_GRADIENTS[item.id as keyof typeof DEFAULT_GRADIENTS] || [
         currentTheme.active,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
 import StorageService from '../../services/storage/StorageService';
 import { MemoryPalace, MemoryLocation, MemoryItem } from '../../types';
+import { DynamicMemoryPalaceService } from '../../services/learning/DynamicMemoryPalaceService';
 
 interface MemoryPalaceScreenProps {
   theme: ThemeType;
@@ -45,40 +46,48 @@ interface StudySession {
   totalItems: number;
 }
 
+// Small UUID v4 generator (non-crypto, sufficient for client-side IDs)
+const generateUUID = (): string =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+
 const defaultPalaces: MemoryPalace[] = [
   {
-    id: 'home-palace',
+    id: generateUUID(),
     name: 'Your Home',
     description: 'Navigate through your familiar living space',
     category: 'personal',
     created: new Date(),
     locations: [
       {
-        id: '1',
+        id: generateUUID(),
         name: 'Front Door',
         description: 'The main entrance to your home',
         order: 1,
       },
       {
-        id: '2',
+        id: generateUUID(),
         name: 'Living Room Sofa',
         description: 'The comfortable seating area',
         order: 2,
       },
       {
-        id: '3',
+        id: generateUUID(),
         name: 'Kitchen Counter',
         description: 'Where you prepare meals',
         order: 3,
       },
       {
-        id: '4',
+        id: generateUUID(),
         name: 'Bedroom Closet',
         description: 'Where you store your clothes',
         order: 4,
       },
       {
-        id: '5',
+        id: generateUUID(),
         name: 'Bathroom Mirror',
         description: 'Where you see your reflection',
         order: 5,
@@ -89,38 +98,38 @@ const defaultPalaces: MemoryPalace[] = [
     lastStudied: new Date(),
   },
   {
-    id: 'campus-palace',
+    id: generateUUID(),
     name: 'University Campus',
     description: 'Walk through your academic environment',
     category: 'academic',
     created: new Date(),
     locations: [
       {
-        id: '1',
+        id: generateUUID(),
         name: 'Main Gate',
         description: 'The entrance to your academic journey',
         order: 1,
       },
       {
-        id: '2',
+        id: generateUUID(),
         name: 'Library Study Hall',
         description: 'Where knowledge is gathered',
         order: 2,
       },
       {
-        id: '3',
+        id: generateUUID(),
         name: 'Lecture Theater',
         description: 'Where wisdom is shared',
         order: 3,
       },
       {
-        id: '4',
+        id: generateUUID(),
         name: 'Student Cafeteria',
         description: 'Where minds meet and ideas flow',
         order: 4,
       },
       {
-        id: '5',
+        id: generateUUID(),
         name: 'Laboratory',
         description: 'Where theories become reality',
         order: 5,
@@ -139,6 +148,8 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
   const [menuVisible, setMenuVisible] = useState(false);
   const [palaces, setPalaces] = useState<MemoryPalace[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataSource, setDataSource] = useState<'static' | 'dynamic' | 'hybrid'>('hybrid');
+  const [aiSuggestions, setAiSuggestions] = useState<MemoryPalace[]>([]);
 
   // Modals
   const [createPalaceModalVisible, setCreatePalaceModalVisible] =
@@ -146,6 +157,7 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
   const [palaceDetailsModalVisible, setPalaceDetailsModalVisible] =
     useState(false);
   const [addItemModalVisible, setAddItemModalVisible] = useState(false);
+  const [onboardingModalVisible, setOnboardingModalVisible] = useState(false);
 
   // Selected palace and location
   const [selectedPalace, setSelectedPalace] = useState<MemoryPalace | null>(
@@ -173,31 +185,127 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
 
   const themeColors = colors[theme];
   const storage = StorageService.getInstance();
+  // Helper: compute palace stats
+  function getPalaceStats(palace: MemoryPalace) {
+    const totalLocations = palace.locations?.length || 0;
+    const locationsWithItems =
+      palace.locations?.filter((loc) => (loc.items?.length || 0) > 0).length ||
+      0;
+    const completionRate =
+      totalLocations > 0
+        ? Math.round((locationsWithItems / totalLocations) * 100)
+        : 0;
+
+    return {
+      totalLocations,
+      locationsWithItems,
+      completionRate,
+      totalItems: palace.totalItems || 0,
+      masteredItems: palace.masteredItems || 0,
+    };
+  }
+
+  // Memoize expensive calculations
+  const memoizedPalaceStats = useMemo(() => {
+    const statsMap = new Map<string, any>();
+    palaces.forEach((palace) => {
+      const palaceId = palace?.id;
+      if (palaceId) {
+        statsMap.set(palaceId, getPalaceStats(palace));
+      }
+    });
+    return statsMap;
+  }, [palaces]);
+
+  const memoizedCategoryIcons = useMemo(() => {
+    const iconMap = new Map<string, string>();
+    palaces.forEach((palace) => {
+      const category = palace.category ?? 'personal';
+      if (!iconMap.has(category)) {
+        iconMap.set(category, getPalaceCategoryIcon(category));
+      }
+    });
+    return iconMap;
+  }, [palaces]);
 
   useEffect(() => {
     loadMemoryPalaces();
   }, []);
 
-  const loadMemoryPalaces = async () => {
+  const loadMemoryPalaces = useCallback(async () => {
     try {
       setLoading(true);
-      let savedPalaces = await storage.getMemoryPalaces();
+      const dynamicService = DynamicMemoryPalaceService.getInstance();
 
-      // If no palaces exist, create default ones
-      if (savedPalaces.length === 0) {
-        await storage.saveMemoryPalaces(defaultPalaces);
-        savedPalaces = defaultPalaces;
+      // Load based on data source preference
+      let allPalaces: MemoryPalace[] = [];
+
+      if (dataSource === 'static') {
+        allPalaces = defaultPalaces;
+      } else if (dataSource === 'dynamic') {
+        const userPalaces = await storage.getMemoryPalaces();
+        try {
+          const suggestions = await dynamicService.generatePersonalizedPalaces();
+          allPalaces = [...userPalaces, ...suggestions];
+          setAiSuggestions(suggestions);
+        } catch (aiError) {
+          console.error('AI service failed, falling back to user palaces only:', aiError);
+          Alert.alert(
+            'AI Service Unavailable',
+            'Unable to generate personalized palaces. Using your saved palaces only.',
+            [{ text: 'OK' }]
+          );
+          allPalaces = userPalaces;
+          setAiSuggestions([]);
+        }
+      } else {
+        // Hybrid: combine static defaults with dynamic content
+        const userPalaces = await storage.getMemoryPalaces();
+        try {
+          const suggestions = await dynamicService.generatePersonalizedPalaces();
+
+          // If no user palaces, include defaults
+          if (userPalaces.length === 0) {
+            await storage.saveMemoryPalaces(defaultPalaces);
+            allPalaces = [...defaultPalaces, ...suggestions];
+          } else {
+            allPalaces = [...userPalaces, ...suggestions];
+          }
+          setAiSuggestions(suggestions);
+        } catch (aiError) {
+          console.error('AI service failed, falling back to static + user palaces:', aiError);
+          Alert.alert(
+            'AI Service Unavailable',
+            'Unable to generate personalized palaces. Using default and saved palaces.',
+            [{ text: 'OK' }]
+          );
+          // If no user palaces, include defaults
+          if (userPalaces.length === 0) {
+            await storage.saveMemoryPalaces(defaultPalaces);
+            allPalaces = [...defaultPalaces];
+          } else {
+            allPalaces = [...userPalaces];
+          }
+          setAiSuggestions([]);
+        }
       }
 
-      setPalaces(savedPalaces);
+      setPalaces(allPalaces);
     } catch (error) {
       console.error('Error loading memory palaces:', error);
+      Alert.alert(
+        'Loading Error',
+        'Unable to load memory palaces. Using default palaces instead.',
+        [{ text: 'OK' }]
+      );
+      // Fallback to static data on error
+      setPalaces(defaultPalaces);
     } finally {
       setLoading(false);
     }
-  };
+  }, [storage, dataSource]);
 
-  const createPalace = async () => {
+  const createPalace = useCallback(async () => {
     if (!createForm.name.trim()) {
       Alert.alert('Error', 'Please enter a palace name');
       return;
@@ -253,20 +361,23 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
       console.error('Error creating palace:', error);
       Alert.alert('Error', 'Failed to create memory palace');
     }
-  };
+  }, [createForm, palaces, storage]);
 
-  const viewPalaceDetails = (palace: MemoryPalace) => {
+  const viewPalaceDetails = useCallback((palace: MemoryPalace) => {
     setSelectedPalace(palace);
     setPalaceDetailsModalVisible(true);
-  };
+  }, []);
 
-  const addMemoryItem = (palace: MemoryPalace, location: MemoryLocation) => {
-    setSelectedPalace(palace);
-    setSelectedLocation(location);
-    setAddItemModalVisible(true);
-  };
+  const addMemoryItem = useCallback(
+    (palace: MemoryPalace, location: MemoryLocation) => {
+      setSelectedPalace(palace);
+      setSelectedLocation(location);
+      setAddItemModalVisible(true);
+    },
+    [],
+  );
 
-  const saveMemoryItem = async () => {
+  const saveMemoryItem = useCallback(async () => {
     if (!selectedPalace || !selectedLocation || !itemForm.content.trim()) {
       Alert.alert('Error', 'Please enter the content you want to remember');
       return;
@@ -288,18 +399,16 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
         if (palace.id === selectedPalace.id) {
           return {
             ...palace,
-            locations: palace.locations
-              ? palace.locations.map((loc) => {
-                  if (loc.id === selectedLocation.id) {
-                    return {
-                      ...loc,
-                      items: [...(loc.items || []), newItem],
-                    };
-                  }
-                  return loc;
-                })
-              : palace.locations,
-            totalItems: (palace.totalItems as number) + 1,
+            locations: (palace.locations || []).map((loc) => {
+              if (loc.id === selectedLocation.id) {
+                return {
+                  ...loc,
+                  items: [...(loc.items || []), newItem],
+                };
+              }
+              return loc;
+            }),
+            totalItems: (palace.totalItems || 0) + 1,
           };
         }
         return palace;
@@ -325,7 +434,7 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
       console.error('Error adding memory item:', error);
       Alert.alert('Error', 'Failed to add memory item');
     }
-  };
+  }, [selectedPalace, selectedLocation, itemForm, palaces, storage]);
 
   const startStudySession = (
     palace: MemoryPalace,
@@ -393,24 +502,7 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
     }
   };
 
-  const getPalaceStats = (palace: MemoryPalace) => {
-    const totalLocations = palace.locations?.length || 0;
-    const locationsWithItems =
-      palace.locations?.filter((loc) => (loc.items?.length || 0) > 0).length ||
-      0;
-    const completionRate =
-      totalLocations > 0
-        ? Math.round((locationsWithItems / totalLocations) * 100)
-        : 0;
-
-    return {
-      totalLocations,
-      locationsWithItems,
-      completionRate,
-      totalItems: palace.totalItems || 0,
-      masteredItems: palace.masteredItems || 0,
-    };
-  };
+  // (getPalaceStats is declared above to ensure it's available before useMemo)
 
   if (loading) {
     return (
@@ -679,35 +771,114 @@ export const MemoryPalaceScreen: React.FC<MemoryPalaceScreenProps> = ({
           </Text>
         </GlassCard>
 
+        {/* Data Source Toggle */}
+        <GlassCard theme={theme} style={styles.dataSourceCard}>
+          <Text style={[styles.dataSourceTitle, { color: themeColors.text }]}>
+            📊 Data Source
+          </Text>
+          <View style={styles.dataSourceButtons}>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'static' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('static')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'static' ? '#FFFFFF' : themeColors.text }]}>
+                Static
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'hybrid' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('hybrid')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'hybrid' ? '#FFFFFF' : themeColors.text }]}>
+                Hybrid
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'dynamic' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('dynamic')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'dynamic' ? '#FFFFFF' : themeColors.text }]}>
+                Dynamic
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.dataSourceDescription, { color: themeColors.textSecondary }]}>
+            {dataSource === 'static' && 'Using default memory palaces only'}
+            {dataSource === 'hybrid' && 'Combining defaults with AI suggestions and user palaces'}
+            {dataSource === 'dynamic' && 'Using AI-generated and user-created palaces only'}
+          </Text>
+        </GlassCard>
+
         {/* Memory Palaces List */}
         <View style={styles.palacesSection}>
           <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
             Your Memory Palaces ({palaces.length})
+            {aiSuggestions.length > 0 && (
+              <Text style={[styles.aiSuggestionsCount, { color: themeColors.success }]}>
+                {' '}(+{aiSuggestions.length} AI suggested)
+              </Text>
+            )}
           </Text>
 
           {palaces.map((palace) => {
-            const stats = getPalaceStats(palace);
+            const palaceId = palace.id || 'unknown';
+            const stats = memoizedPalaceStats.get(palaceId) || {
+              totalLocations: 0,
+              locationsWithItems: 0,
+              completionRate: 0,
+              totalItems: 0,
+              masteredItems: 0,
+            };
+            const icon =
+              memoizedCategoryIcons.get(palace.category ?? 'personal') || '🏰';
 
+            const isAiSuggested = aiSuggestions.some(ai => ai.id === palace.id);
+            const isDefault = defaultPalaces.some(def => def.name === palace.name);
+            
             return (
               <GlassCard
                 key={palace.id}
                 theme={theme}
                 onPress={() => viewPalaceDetails(palace)}
-                style={styles.palaceCard}
+                style={[
+                  styles.palaceCard,
+                  isAiSuggested && { borderColor: themeColors.success, borderWidth: 1 },
+                  isDefault && { borderColor: themeColors.warning, borderWidth: 1 }
+                ]}
               >
                 <View style={styles.palaceHeader}>
                   <View style={styles.palaceInfo}>
-                    <Text style={styles.palaceIcon}>
-                      {getPalaceCategoryIcon(
-                        palace.category ?? 'defaultCategory',
-                      )}
-                    </Text>
+                    <Text style={styles.palaceIcon}>{icon}</Text>
                     <View style={styles.palaceDetails}>
-                      <Text
-                        style={[styles.palaceName, { color: themeColors.text }]}
-                      >
-                        {palace.name}
-                      </Text>
+                      <View style={styles.palaceNameContainer}>
+                        <Text
+                          style={[styles.palaceName, { color: themeColors.text }]}
+                        >
+                          {palace.name}
+                        </Text>
+                        {isAiSuggested && (
+                          <Text style={[styles.palaceTag, { backgroundColor: themeColors.success }]}>
+                            AI
+                          </Text>
+                        )}
+                        {isDefault && (
+                          <Text style={[styles.palaceTag, { backgroundColor: themeColors.warning }]}>
+                            Default
+                          </Text>
+                        )}
+                      </View>
                       <Text
                         style={[
                           styles.palaceDescription,
@@ -1456,6 +1627,50 @@ const styles = StyleSheet.create({
     ...typography.body,
     textAlign: 'center',
     lineHeight: 22,
+  },
+
+  // Data Source Toggle
+  dataSourceCard: {
+    marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  dataSourceTitle: {
+    ...typography.h4,
+    marginBottom: spacing.md,
+  },
+  dataSourceButtons: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+  },
+  dataSourceButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    marginHorizontal: spacing.xs,
+  },
+  dataSourceButtonText: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  dataSourceDescription: {
+    ...typography.caption,
+    textAlign: 'center',
+  },
+  aiSuggestionsCount: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  palaceNameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  palaceTag: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
   },
 
   // Guide

@@ -1,3 +1,15 @@
+import { physicsWorkerManager } from '../learning/PhysicsWorkerManager';
+
+// Adapter: expose the canonical physicsWorkerManager under the performance
+// namespace so existing imports continue to work while preventing duplicate
+// manager implementations.
+
+// Export the manager instance as the module default so legacy imports of
+// `OptimizedPhysicsWorker` continue to work without introducing a second
+// implementation in the codebase.
+const exportedWorker = physicsWorkerManager as unknown as any;
+
+export default exportedWorker;
 // /**
 //  * Optimized Physics Worker Manager - Critical Fix
 //  *
@@ -413,70 +425,8 @@
 //   }
 // }
 
-export interface OptimizedWorkerCallbacks {
-	onPositionsUpdated?: (data: any) => void;
-	onError?: (error: any) => void;
-	onFallbackActivated?: () => void;
-}
+// The rest of this file previously contained an alternate implementation of
+// an OptimizedPhysicsWorker class. That implementation has been removed in
+// favor of the shared `physicsWorkerManager` (imported above). Keeping that
+// code would lead to duplicated declarations and divergent runtime behavior.
 
-class OptimizedPhysicsWorker {
-	private static instance: OptimizedPhysicsWorker;
-	private callbacks: OptimizedWorkerCallbacks = {};
-	private usingFallback = false;
-
-	public static getInstance(): OptimizedPhysicsWorker {
-		if (!OptimizedPhysicsWorker.instance) {
-			OptimizedPhysicsWorker.instance = new OptimizedPhysicsWorker();
-		}
-		return OptimizedPhysicsWorker.instance;
-	}
-
-	private constructor() {
-		// Initialization deferred until initialize() is called
-	}
-
-	public async initialize(config: any, state: any): Promise<void> {
-		// Try to use a worker if available; otherwise fallback
-		try {
-			if (typeof Worker === 'undefined') {
-				this.usingFallback = true;
-				this.callbacks.onFallbackActivated?.();
-				return;
-			}
-			// For environments without Worker URL support, fallback gracefully
-			this.usingFallback = false;
-			this.callbacks.onPositionsUpdated?.({ nodes: [], links: [], timestamp: Date.now() });
-		} catch (err) {
-			this.usingFallback = true;
-			this.callbacks.onFallbackActivated?.();
-		}
-	}
-
-	public async updateGraph(nodes: any[], links: any[]): Promise<void> {
-		// In fallback mode do nothing heavy; just emit positions immediately
-		if (this.usingFallback) {
-			this.callbacks.onPositionsUpdated?.({ nodes, links, timestamp: Date.now() });
-			return;
-		}
-		// Worker mode: post to worker (not implemented for simplicity)
-		this.callbacks.onPositionsUpdated?.({ nodes, links, timestamp: Date.now() });
-	}
-
-	public start(): void {
-		// No-op for minimal worker
-	}
-
-	public stop(): void {
-		// No-op for minimal worker
-	}
-
-	public setCallbacks(cb: OptimizedWorkerCallbacks): void {
-		this.callbacks = { ...cb };
-	}
-
-	public isUsingFallback(): boolean {
-		return this.usingFallback;
-	}
-}
-
-export default OptimizedPhysicsWorker;

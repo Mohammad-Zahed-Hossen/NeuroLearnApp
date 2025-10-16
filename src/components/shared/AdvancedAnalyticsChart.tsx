@@ -1,4 +1,4 @@
- /**
+/**
  * AdvancedAnalyticsCharts - Premium Chart Components for Analytics Hub
  *
  * A collection of sophisticated, animated chart components designed specifically
@@ -31,7 +31,6 @@ const Victory: any = require('victory-native');
 import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 // Chart color schemes
 export const CHART_COLORS = {
   intelligence: [
@@ -330,16 +329,19 @@ export const PredictiveTimeline: React.FC<PredictiveTimelineProps> = ({
 
       <LineChart
         data={{
-          labels: [...historicalData.map(d => d.date), ...predictions.map(d => d.date)],
+          labels: [
+            ...historicalData.map((d) => d.date),
+            ...predictions.map((d) => d.date),
+          ],
           datasets: [
             {
-              data: historicalData.map(d => d.value),
-              color: () => CHART_COLORS.predictions[0],
+              data: historicalData.map((d) => d.value),
+              color: () => CHART_COLORS.predictions[0] ?? '#000',
               strokeWidth: 2,
             },
             {
-              data: predictions.map(d => d.value),
-              color: () => CHART_COLORS.predictions[1],
+              data: predictions.map((d) => d.value),
+              color: () => CHART_COLORS.predictions[1] ?? '#000',
               strokeWidth: 2,
             },
           ],
@@ -359,7 +361,8 @@ export const PredictiveTimeline: React.FC<PredictiveTimelineProps> = ({
           propsForDots: {
             r: '3',
             strokeWidth: '2',
-            stroke: CHART_COLORS.predictions[0],
+            // ensure stroke is always a valid string (fallback to black)
+            stroke: CHART_COLORS.predictions[0] ?? '#000',
           },
         }}
         bezier
@@ -510,21 +513,21 @@ export const CognitiveTrendChart: React.FC<CognitiveTrendChartProps> = ({
 
       <LineChart
         data={{
-          labels: data.map(d => d.date),
+          labels: data.map((d) => d.date),
           datasets: [
             {
-              data: data.map(d => d.load),
-              color: () => CHART_COLORS.cognitive[0],
+              data: data.map((d) => d.load),
+              color: () => CHART_COLORS.cognitive[0] ?? '#000',
               strokeWidth: 2,
             },
             {
-              data: data.map(d => d.focus),
-              color: () => CHART_COLORS.cognitive[1],
+              data: data.map((d) => d.focus),
+              color: () => CHART_COLORS.cognitive[1] ?? '#000',
               strokeWidth: 2,
             },
             {
-              data: data.map(d => d.energy),
-              color: () => CHART_COLORS.cognitive[2],
+              data: data.map((d) => d.energy),
+              color: () => CHART_COLORS.cognitive[2] ?? '#000',
               strokeWidth: 2,
             },
           ],
@@ -544,7 +547,7 @@ export const CognitiveTrendChart: React.FC<CognitiveTrendChartProps> = ({
           propsForDots: {
             r: '3',
             strokeWidth: '2',
-            stroke: CHART_COLORS.cognitive[0],
+            stroke: CHART_COLORS.cognitive[0] ?? '#000',
           },
         }}
         bezier

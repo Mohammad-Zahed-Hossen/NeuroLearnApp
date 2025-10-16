@@ -236,17 +236,15 @@ function resolveSupabaseClient(): any {
   return _resolvedClient;
 }
 
-const supabase: any = new Proxy({}, {
-  get(_, prop: string) {
-    const client = resolveSupabaseClient();
+const supabase: any = new Proxy(() => resolveSupabaseClient(), {
+  get(target, prop: string) {
+    const client = target();
     const v = client ? client[prop] : undefined;
-    // if it's a function, bind to client
     if (typeof v === 'function') return v.bind(client);
     return v;
   },
-  apply(_, thisArg, args) {
-    const client = resolveSupabaseClient();
-    return (client as any).apply(thisArg, args);
+  apply(target, thisArg, args) {
+    return target().apply(thisArg, args);
   }
 });
 
@@ -418,6 +416,8 @@ export class CognitiveAuraService extends EventEmitter {
   private readonly CACHE_TTL = 45000; // 45 seconds for more dynamic responses
 
   // Learning and adaptation
+  // Worker configuration
+  private useWorker = true; // Enable web worker for heavy computations
   private adaptiveWeights = { ...this.ccsWeights };
   private learningRate = 0.08; // Slightly reduced for more stability
   private contextLearningEnabled = true;
@@ -1035,7 +1035,7 @@ export class CognitiveAuraService extends EventEmitter {
    */
   private hasCreativePotential(environmentalContext: ContextSnapshot): boolean {
     // Creative potential indicators
-    const indicators = [];
+  const indicators: string[] = [];
 
     // Time factors
     if (environmentalContext.timeIntelligence.timeOfDay === 'evening' ||
@@ -1107,7 +1107,8 @@ export class CognitiveAuraService extends EventEmitter {
     );
 
     if (candidates.length === 0) {
-      return { targetNode: graph.nodes[0], priority: 'P3_COGNITIVE_LOAD' };
+      const fallback = graph.nodes[0] ?? null;
+      return { targetNode: fallback, priority: 'P3_COGNITIVE_LOAD' };
     }
 
     // Sort by impact and difficulty
@@ -1118,7 +1119,7 @@ export class CognitiveAuraService extends EventEmitter {
     });
 
     return {
-      targetNode: sortedCandidates[0],
+      targetNode: sortedCandidates[0] ?? null,
       priority: 'P1_HIGH_IMPACT_DEEP_LEARNING'
     };
   }
@@ -1138,7 +1139,8 @@ export class CognitiveAuraService extends EventEmitter {
     );
 
     if (conceptualNodes.length === 0) {
-      return { targetNode: graph.nodes[0], priority: 'P3_CREATIVE_EXPLORATION' };
+      const fallback = graph.nodes[0] ?? null;
+      return { targetNode: fallback, priority: 'P3_CREATIVE_EXPLORATION' };
     }
 
     // Sort by connectivity and conceptual richness
@@ -1149,7 +1151,7 @@ export class CognitiveAuraService extends EventEmitter {
     });
 
     return {
-      targetNode: sortedNodes[0],
+      targetNode: sortedNodes[0] ?? null,
       priority: 'P1_CONCEPTUAL_ALCHEMY'
     };
   }
@@ -1169,7 +1171,8 @@ export class CognitiveAuraService extends EventEmitter {
     );
 
     if (quickWins.length === 0) {
-      return { targetNode: graph.nodes[0], priority: 'P3_FRAGMENTED_REVIEW' };
+      const fallback = graph.nodes[0] ?? null;
+      return { targetNode: fallback, priority: 'P3_FRAGMENTED_REVIEW' };
     }
 
     // Sort by ease and quick completion potential
@@ -1180,7 +1183,7 @@ export class CognitiveAuraService extends EventEmitter {
     });
 
     return {
-      targetNode: sortedNodes[0],
+      targetNode: sortedNodes[0] ?? null,
       priority: 'P2_QUICK_REINFORCEMENT'
     };
   }
@@ -1206,8 +1209,7 @@ export class CognitiveAuraService extends EventEmitter {
         const simplestSimplicity = (simplest.masteryLevel || 0) - (simplest.cognitiveLoad || 1);
         return currentSimplicity > simplestSimplicity ? current : simplest;
       });
-
-      return { targetNode: simplestNode, priority: 'P1_GENTLE_RECOVERY' };
+      return { targetNode: simplestNode ?? null, priority: 'P1_GENTLE_RECOVERY' };
     }
 
     // Select the most mastered, least challenging node
@@ -1218,7 +1220,7 @@ export class CognitiveAuraService extends EventEmitter {
     });
 
     return {
-      targetNode: sortedNodes[0],
+      targetNode: sortedNodes[0] ?? null,
       priority: 'P1_GENTLE_RECOVERY'
     };
   }
@@ -1228,7 +1230,7 @@ export class CognitiveAuraService extends EventEmitter {
    */
   private selectDefaultTarget(graph: NeuralGraph): { targetNode: NeuralNode | null; priority: string | null } {
     if (graph.nodes.length === 0) return { targetNode: null, priority: null };
-    return { targetNode: graph.nodes[0], priority: 'P3_DEFAULT_SELECTION' };
+    return { targetNode: graph.nodes[0] ?? null, priority: 'P3_DEFAULT_SELECTION' };
   }
 
   // ==================== LEARNING PRESCRIPTION GENERATION ====================
@@ -1369,7 +1371,7 @@ export class CognitiveAuraService extends EventEmitter {
    * Get environmental cues and suggestions
    */
   private getEnvironmentalCues(environmentalContext: ContextSnapshot): string {
-    const cues = [];
+  const cues: string[] = [];
 
     // Location-based cues
     if (environmentalContext.locationContext.distractionRisk === 'high') {
@@ -1637,7 +1639,64 @@ export class CognitiveAuraService extends EventEmitter {
       });
     }
 
+    // Merge in recent lightweight action predictions (if any) to enrich anticipatedStateChanges
+    try {
+      const recent = this.patternCache.get('recent_action_predictions');
+      if (recent && recent.predictions && Array.isArray(recent.predictions)) {
+        recent.predictions.slice(0, 3).forEach((p: any) => {
+          // Map simple actions to likely context changes
+          if (p.action === 'switch_app' && p.probability > 0.4) {
+            predictions.push({ context: 'FragmentedAttention', probability: p.probability, timeframe: 10, triggers: ['app_switch'] });
+          }
+          if (p.action === 'continue_current_task' && p.probability > 0.6) {
+            predictions.push({ context: 'DeepFocus', probability: p.probability * 0.6, timeframe: 30, triggers: ['sustained_attention'] });
+          }
+          if (p.action === 'scroll_browse' && p.probability > 0.35) {
+            predictions.push({ context: 'FragmentedAttention', probability: p.probability, timeframe: 5, triggers: ['rapid_scrolling'] });
+          }
+        });
+      }
+    } catch (e) {}
+
     return predictions;
+  }
+
+  /**
+   * Lightweight prediction of next user actions based on recent Digital Body Language (DBL)
+   * Returns an array of { action, probability } ordered by probability desc.
+   * This is intentionally simple: exponential smoothing over features and a small rule set.
+   */
+  private predictNextUserActions(dbl: DigitalBodyLanguage): Array<{ action: string; probability: number }> {
+    try {
+      const out: Array<{ action: string; probability: number }> = [];
+
+      // Base probabilities influenced by appSwitchFrequency and attentionSpan
+      let focusProb = 0.3;
+      let switchProb = Math.min(0.5, dbl.appSwitchFrequency / 5);
+      let scrollProb = Math.min(0.5, dbl.scrollingVelocity / 50);
+      let typeProb = Math.min(0.5, dbl.typingSpeed / 120);
+
+      // Attention span increases focus probability
+      if (dbl.attentionSpan > 20) focusProb += 0.3;
+      else if (dbl.attentionSpan < 5) focusProb -= 0.15;
+
+      // Stress reduces likelihood of deep focus
+      if (dbl.cognitiveLoadIndicator > 0.7) focusProb -= 0.25;
+
+      // Normalize
+      focusProb = Math.max(0, Math.min(0.95, focusProb));
+
+      out.push({ action: 'continue_current_task', probability: Number(focusProb.toFixed(2)) });
+      out.push({ action: 'switch_app', probability: Number(switchProb.toFixed(2)) });
+      out.push({ action: 'scroll_browse', probability: Number(scrollProb.toFixed(2)) });
+      out.push({ action: 'start_typing', probability: Number(typeProb.toFixed(2)) });
+
+      // Sort by probability desc
+      out.sort((a, b) => b.probability - a.probability);
+      return out;
+    } catch (e) {
+      return [];
+    }
   }
 
   // ====================  METRICS CALCULATION ====================
@@ -1855,6 +1914,14 @@ export class CognitiveAuraService extends EventEmitter {
         console.log('📱 Digital body language updated');
         // Only refresh if significant change
         if (this.isSignificantDBLChange(dbl)) {
+          // Before refreshing, attempt to predict next user actions and pre-warm state
+          try {
+            const preds = this.predictNextUserActions(dbl);
+            if (preds && preds.length > 0) {
+              // store into a short-lived cache used by predictStateChanges
+              this.patternCache.set('recent_action_predictions', { predictions: preds, ts: Date.now() });
+            }
+          } catch (e) {}
           this.throttledAuraRefresh();
         }
       });
@@ -1909,6 +1976,70 @@ export class CognitiveAuraService extends EventEmitter {
    */
   public async getCurrentAuraState(): Promise<AuraState | null> {
     return this.currentState;
+  }
+
+  /**
+   * Get capacity forecast data (public API)
+   */
+  public async getCapacityForecast(type?: 'short' | 'medium' | 'long'): Promise<AuraState['capacityForecast'] | null> {
+    // Use worker if available for heavy computations
+    if (typeof Worker !== 'undefined' && this.useWorker) {
+      return this.getCapacityForecastViaWorker(type);
+    }
+
+    // Fallback to direct computation
+    const state = await this.getAuraState();
+    return state ? state.capacityForecast : null;
+  }
+
+  /**
+   * Get capacity forecast via web worker
+   */
+  private async getCapacityForecastViaWorker(type: 'short' | 'medium' | 'long' = 'short'): Promise<AuraState['capacityForecast'] | null> {
+    return new Promise((resolve, reject) => {
+      try {
+        const { getNeuralWorker } = require('../../workers/neuralWorker');
+        const worker = getNeuralWorker();
+
+        const requestId = `forecast_${Date.now()}`;
+
+        worker.setPostMessageCallback((response: any) => {
+          if (response.requestId === requestId) {
+            if (response.type === 'RESULT') {
+              resolve(response.payload?.forecast || null);
+            } else if (response.type === 'ERROR') {
+              console.warn('Worker forecast failed, falling back to main thread:', response.error);
+              // Fallback to main thread computation
+              this.getCapacityForecastDirect(type).then(resolve).catch(reject);
+            }
+          }
+        });
+
+        worker.postMessage({
+          type: 'GET_FORECAST',
+          payload: { timeframe: type },
+          requestId,
+        });
+
+        // Timeout fallback
+        setTimeout(() => {
+          console.warn('Worker forecast timeout, falling back to main thread');
+          this.getCapacityForecastDirect(type).then(resolve).catch(reject);
+        }, 5000);
+
+      } catch (error) {
+        console.warn('Worker not available, using main thread:', error);
+        this.getCapacityForecastDirect(type).then(resolve).catch(reject);
+      }
+    });
+  }
+
+  /**
+   * Direct capacity forecast computation (fallback)
+   */
+  private async getCapacityForecastDirect(type: 'short' | 'medium' | 'long' = 'short'): Promise<AuraState['capacityForecast'] | null> {
+    const state = await this.getAuraState();
+    return state ? state.capacityForecast : null;
   }
 
   /**

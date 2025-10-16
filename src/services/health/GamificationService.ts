@@ -297,7 +297,7 @@ export class GamificationService {
       const userProgress = await this.getUserProgress(userId);
       const currentMetrics = await this.gatherUserMetrics(userId);
 
-      const goals = [];
+  const goals: any[] = [];
 
       // Health goal based on pattern
       if (behaviorPattern.pattern === 'consistent') {
@@ -368,9 +368,9 @@ export class GamificationService {
       const userProgress = await this.getUserProgress(userId);
       const currentTime = new Date().getHours();
 
-      const sparkTriggers = [];
-      const facilitatorTriggers = [];
-      const signalTriggers = [];
+  const sparkTriggers: string[] = [];
+  const facilitatorTriggers: string[] = [];
+  const signalTriggers: string[] = [];
 
       // Spark triggers (increase motivation)
       if (userProgress.motivationalState === 'struggling') {
@@ -595,8 +595,15 @@ export class GamificationService {
   }
 
   private calculateBalancedDays(...moduleData: any[]): number {
-    // Simplified calculation - would need more sophisticated logic
-    return Math.min(...moduleData.map(data => Object.values(data).reduce((sum: number, val: any) => sum + (typeof val === 'number' ? val : 0), 0)));
+    // Simplified calculation - compute numeric score per module then return the minimum
+    const numericSums = moduleData.map((data) => {
+      if (!data || typeof data !== 'object') return 0;
+      const vals = Object.values(data).map((v) => (typeof v === 'number' ? v : 0));
+      return vals.reduce((s: number, n: number) => s + n, 0);
+    });
+
+    if (numericSums.length === 0) return 0;
+    return Math.min(...numericSums);
   }
 
   private async getUserProgress(userId: string): Promise<UserProgress> {

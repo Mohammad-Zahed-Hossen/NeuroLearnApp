@@ -20,7 +20,14 @@ class FallbackCollection<T extends { id?: string | undefined }> {
   }
 
   private async writeAll(items: T[]): Promise<void> {
-    await AsyncStorage.setItem(this.storageKey(), JSON.stringify(items));
+    try {
+      const stringified = JSON.stringify(items);
+      await AsyncStorage.setItem(this.storageKey(), stringified);
+    } catch (error) {
+      console.error('Failed to stringify items for AsyncStorage:', error);
+      // Fallback: try to save as empty array to prevent corruption
+      await AsyncStorage.setItem(this.storageKey(), JSON.stringify([]));
+    }
   }
 
   // Lightweight wrapper that mimics WatermelonDB model methods where possible
@@ -116,7 +123,9 @@ class FallbackCollection<T extends { id?: string | undefined }> {
     const items = await this.readAllRaw();
     const idx = items.findIndex(i => (i as any).id === id);
     if (idx === -1) return;
-    updateFn(items[idx]);
+    const item = items[idx];
+    if (!item) return;
+    updateFn(item);
     await this.writeAll(items);
   }
 }

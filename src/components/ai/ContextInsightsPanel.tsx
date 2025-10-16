@@ -20,6 +20,9 @@ import {
   useAuraConfidence,
 } from '../../hooks/useOptimizedSelectors';
 import useAuraStore from '../../store/useAuraStore';
+import { neuralPhysicsEngineInstance } from '../../services/learning/NeuralPhysicsEngine';
+import { StorageService } from '../../services/storage/StorageService';
+import { cognitiveAuraService } from '../../services/ai/CognitiveAuraService';
 
 // --- Placeholder Components ---
 const ServiceStatusPill: React.FC<{
@@ -93,10 +96,11 @@ export const ContextInsightsPanel: React.FC<ContextInsightsPanelProps> = ({
   const auraState = currentAuraState;
   const contextSnapshot = currentAuraState?.environmentalContext;
 
-  // Mock physics state (since not in store)
-  const physicsState = { mode: 'calm', intensity: 0.7 };
-
-  // Mock service statuses (derive from aura state availability)
+  // Get real physics state from NeuralPhysicsEngine
+  const [physicsState, setPhysicsState] = React.useState<any>(null);
+  const [contextAnalytics, setContextAnalytics] = React.useState<any>(null);
+  
+  // Real service statuses based on actual service states
   const serviceStatuses = {
     cae: auraState ? 'Active' : 'Inactive',
     physics: physicsState ? 'Active' : 'Inactive',
@@ -104,19 +108,52 @@ export const ContextInsightsPanel: React.FC<ContextInsightsPanelProps> = ({
     soundscape: auraState?.recommendedSoundscape ? 'Active' : 'Inactive',
   };
 
-  // Mock adaptive settings (could be from store in future)
+  // Adaptive settings with persistent storage
   const [adaptiveSettings, setAdaptiveSettings] = React.useState({
     autoOptimize: true,
     predictiveAlerts: true,
     environmentalSensing: true,
     learningPrescription: true,
   });
+  
+  // Load real data on mount
+  React.useEffect(() => {
+    const loadRealData = async () => {
+      try {
+        // Get physics state
+        const physics = neuralPhysicsEngineInstance.getPhysicsState();
+        setPhysicsState(physics);
+        
+        // Get context analytics
+        const analytics = await StorageService.getInstance().getContextAnalytics(30);
+        setContextAnalytics(analytics);
+        
+        // Load adaptive settings
+        const stored = await StorageService.getInstance().getItem('context_adaptive_settings');
+        if (stored) {
+          setAdaptiveSettings(stored);
+        }
+      } catch (error) {
+        console.warn('Failed to load context insights data:', error);
+      }
+    };
+    
+    loadRealData();
+  }, []);
 
-  const handleSettingChange = (
+  const handleSettingChange = async (
     key: keyof typeof adaptiveSettings,
     value: boolean,
   ) => {
-    setAdaptiveSettings((prev) => ({ ...prev, [key]: value }));
+    const newSettings = { ...adaptiveSettings, [key]: value };
+    setAdaptiveSettings(newSettings);
+    
+    // Persist settings to storage
+    try {
+      await StorageService.getInstance().setItem('context_adaptive_settings', newSettings);
+    } catch (error) {
+      console.warn('Failed to save context adaptive settings:', error);
+    }
   };
 
   if (!auraState || !contextSnapshot) {

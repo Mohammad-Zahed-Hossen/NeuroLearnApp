@@ -79,20 +79,25 @@ export class AIInsightsService {
   async generateFinancialInsights(userId: string): Promise<string[]> {
     try {
       const data = await this.getFinancialData(userId);
-      const insights = [];
+  const insights: string[] = [];
 
       // Spending pattern analysis
-      const topCategory = Object.entries(data.categoryBreakdown)
-        .sort(([,a], [,b]) => b - a)[0];
+      const categoryEntries = Object.entries(data.categoryBreakdown || {});
+      const topCategory = categoryEntries.length > 0
+        ? categoryEntries.sort(([,a], [,b]) => b - a)[0]
+        : undefined;
 
-      if (topCategory) {
-        insights.push(`Your highest spending category is ${topCategory[0]} at ৳${topCategory[1].toLocaleString()}`);
+      if (topCategory && topCategory[1] != null) {
+        const amount = Number(topCategory[1]) || 0;
+        insights.push(`Your highest spending category is ${topCategory[0]} at ৳${amount.toLocaleString()}`);
       }
 
       // Budget analysis
-      const overBudget = data.budgetStatus.filter(b => b.spent > b.limit);
+      const overBudget = (data.budgetStatus || []).filter(b => (b.spent || 0) > (b.limit || 0));
       if (overBudget.length > 0) {
-        insights.push(`You're over budget in ${overBudget.length} categories. Consider reducing ${overBudget[0].category} expenses.`);
+        const firstOver = overBudget[0];
+        const firstCategory = firstOver && firstOver.category ? firstOver.category : 'some';
+        insights.push(`You're over budget in ${overBudget.length} categories. Consider reducing ${firstCategory} expenses.`);
       }
 
       // Savings potential
@@ -113,7 +118,7 @@ export class AIInsightsService {
   async generateWellnessInsights(userId: string): Promise<string[]> {
     try {
       const data = await this.getWellnessData(userId);
-      const insights = [];
+  const insights: string[] = [];
 
       // Sleep analysis
       if (data.avgSleep < 7) {
@@ -132,8 +137,10 @@ export class AIInsightsService {
       }
 
       // Health score trend
-      const recentTrend = data.trends.slice(-3);
-      const isImproving = recentTrend[2] > recentTrend[0];
+      const recentTrend = (data.trends || []).slice(-3);
+      const firstTrend = recentTrend.length > 0 ? (recentTrend[0] ?? 0) : 0;
+      const lastTrend = recentTrend.length > 0 ? (recentTrend[recentTrend.length - 1] ?? 0) : 0;
+      const isImproving = recentTrend.length >= 2 ? (lastTrend > firstTrend) : false;
 
       if (isImproving) {
         insights.push(`Your health score is trending upward! Keep up the great work.`);

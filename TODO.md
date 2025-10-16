@@ -1,6 +1,25 @@
-# Distraction Events Schema and Storage Fix
+# Onboarding Implementation for Learning Tools
 
-## Tasks
-- [x] Update distraction_events table schema in SQL files to include missing columns (user_id, distraction_type, duration_ms, severity, metadata, created_at, client_generated_id)
-- [x] Modify DistractionService2025.ts to use AsyncStorage instead of localStorage for fallback storage
-- [x] Test the updated schema and service integration
+## SpeedReadingScreen Onboarding
+- [x] Add onboarding state management (first-time user detection)
+- [x] Create multi-step onboarding modal component
+- [x] Step 1: Welcome and overview of speed reading benefits
+- [x] Step 2: Explain WPM settings and reading modes
+- [x] Step 3: Introduce data sources (static/hybrid/dynamic)
+- [x] Step 4: Guide through starting first reading session
+- [x] Add skip/done functionality
+- [x] Store onboarding completion in user preferences
+
+## LogicTrainerScreen Onboarding
+- [ ] Add welcome modal state management
+- [ ] Create welcome modal explaining logic training concept
+- [ ] Guide users through exercise setup (logic types, domains, difficulty)
+- [ ] Explain AI feedback system
+- [ ] Add "Start First Exercise" button
+- [ ] Store onboarding completion in user preferences
+
+## Testing
+- [ ] Test SpeedReadingScreen onboarding flow
+- [ ] Test LogicTrainerScreen welcome modal
+- [ ] Verify onboarding doesn't show again after completion
+- [ ] Test on different screen sizes

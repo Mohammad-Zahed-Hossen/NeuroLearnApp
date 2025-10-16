@@ -522,7 +522,8 @@ export class SupabaseStorageService {
         // Always normalize ID to ensure it's a valid UUID
         const normalized = NeuroIDGenerator.normalizeID(node.id);
         transformedNode.id = normalized.id;
-        transformedNode.customId = normalized.isLegacy ? normalized.originalId : node.customId;
+    // Ensure customId is a concrete string (avoid assigning undefined to required property)
+    transformedNode.customId = normalized.isLegacy ? (normalized.originalId ?? '') : (node.customId ?? '');
 
         return {
           id: transformedNode.id,
@@ -554,7 +555,8 @@ export class SupabaseStorageService {
 
       const newNode: LogicNode = {
         id: this.generateUUID(),
-        customId: nodeData.customId,
+        // Ensure customId is a non-undefined string to match LogicNode type
+        customId: nodeData.customId ?? '',
         question: nodeData.question || '',
         premise1: nodeData.premise1 || '',
         premise2: nodeData.premise2 || '',

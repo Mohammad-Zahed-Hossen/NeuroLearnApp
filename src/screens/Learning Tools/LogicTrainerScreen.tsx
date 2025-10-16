@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,8 @@ import StorageService, {
 } from '../../services/storage/StorageService';
 import { logicTrainingFSRS } from '../../services/learning/LogicTrainingFSRS';
 import { MindMapGenerator } from '../../services/learning/MindMapGeneratorService';
+import { DynamicLogicTrainerService } from '../../services/learning/DynamicLogicTrainerService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * Phase 4, Step 2: Logic Trainer Screen - The Brain Gym
@@ -158,6 +160,54 @@ const DIFFICULTY_LEVELS = [
   },
 ];
 
+const LOGIC_EXERCISE_PRESETS: LogicExercise[] = [
+  {
+    question: 'Basic Deductive Reasoning',
+    premise1: 'All roses are flowers',
+    premise2: 'Some flowers fade quickly',
+    conclusion: 'Therefore, some roses may fade quickly',
+    type: 'deductive',
+    domain: 'general',
+    difficulty: 2,
+  },
+  {
+    question: 'Programming Logic',
+    premise1: 'If a function returns null, it indicates an error state',
+    premise2: 'The validateInput() function returned null',
+    conclusion: 'Therefore, validateInput() encountered an error',
+    type: 'deductive',
+    domain: 'programming',
+    difficulty: 3,
+  },
+  {
+    question: 'Mathematical Reasoning',
+    premise1: 'All prime numbers greater than 2 are odd',
+    premise2: '17 is a prime number greater than 2',
+    conclusion: 'Therefore, 17 is an odd number',
+    type: 'deductive',
+    domain: 'math',
+    difficulty: 2,
+  },
+  {
+    question: 'Scientific Method',
+    premise1: 'The hypothesis predicts that plants grow faster with music',
+    premise2: 'In the experiment, plants with music grew 20% faster',
+    conclusion: 'Therefore, the hypothesis may be supported by this evidence',
+    type: 'inductive',
+    domain: 'general',
+    difficulty: 3,
+  },
+  {
+    question: 'English Literature Analysis',
+    premise1: 'Shakespeare often uses iambic pentameter in his sonnets',
+    premise2: 'Sonnet 18 follows iambic pentameter structure',
+    conclusion: 'Therefore, Sonnet 18 is likely written by Shakespeare',
+    type: 'abductive',
+    domain: 'english',
+    difficulty: 4,
+  },
+];
+
 export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
   theme,
   onNavigate,
@@ -165,11 +215,15 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
   const themeColors = colors[theme];
   const storage = StorageService.getInstance();
   const mindMapGenerator = MindMapGenerator.getInstance();
+  const dynamicService = DynamicLogicTrainerService.getInstance();
 
   // Core state
   const [menuVisible, setMenuVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dataSource, setDataSource] = useState<'static' | 'dynamic' | 'hybrid'>('hybrid');
+  const [dynamicExercises, setDynamicExercises] = useState<LogicExercise[]>([]);
+  const [dynamicExercisesLoading, setDynamicExercisesLoading] = useState(false);
 
   // Logic exercise state
   const [currentExercise, setCurrentExercise] = useState<LogicExercise>({
@@ -225,10 +279,35 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
 
         setDueLogicNodes(dueNodes);
 
+        // Load dynamic exercises if enabled
+        if (dataSource === 'dynamic' || dataSource === 'hybrid') {
+          try {
+            setDynamicExercisesLoading(true);
+            const generatedExercises = await dynamicService.generatePersonalizedExercises();
+            setDynamicExercises(generatedExercises);
+          } catch (error) {
+            console.error('Error loading dynamic exercises:', error);
+            Alert.alert(
+              'AI Service Unavailable',
+              'Unable to generate personalized exercises. Using static presets only.',
+              [{ text: 'OK' }]
+            );
+            setDynamicExercises([]);
+          } finally {
+            setDynamicExercisesLoading(false);
+          }
+        }
+
         // If there are due nodes, start in review mode
         if (dueNodes.length > 0) {
           setIsReviewMode(true);
-          loadLogicNodeIntoExercise(dueNodes[0]);
+          loadLogicNodeIntoExercise(dueNodes[0]!);
+        } else if (dynamicExercises.length > 0 && (dataSource === 'dynamic' || dataSource === 'hybrid')) {
+          // Load first dynamic exercise if no due nodes
+          setCurrentExercise(dynamicExercises[0]!);
+        } else if (dataSource === 'static' && LOGIC_EXERCISE_PRESETS.length > 0) {
+          // Load first static preset if no dynamic content and static mode
+          setCurrentExercise(LOGIC_EXERCISE_PRESETS[0]!);
         }
 
         console.log(
@@ -244,6 +323,19 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
 
     initializeScreen();
   }, []);
+
+  // Memoize expensive calculations
+  const memoizedDueNodes = useMemo(() => {
+    return logicTrainingFSRS.getLogicNodesDueToday(dueLogicNodes);
+  }, [dueLogicNodes]);
+
+  const memoizedOptimalSession = useMemo(() => {
+    return logicTrainingFSRS.getOptimalLogicSessionSize(
+      memoizedDueNodes,
+      0.5, // Default cognitive load
+      30 // Default 30 minutes
+    );
+  }, [memoizedDueNodes]);
 
   /**
    * Load a logic node into the exercise form for review
@@ -569,7 +661,7 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
       // Load next due node
       const nextIndex = currentNodeIndex + 1;
       setCurrentNodeIndex(nextIndex);
-      loadLogicNodeIntoExercise(dueLogicNodes[nextIndex]);
+      loadLogicNodeIntoExercise(dueLogicNodes[nextIndex]!);
     } else {
       // Create fresh exercise or switch to creation mode
       setIsReviewMode(false);
@@ -617,7 +709,7 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
       `Goal: Complete ${5} logic exercises\nFocus on structured reasoning and clear conclusions.`,
       [{ text: 'Begin Training', style: 'default' }],
     );
-  }, []);
+  }, [memoizedOptimalSession.sessionSize]);
 
   // Loading state
   if (isLoading) {
@@ -666,6 +758,61 @@ export const LogicTrainerScreen: React.FC<LogicTrainerScreenProps> = ({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {/* Data Source Toggle */}
+          <GlassCard theme={theme} style={styles.dataSourceCard}>
+            <Text style={[styles.dataSourceTitle, { color: themeColors.text }]}>
+              🎯 Exercise Source
+            </Text>
+            <View style={styles.dataSourceButtons}>
+              <TouchableOpacity
+                style={[
+                  styles.dataSourceButton,
+                  dataSource === 'static' && { backgroundColor: themeColors.primary },
+                  { borderColor: themeColors.border }
+                ]}
+                onPress={() => setDataSource('static')}
+              >
+                <Text style={[styles.dataSourceButtonText, { color: dataSource === 'static' ? '#FFFFFF' : themeColors.text }]}>
+                  Static
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.dataSourceButton,
+                  dataSource === 'hybrid' && { backgroundColor: themeColors.primary },
+                  { borderColor: themeColors.border }
+                ]}
+                onPress={() => setDataSource('hybrid')}
+              >
+                <Text style={[styles.dataSourceButtonText, { color: dataSource === 'hybrid' ? '#FFFFFF' : themeColors.text }]}>
+                  Hybrid
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.dataSourceButton,
+                  dataSource === 'dynamic' && { backgroundColor: themeColors.primary },
+                  { borderColor: themeColors.border }
+                ]}
+                onPress={() => setDataSource('dynamic')}
+              >
+                <Text style={[styles.dataSourceButtonText, { color: dataSource === 'dynamic' ? '#FFFFFF' : themeColors.text }]}>
+                  AI-Generated
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.dataSourceDescription, { color: themeColors.textSecondary }]}>
+              {dataSource === 'static' && 'Using predefined logic types and examples'}
+              {dataSource === 'hybrid' && 'Combining static templates with AI-generated exercises'}
+              {dataSource === 'dynamic' && 'Using AI-generated exercises based on your performance'}
+            </Text>
+            {dynamicExercises.length > 0 && (
+              <Text style={[styles.aiExercisesCount, { color: themeColors.success }]}>
+                {dynamicExercises.length} AI exercises available
+              </Text>
+            )}
+          </GlassCard>
+
           {/* Session Status */}
           {sessionState.isActive && (
             <GlassCard theme={theme} style={styles.sessionStatusCard}>
@@ -1198,6 +1345,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.xl,
+  },
+
+  // Data Source Toggle
+  dataSourceCard: {
+    marginBottom: spacing.md,
+    padding: spacing.md,
+    alignItems: 'center',
+  },
+  dataSourceTitle: {
+    ...typography.h4,
+    marginBottom: spacing.md,
+  },
+  dataSourceButtons: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+  },
+  dataSourceButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    marginHorizontal: spacing.xs,
+  },
+  dataSourceButtonText: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  dataSourceDescription: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  aiExercisesCount: {
+    ...typography.caption,
+    fontWeight: '600',
   },
   loadingText: {
     ...typography.body,

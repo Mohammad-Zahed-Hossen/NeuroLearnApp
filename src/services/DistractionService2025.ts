@@ -120,7 +120,7 @@ export class DistractionService2025 {
       metadata: {
         ...event.metadata,
         sanitized_at: new Date().toISOString(),
-        original_id: event.id !== sanitizedId ? event.id : undefined
+        ...(event.id !== sanitizedId ? { original_id: event.id } : {})
       }
     };
   }

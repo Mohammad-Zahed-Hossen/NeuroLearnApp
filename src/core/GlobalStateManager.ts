@@ -253,6 +253,12 @@ export class GlobalStateManager {
       // Get target snapshot
       const targetSnapshot = this.stateHistory[this.stateHistory.length - steps - 1];
 
+      // Guard: ensure targetSnapshot exists
+      if (!targetSnapshot) {
+        this.logger.warn('Rollback target snapshot not found');
+        return false;
+      }
+
       // Restore state
       const oldState = { ...this.globalState };
       this.globalState = { ...targetSnapshot.state };

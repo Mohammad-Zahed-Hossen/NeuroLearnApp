@@ -6,6 +6,8 @@
  */
 
 import { Logger } from './Logger';
+import { MemoryManager } from '../../utils/MemoryManager';
+import ErrorReporterService from '../../services/monitoring/ErrorReporterService';
 
 // Augment global Performance interface to include memory for environments that provide it
 declare global {
@@ -97,6 +99,9 @@ export class PerformanceProfiler {
   private maxBenchmarks = 1000;
   private isEnabled = true;
   private enabled: boolean = true; // From simple code
+  // Sampling / noise reduction
+  private metricRecordingIntervalMs = typeof __DEV__ !== 'undefined' && __DEV__ ? 1000 : 30000; // record less often in production-like
+  private enableFPSSampling = typeof __DEV__ !== 'undefined' && __DEV__;
 
   // Performance Thresholds
   private thresholds = {
@@ -106,9 +111,21 @@ export class PerformanceProfiler {
     criticalMemory: 100 // MB
   };
 
+  // Memory sampling history for leak detection
+  private memorySamples: Array<{ ts: number; value: number }> = [];
+  private memorySampleWindowMs = 10 * 60 * 1000; // 10 minutes
+  private memoryAlertCooldownMs = 30 * 60 * 1000; // 30 minutes between alerts
+  private lastMemoryAlertAt: number | null = null;
+
   private constructor() {
     this.logger = new Logger('PerformanceProfiler');
     this.enabled = true; // Default enabled
+    try {
+      // Register performance profiler data as a cache that can be soft-cleared
+      MemoryManager.getInstance().registerCache('perf:metrics', () => {
+        try { this.clearData(); } catch (e) { /* ignore */ }
+      });
+    } catch (e) { /* ignore registration errors */ }
   }
 
   /**
@@ -116,9 +133,9 @@ export class PerformanceProfiler {
    */
   public startOperation(id: string, name: string): void {
     if (!this.enabled) return;
-    this.activeBenchmarks.set(id, { 
-      name, 
-      startTime: performance.now(), 
+    this.activeBenchmarks.set(id, {
+      name,
+      startTime: performance.now(),
       context: 'operation',
       memoryStart: this.getCurrentMemoryUsage()
     } as PerformanceBenchmark);
@@ -131,18 +148,18 @@ export class PerformanceProfiler {
     if (!this.enabled) return 0;
     const benchmark = this.activeBenchmarks.get(id);
     if (!benchmark) return 0;
-    
+
     const duration = performance.now() - benchmark.startTime;
     benchmark.endTime = performance.now();
     benchmark.duration = duration;
     benchmark.memoryEnd = this.getCurrentMemoryUsage();
     benchmark.memoryDelta = benchmark.memoryEnd - (benchmark.memoryStart || 0);
-    
+
     this.activeBenchmarks.delete(id);
     this.completedBenchmarks.push(benchmark);
-    
+
     this.recordMetric('operation_duration', duration, 'ms', 'operation', { operation: benchmark.name });
-    
+
     return duration;
   }
 
@@ -191,26 +208,26 @@ export class PerformanceProfiler {
     this.setupPerformanceObserver();
 
     // FPS monitoring from simple code
-    let lastFrameTime = Date.now();
-    let frameCount = 0;
-    
-    const measureFPS = () => {
-      const now = Date.now();
-      frameCount++;
-      
-      if (now - lastFrameTime >= 1000) {
-        this.basicMetrics.fps = Math.round((frameCount * 1000) / (now - lastFrameTime));
-        frameCount = 0;
-        lastFrameTime = now;
+    if (this.enableFPSSampling && typeof requestAnimationFrame !== 'undefined') {
+      let lastFrameTime = Date.now();
+      let frameCount = 0;
 
-        // Record as metric
-        this.recordMetric('fps', this.basicMetrics.fps, 'fps', 'rendering');
-      }
-      
-      requestAnimationFrame(measureFPS);
-    };
-    
-    if (typeof requestAnimationFrame !== 'undefined') {
+      const measureFPS = () => {
+        const now = Date.now();
+        frameCount++;
+
+        if (now - lastFrameTime >= 1000) {
+          this.basicMetrics.fps = Math.round((frameCount * 1000) / (now - lastFrameTime));
+          frameCount = 0;
+          lastFrameTime = now;
+
+          // Record as metric
+          this.recordMetric('fps', this.basicMetrics.fps, 'fps', 'rendering');
+        }
+
+        requestAnimationFrame(measureFPS);
+      };
+
       requestAnimationFrame(measureFPS);
     }
 
@@ -220,10 +237,20 @@ export class PerformanceProfiler {
         this.basicMetrics.memoryUsage = this.getCurrentMemoryUsage();
         this.basicMetrics.jsThreadTime = this.measureJSThreadTime();
 
-        // Record metrics
+        // Record metrics at a reduced frequency defined by metricRecordingIntervalMs
         this.recordMetric('memory_usage', this.basicMetrics.memoryUsage, 'MB', 'system');
-        this.recordMetric('js_thread_time', this.basicMetrics.jsThreadTime, 'ms', 'system');
-      }, 1000);
+        if (this.basicMetrics.jsThreadTime !== undefined) {
+          this.recordMetric('js_thread_time', this.basicMetrics.jsThreadTime, 'ms', 'system');
+        }
+
+        // Add to memory samples and evaluate trends
+        try {
+          this.addMemorySample(this.basicMetrics.memoryUsage);
+          this.evaluateMemoryTrend();
+        } catch (e) {
+          // ignore sampling errors
+        }
+      }, this.metricRecordingIntervalMs);
     }
   }
 
@@ -374,7 +401,7 @@ export class PerformanceProfiler {
       unit,
       timestamp: new Date(),
       context,
-      tags
+      ...(tags ? { tags } : {})
     };
 
     this.metrics.push(metric);
@@ -523,7 +550,9 @@ export class PerformanceProfiler {
     const bottlenecks: BottleneckReport[] = [];
 
     for (const [key, benchmarks] of operationGroups) {
-      const [context, operation] = key.split(':');
+      const parts = key.split(':');
+      const context = parts[0] || 'unknown';
+      const operation = parts[1] || 'unknown';
       const durations = benchmarks.map(b => b.duration || 0);
       const averageDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
       const frequency = benchmarks.length;
@@ -651,14 +680,68 @@ export class PerformanceProfiler {
   private startMemoryMonitoring(): void {
     if (this.isEnabled && typeof setInterval !== 'undefined') {
       setInterval(() => {
-        this.recordMetric(
-          'memory_usage',
-          this.getCurrentMemoryUsage(),
-          'MB',
-          'system'
-        );
+        const value = this.getCurrentMemoryUsage();
+        this.recordMetric('memory_usage', value, 'MB', 'system');
+        try { this.addMemorySample(value); } catch (e) {}
       }, 30000); // Every 30 seconds
     }
+  }
+
+  /**
+   * Add a memory sample to the sliding window
+   */
+  private addMemorySample(value: number) {
+    const now = Date.now();
+    this.memorySamples.push({ ts: now, value });
+    // trim old samples
+    const cutoff = now - this.memorySampleWindowMs;
+    // Trim samples older than cutoff using filter to satisfy TS narrowing
+    this.memorySamples = this.memorySamples.filter(s => s.ts >= cutoff);
+  }
+
+  /**
+   * Evaluate recent memory trend and emit alerts or perform soft-reset when necessary
+   */
+  private evaluateMemoryTrend() {
+    if (this.memorySamples.length < 3) return;
+
+  const first = this.memorySamples[0]!;
+  const last = this.memorySamples[this.memorySamples.length - 1]!;
+  const delta = last.value - first.value; // MB
+  const elapsedMs = last.ts - first.ts;
+
+    // If memory has grown by threshold within the sample window, consider it a leak
+    if (delta >= this.thresholds.memoryLeak) {
+      const now = Date.now();
+      if (this.lastMemoryAlertAt && now - this.lastMemoryAlertAt < this.memoryAlertCooldownMs) {
+        // already alerted recently
+        return;
+      }
+
+      this.lastMemoryAlertAt = now;
+
+      const message = `Memory growth detected: +${delta}MB over ${(elapsedMs/1000).toFixed(0)}s`;
+      this.logger.warn(message, { delta, elapsedMs });
+
+      try {
+        ErrorReporterService.getInstance().logError('PerformanceProfiler', message, 'WARN', { delta, elapsedMs });
+      } catch (e) { /* ignore */ }
+
+      // Try a low-risk mitigation step: softReset caches
+      try {
+        MemoryManager.getInstance().softReset();
+        this.emitMemoryMitigation('softReset', { delta, elapsedMs });
+      } catch (e) {
+        // swallow
+      }
+    }
+  }
+
+  private emitMemoryMitigation(action: string, payload?: any) {
+    try {
+      // Emit a lightweight metric/event for memory mitigation
+      this.recordMetric(`memory_mitigation.${action}`, 1, 'count', 'system', payload ? { actionPayload: JSON.stringify(payload) } : undefined);
+    } catch (e) {}
   }
 
   private setupCleanup(): void {

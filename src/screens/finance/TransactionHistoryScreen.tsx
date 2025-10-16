@@ -10,6 +10,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../../components/GlassComponents';
 import { supabase } from '../../services/storage/SupabaseService';
+import { perf } from '../../utils/perfMarks';
 
 interface Transaction {
   id: string;
@@ -25,12 +26,16 @@ interface TransactionHistoryScreenProps {
   onBack?: () => void;
 }
 
-const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> = ({ onBack }) => {
+const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> = ({
+  onBack,
+}) => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const mountMarkRef = React.useRef<string | null>(null);
   const [filter, setFilter] = useState('all');
 
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('TransactionHistoryScreen');
     loadTransactions();
   }, [filter]);
 
@@ -61,6 +66,15 @@ const TransactionHistoryScreen: React.FC<TransactionHistoryScreenProps> = ({ onB
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!loading && mountMarkRef.current) {
+      try {
+        perf.measureReady('TransactionHistoryScreen', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [loading]);
 
   const getCategoryIcon = (category: string) => {
     const icons: Record<string, string> = {

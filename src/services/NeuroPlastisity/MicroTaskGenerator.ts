@@ -1,9 +1,9 @@
 /**
  * MicroTaskGenerator - AI-Powered Neuroplasticity Task Engine
- * 
+ *
  * Generates intelligent micro-tasks designed to strengthen specific synaptic connections
  * using principles from cognitive science and neuroplasticity research.
- * 
+ *
  * Features:
  * - Adaptive task difficulty based on connection strength
  * - Multiple task types: recall, connect, synthesize, apply, create
@@ -16,7 +16,7 @@ import { NeuralNode } from '../../services/learning/MindMapGeneratorService';
 import { SynapseEdge, MicroTask } from '../../screens/NeuroPlastisity/SynapseBuilderScreen';
 
 export class MicroTaskGenerator {
-  
+
   /**
    * Generate a micro-task for strengthening a specific synapse
    */
@@ -28,16 +28,16 @@ export class MicroTaskGenerator {
     try {
       // Determine optimal task type based on connection strength and type
       const taskType = this.determineOptimalTaskType(synapse, sourceNode, targetNode);
-      
+
       // Generate task content based on type and nodes
       const taskContent = await this.generateTaskContent(taskType, synapse, sourceNode, targetNode);
-      
+
       // Calculate task properties
       const difficulty = this.calculateTaskDifficulty(synapse, sourceNode, targetNode);
       const estimatedTime = this.estimateTaskTime(taskType, difficulty, synapse.cognitiveLoad);
       const plasticityBenefit = this.calculatePlasticityBenefit(taskType, synapse);
       const cognitiveSkills = this.identifyCognitiveSkills(taskType, sourceNode, targetNode);
-      
+
       const microTask: MicroTask = {
         id: `task_${synapse.id}_${Date.now()}`,
         edgeId: synapse.id,
@@ -53,7 +53,7 @@ export class MicroTaskGenerator {
         adaptiveHints: await this.generateAdaptiveHints(taskType, sourceNode, targetNode),
         successCriteria: this.generateSuccessCriteria(taskType, synapse),
       };
-      
+
       return microTask;
     } catch (error) {
       console.error('Error generating micro-task:', error);
@@ -69,27 +69,27 @@ export class MicroTaskGenerator {
     sourceNode: NeuralNode,
     targetNode: NeuralNode
   ): MicroTask['taskType'] {
-    
+
     // Very weak connections: Start with recall
     if (synapse.strength < 0.2) {
       return 'recall';
     }
-    
+
     // Weak connections: Focus on connecting concepts
     if (synapse.strength < 0.4) {
       return 'connect';
     }
-    
+
     // Moderate connections: Encourage synthesis
     if (synapse.strength < 0.6) {
       return 'synthesize';
     }
-    
+
     // Strong connections: Apply knowledge
     if (synapse.strength < 0.8) {
       return 'apply';
     }
-    
+
     // Very strong connections: Create new knowledge
     return 'create';
   }
@@ -103,28 +103,28 @@ export class MicroTaskGenerator {
     sourceNode: NeuralNode,
     targetNode: NeuralNode
   ): Promise<{ prompt: string; expectedResponse: string }> {
-    
+
     const sourceLabel = sourceNode.label || 'Source concept';
     const targetLabel = targetNode.label || 'Target concept';
     const sourceContent = this.extractRelevantContent(sourceNode);
     const targetContent = this.extractRelevantContent(targetNode);
-    
+
     switch (taskType) {
       case 'recall':
         return this.generateRecallTask(sourceLabel, targetLabel, sourceContent, targetContent, synapse);
-      
+
       case 'connect':
         return this.generateConnectionTask(sourceLabel, targetLabel, sourceContent, targetContent, synapse);
-      
+
       case 'synthesize':
         return this.generateSynthesisTask(sourceLabel, targetLabel, sourceContent, targetContent, synapse);
-      
+
       case 'apply':
         return this.generateApplicationTask(sourceLabel, targetLabel, sourceContent, targetContent, synapse);
-      
+
       case 'create':
         return this.generateCreationTask(sourceLabel, targetLabel, sourceContent, targetContent, synapse);
-      
+
       default:
         return this.generateConnectionTask(sourceLabel, targetLabel, sourceContent, targetContent, synapse);
     }
@@ -140,8 +140,11 @@ export class MicroTaskGenerator {
     targetContent: any,
     synapse: SynapseEdge
   ): { prompt: string; expectedResponse: string } {
-    
-    const recallTemplates = [
+
+    const recallTemplates: {
+      prompt: string;
+      expectedResponse: string;
+    }[] = [
       {
         prompt: `When you think about "${sourceLabel}", what key concept or idea comes to mind that relates to "${targetLabel}"?`,
         expectedResponse: `Connection between ${sourceLabel} and ${targetLabel}, focusing on shared concepts or relationships`,
@@ -155,12 +158,13 @@ export class MicroTaskGenerator {
         expectedResponse: `Clear description of the connection type and nature of relationship`,
       },
     ];
-    
-    const template = recallTemplates[Math.floor(Math.random() * recallTemplates.length)];
-    
+
+  const template = recallTemplates[Math.floor(Math.random() * recallTemplates.length)];
+  const safeTemplate = template ?? recallTemplates[0]!;
+
     return {
-      prompt: template.prompt,
-      expectedResponse: template.expectedResponse,
+      prompt: safeTemplate.prompt,
+      expectedResponse: safeTemplate.expectedResponse,
     };
   }
 
@@ -174,8 +178,11 @@ export class MicroTaskGenerator {
     targetContent: any,
     synapse: SynapseEdge
   ): { prompt: string; expectedResponse: string } {
-    
-    const connectionTemplates = [
+
+    const connectionTemplates: {
+      prompt: string;
+      expectedResponse: string;
+    }[] = [
       {
         prompt: `Explain how "${sourceLabel}" and "${targetLabel}" are connected. What bridges these two concepts?`,
         expectedResponse: `Detailed explanation of the connecting principles, shared elements, or logical relationships`,
@@ -189,7 +196,7 @@ export class MicroTaskGenerator {
         expectedResponse: `Concrete examples and analogies that illustrate the connection`,
       },
     ];
-    
+
     // Choose template based on connection type
     let templateIndex = 0;
     switch (synapse.connectionType) {
@@ -205,12 +212,13 @@ export class MicroTaskGenerator {
       default:
         templateIndex = 2; // Use examples
     }
-    
-    const template = connectionTemplates[templateIndex];
-    
+
+  const template = connectionTemplates[templateIndex];
+  const safeTemplate = template ?? connectionTemplates[0]!;
+
     return {
-      prompt: template.prompt,
-      expectedResponse: template.expectedResponse,
+      prompt: safeTemplate.prompt,
+      expectedResponse: safeTemplate.expectedResponse,
     };
   }
 
@@ -224,8 +232,11 @@ export class MicroTaskGenerator {
     targetContent: any,
     synapse: SynapseEdge
   ): { prompt: string; expectedResponse: string } {
-    
-    const synthesisTemplates = [
+
+    const synthesisTemplates: {
+      prompt: string;
+      expectedResponse: string;
+    }[] = [
       {
         prompt: `Combine the principles of "${sourceLabel}" with "${targetLabel}" to create a new insight or understanding. What emerges from this combination?`,
         expectedResponse: `Novel insight that synthesizes both concepts into something new`,
@@ -239,12 +250,13 @@ export class MicroTaskGenerator {
         expectedResponse: `Integrated solution showing synthesis of both concepts in problem-solving context`,
       },
     ];
-    
-    const template = synthesisTemplates[Math.floor(Math.random() * synthesisTemplates.length)];
-    
+
+  const template = synthesisTemplates[Math.floor(Math.random() * synthesisTemplates.length)];
+  const safeTemplate = template ?? synthesisTemplates[0]!;
+
     return {
-      prompt: template.prompt,
-      expectedResponse: template.expectedResponse,
+      prompt: safeTemplate.prompt,
+      expectedResponse: safeTemplate.expectedResponse,
     };
   }
 
@@ -258,8 +270,11 @@ export class MicroTaskGenerator {
     targetContent: any,
     synapse: SynapseEdge
   ): { prompt: string; expectedResponse: string } {
-    
-    const applicationTemplates = [
+
+    const applicationTemplates: {
+      prompt: string;
+      expectedResponse: string;
+    }[] = [
       {
         prompt: `Design a real-world scenario where you would use both "${sourceLabel}" and "${targetLabel}". How would you apply this knowledge?`,
         expectedResponse: `Practical scenario with step-by-step application of both concepts`,
@@ -273,12 +288,13 @@ export class MicroTaskGenerator {
         expectedResponse: `Educational application with concrete examples and teaching strategies`,
       },
     ];
-    
-    const template = applicationTemplates[Math.floor(Math.random() * applicationTemplates.length)];
-    
+
+  const template = applicationTemplates[Math.floor(Math.random() * applicationTemplates.length)];
+  const safeTemplate = template ?? applicationTemplates[0]!;
+
     return {
-      prompt: template.prompt,
-      expectedResponse: template.expectedResponse,
+      prompt: safeTemplate.prompt,
+      expectedResponse: safeTemplate.expectedResponse,
     };
   }
 
@@ -292,8 +308,11 @@ export class MicroTaskGenerator {
     targetContent: any,
     synapse: SynapseEdge
   ): { prompt: string; expectedResponse: string } {
-    
-    const creationTemplates = [
+
+    const creationTemplates: {
+      prompt: string;
+      expectedResponse: string;
+    }[] = [
       {
         prompt: `Invent a new concept or method that builds upon both "${sourceLabel}" and "${targetLabel}". What would you call it and how would it work?`,
         expectedResponse: `Original creation that meaningfully combines both concepts with clear explanation`,
@@ -307,12 +326,13 @@ export class MicroTaskGenerator {
         expectedResponse: `Innovative enhancement showing creative synthesis and improvement`,
       },
     ];
-    
-    const template = creationTemplates[Math.floor(Math.random() * creationTemplates.length)];
-    
+
+  const template = creationTemplates[Math.floor(Math.random() * creationTemplates.length)];
+  const safeTemplate = template ?? creationTemplates[0]!;
+
     return {
-      prompt: template.prompt,
-      expectedResponse: template.expectedResponse,
+      prompt: safeTemplate.prompt,
+      expectedResponse: safeTemplate.expectedResponse,
     };
   }
 
@@ -324,20 +344,20 @@ export class MicroTaskGenerator {
     sourceNode: NeuralNode,
     targetNode: NeuralNode
   ): 'beginner' | 'intermediate' | 'advanced' {
-    
+
     // Factors that increase difficulty:
     // - Low synapse strength (harder to make connections)
     // - High cognitive load
     // - Cross-domain connections
     // - Low node mastery levels
-    
+
     const strengthPenalty = 1 - synapse.strength; // 0-1, higher = more difficult
     const cognitiveLoadPenalty = synapse.cognitiveLoad; // 0-1, higher = more difficult
     const categoryPenalty = sourceNode.category !== targetNode.category ? 0.3 : 0;
     const masteryPenalty = (2 - sourceNode.masteryLevel - targetNode.masteryLevel) / 2;
-    
+
     const totalDifficulty = strengthPenalty + cognitiveLoadPenalty + categoryPenalty + masteryPenalty;
-    
+
     if (totalDifficulty > 1.5) return 'advanced';
     if (totalDifficulty > 0.8) return 'intermediate';
     return 'beginner';
@@ -351,7 +371,7 @@ export class MicroTaskGenerator {
     difficulty: 'beginner' | 'intermediate' | 'advanced',
     cognitiveLoad: number
   ): number {
-    
+
     // Base times by task type (in minutes)
     const baseTimes = {
       recall: 2,
@@ -360,20 +380,20 @@ export class MicroTaskGenerator {
       apply: 7,
       create: 10,
     };
-    
+
     // Difficulty multipliers
     const difficultyMultipliers = {
       beginner: 1.0,
       intermediate: 1.5,
       advanced: 2.0,
     };
-    
+
     const baseTime = baseTimes[taskType];
     const difficultyMultiplier = difficultyMultipliers[difficulty];
     const cognitiveLoadMultiplier = 1 + (cognitiveLoad * 0.5); // Up to 50% increase
-    
+
     const estimatedTime = baseTime * difficultyMultiplier * cognitiveLoadMultiplier;
-    
+
     return Math.max(1, Math.round(estimatedTime));
   }
 
@@ -381,7 +401,7 @@ export class MicroTaskGenerator {
    * Calculate plasticity benefit of completing this task
    */
   private calculatePlasticityBenefit(taskType: MicroTask['taskType'], synapse: SynapseEdge): number {
-    
+
     // Base benefits by task type
     const baseBenefits = {
       recall: 0.1,      // Basic retrieval strengthening
@@ -390,17 +410,17 @@ export class MicroTaskGenerator {
       apply: 0.25,      // Application strengthens retention
       create: 0.3,      // Creation provides maximum benefit
     };
-    
+
     const baseBenefit = baseBenefits[taskType];
-    
+
     // Higher benefit for weaker connections (more room for improvement)
     const weaknessBonusMultiplier = 2 - synapse.strength;
-    
+
     // Higher benefit for high plasticity connections
     const plasticityMultiplier = 0.5 + (synapse.plasticityScore * 0.5);
-    
+
     const totalBenefit = baseBenefit * weaknessBonusMultiplier * plasticityMultiplier;
-    
+
     return Math.max(0.05, Math.min(0.5, totalBenefit));
   }
 
@@ -412,9 +432,9 @@ export class MicroTaskGenerator {
     sourceNode: NeuralNode,
     targetNode: NeuralNode
   ): string[] {
-    
+
     const skills: string[] = [];
-    
+
     // Task-type specific skills
     switch (taskType) {
       case 'recall':
@@ -433,20 +453,20 @@ export class MicroTaskGenerator {
         skills.push('creativity', 'innovation', 'divergent thinking');
         break;
     }
-    
+
     // Node-type specific skills
     if (sourceNode.type === 'logic' || targetNode.type === 'logic') {
       skills.push('logical reasoning', 'deductive thinking');
     }
-    
+
     if (sourceNode.category?.includes('math') || targetNode.category?.includes('math')) {
       skills.push('mathematical thinking', 'quantitative reasoning');
     }
-    
+
     if (sourceNode.category?.includes('language') || targetNode.category?.includes('language')) {
       skills.push('linguistic processing', 'verbal reasoning');
     }
-    
+
     return skills;
   }
 
@@ -458,14 +478,14 @@ export class MicroTaskGenerator {
     sourceNode: NeuralNode,
     targetNode: NeuralNode
   ): Promise<string[]> {
-    
+
     const hints: string[] = [];
-    
+
     // Progressive hint levels
     hints.push(`Think about what "${sourceNode.label}" and "${targetNode.label}" have in common.`);
-    
+
     hints.push(`Consider how "${sourceNode.label}" might influence or relate to "${targetNode.label}".`);
-    
+
     if (sourceNode.category && targetNode.category) {
       if (sourceNode.category === targetNode.category) {
         hints.push(`Both concepts belong to the ${sourceNode.category} domain - how might they interact within this field?`);
@@ -473,7 +493,7 @@ export class MicroTaskGenerator {
         hints.push(`These concepts bridge ${sourceNode.category} and ${targetNode.category} - what connects these domains?`);
       }
     }
-    
+
     // Task-specific hints
     switch (taskType) {
       case 'connect':
@@ -489,7 +509,7 @@ export class MicroTaskGenerator {
         hints.push(`What completely new idea could you build from these foundations?`);
         break;
     }
-    
+
     return hints;
   }
 
@@ -497,41 +517,41 @@ export class MicroTaskGenerator {
    * Generate success criteria for task evaluation
    */
   private generateSuccessCriteria(taskType: MicroTask['taskType'], synapse: SynapseEdge): string[] {
-    
+
     const criteria: string[] = [];
-    
+
     // Universal criteria
     criteria.push('Response demonstrates understanding of both concepts');
     criteria.push('Connection between concepts is clearly articulated');
-    
+
     // Task-specific criteria
     switch (taskType) {
       case 'recall':
         criteria.push('Key elements of both concepts are accurately recalled');
         criteria.push('Basic relationship is identified');
         break;
-        
+
       case 'connect':
         criteria.push('Logical connection is established between concepts');
         criteria.push('Explanation includes specific details or examples');
         break;
-        
+
       case 'synthesize':
         criteria.push('New insight or understanding is generated');
         criteria.push('Synthesis goes beyond simple combination');
         break;
-        
+
       case 'apply':
         criteria.push('Practical application is realistic and detailed');
         criteria.push('Both concepts are meaningfully integrated in application');
         break;
-        
+
       case 'create':
         criteria.push('Original idea demonstrates creative integration');
         criteria.push('Creation is feasible and well-explained');
         break;
     }
-    
+
     // Connection-type specific criteria
     switch (synapse.connectionType) {
       case 'prerequisite':
@@ -544,7 +564,7 @@ export class MicroTaskGenerator {
         criteria.push('Similar features or patterns are identified');
         break;
     }
-    
+
     return criteria;
   }
 

@@ -264,7 +264,7 @@ export class CircadianIntelligenceService {
   }
 
   private predictCognitiveImpact(duration: number, chronotype: string): string {
-    const impacts = [];
+  const impacts: string[] = [];
 
     if (duration < 7) {
       impacts.push('Reduced focus and memory consolidation');
@@ -324,7 +324,9 @@ export class CircadianIntelligenceService {
 
   private async getLastSleepEntry(userId: string): Promise<SleepEntry | null> {
     const entries = await this.getSleepEntries(userId, 7);
-    return entries.length > 0 ? entries[0] : null;
+    const first = entries[0];
+    if (first) return first;
+    return null;
   }
 
   async getCognitivePerformanceData(userId: string): Promise<any[]> {

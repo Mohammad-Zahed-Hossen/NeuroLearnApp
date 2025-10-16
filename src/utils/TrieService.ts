@@ -41,8 +41,7 @@ export class TrieService {
       children: new Map(),
       isEndOfWord: false,
       frequency: 0,
-      lastUsed: new Date(),
-      category: undefined
+      lastUsed: new Date()
     };
   }
 
@@ -128,7 +127,7 @@ export class TrieService {
       const score = this.calculateRelevanceScore(node);
       results.push({
         text: currentWord,
-        category: node.category,
+        ...(node.category && { category: node.category }),
         frequency: node.frequency,
         score
       });
@@ -174,7 +173,7 @@ export class TrieService {
     if (node.isEndOfWord && word.length > 0) {
       suggestions.push({
         text: word,
-        category: node.category,
+        ...(node.category && { category: node.category }),
         frequency: node.frequency,
         score: node.lastUsed.getTime() // Use timestamp as score for recent sorting
       });
@@ -215,7 +214,17 @@ export class TrieService {
         // ignore MMKV read errors, fall back to AsyncStorage
       }
 
-    if (!cachedData) cachedData = await this.hybridStorage.getItem(this.cacheKey);
+    if (!cachedData) {
+      try {
+        if (this.hybridStorage && typeof this.hybridStorage.getItem === 'function') {
+          const val = await this.hybridStorage.getItem(this.cacheKey);
+          // hybridStorage implementations may return objects or strings
+          cachedData = typeof val === 'string' ? val : (val ? JSON.stringify(val) : null);
+        }
+      } catch (e) {
+        // If hybridStorage.getItem fails, we'll fall back to AsyncStorage below
+      }
+    }
       if (cachedData) {
         const entries: Array<{word: string, category: string, frequency: number}> = JSON.parse(cachedData);
         entries.forEach(entry => {
@@ -249,7 +258,7 @@ export class TrieService {
       }
       // Use StorageService facade for persistence if available
       try {
-        if (this.hybridStorage && this.hybridStorage.setItem) {
+        if (this.hybridStorage && typeof this.hybridStorage.setItem === 'function') {
           await this.hybridStorage.setItem(this.cacheKey, entries);
           return;
         }

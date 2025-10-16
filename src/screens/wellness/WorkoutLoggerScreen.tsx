@@ -54,21 +54,6 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
     totalCalories: 0,
   });
 
-  const animatedScales = useMemo(() => {
-    return workoutTypes.reduce((acc, type) => {
-      acc[type.id] = new Animated.Value(1);
-      return acc;
-    }, {} as Record<string, Animated.Value>);
-  }, []);
-
-  const workoutCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    workouts.forEach(
-      (w) => (counts[w.workout_type] = (counts[w.workout_type] || 0) + 1),
-    );
-    return counts;
-  }, [workouts]);
-
   const workoutTypes = [
     { id: 'cardio', name: 'Cardio', icon: 'run', color: '#EF4444' },
     { id: 'strength', name: 'Strength', icon: 'dumbbell', color: '#8B5CF6' },
@@ -77,6 +62,26 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
     { id: 'walking', name: 'Walking', icon: 'walk', color: '#06B6D4' },
     { id: 'cycling', name: 'Cycling', icon: 'bike', color: '#EC4899' },
   ];
+
+  const animatedScales = useMemo(() => {
+    return workoutTypes.reduce((acc, type) => {
+      acc[type.id] = new Animated.Value(1);
+      return acc;
+    }, {} as Record<string, Animated.Value>);
+  }, [workoutTypes]);
+
+  // Create properly typed animated values for transform
+  const getAnimatedScale = (typeId: string) => {
+    return animatedScales[typeId] || new Animated.Value(1);
+  };
+
+  const workoutCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    workouts.forEach(
+      (w) => (counts[w.workout_type] = (counts[w.workout_type] || 0) + 1),
+    );
+    return counts;
+  }, [workouts]);
 
   useEffect(() => {
     loadWorkouts();
@@ -139,7 +144,8 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
       if (workoutDate >= startOfWeek && workoutDate <= today) {
         totalWorkouts++;
         totalMinutes += w.duration;
-        daysWorkedOut.add(w.date);
+        const dateKey = workoutDate.toISOString().split('T')[0] || '';
+        if (dateKey) daysWorkedOut.add(dateKey);
       }
     });
 
@@ -149,7 +155,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
       const checkDate = new Date(today);
       checkDate.setDate(today.getDate() - i);
       const dateStr = checkDate.toISOString().split('T')[0];
-      if (daysWorkedOut.has(dateStr)) {
+      if (dateStr && daysWorkedOut.has(dateStr)) {
         streak++;
       } else {
         break;
@@ -165,17 +171,25 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
     );
 
     // Calculate stats
-    const avgTime = workouts.length > 0 ? Math.round(totalMinutes / workouts.length) : 0;
+    const avgTime =
+      workouts.length > 0 ? Math.round(totalMinutes / workouts.length) : 0;
 
     // Find favorite workout type
-    const typeCounts = workouts.reduce((acc, w) => {
-      acc[w.workout_type] = (acc[w.workout_type] || 0) + 1;
+    const typeCounts = workouts.reduce((acc: Record<string, number>, w) => {
+      const key = String(w.workout_type || '');
+      acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    const favorite = Object.keys(typeCounts).reduce((a, b) =>
-      typeCounts[a] > typeCounts[b] ? a : b, ''
-    );
+    const keys = Object.keys(typeCounts);
+    const favorite =
+      keys.length > 0
+        ? keys.reduce((a: string, b: string) => {
+            const aCount = typeCounts[a] || 0;
+            const bCount = typeCounts[b] || 0;
+            return aCount > bCount ? a : b;
+          }, keys[0])
+        : '';
 
     const totalCalories = Math.round(calEstimate);
 
@@ -183,7 +197,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
     setCalories(calEstimate);
     setStats({
       avgTime,
-      favorite: getWorkoutName(favorite),
+      favorite: getWorkoutName(String(favorite)),
       totalCalories,
     });
   };
@@ -204,7 +218,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
       const { error } = await supabase.from('workout_logs').insert({
         user_id: user.id,
         workout_type: workoutType,
-        duration: parseInt(duration),
+        duration: parseInt(duration ?? '0'),
         intensity,
         notes,
         date: new Date().toISOString().split('T')[0],
@@ -347,7 +361,7 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
                 key={type.id}
                 style={[
                   styles.workoutTypeButton,
-                  { transform: [{ scale: animatedScales[type.id] }] },
+                  { transform: [{ scale: getAnimatedScale(type.id) }] },
                 ]}
               >
                 <LinearGradient
@@ -358,12 +372,12 @@ const WorkoutLoggerScreen: React.FC<WorkoutLoggerScreenProps> = ({
                     onPress={() => {
                       setWorkoutType(type.id);
                       Animated.sequence([
-                        Animated.timing(animatedScales[type.id], {
+                        Animated.timing(getAnimatedScale(type.id), {
                           toValue: 0.95,
                           duration: 100,
                           useNativeDriver: true,
                         }),
-                        Animated.timing(animatedScales[type.id], {
+                        Animated.timing(getAnimatedScale(type.id), {
                           toValue: 1,
                           duration: 100,
                           useNativeDriver: true,

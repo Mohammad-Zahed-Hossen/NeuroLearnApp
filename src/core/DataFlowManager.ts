@@ -125,12 +125,12 @@ export class DataFlowManager {
   ): Promise<string> {
     const packet: DataPacket = {
       id: this.generatePacketId(),
-      source,
-      target,
+      source: source || 'unknown',
+      target: target || 'unknown',
       data,
       timestamp: new Date(),
       priority,
-      metadata,
+      metadata: metadata || {},
       retryCount: 0
     };
 
@@ -173,7 +173,12 @@ export class DataFlowManager {
 
       // Apply highest priority rule
       const rule = rules[0];
-      const processedData = await this.applyTransformations(packet.data, rule.transformations);
+      if (!rule) {
+        this.logger.warn(`No applicable rule found after filtering for packet ${packet.id}`);
+        return await this.handleUnroutablePacket(packet);
+      }
+
+      const processedData = await this.applyTransformations(packet.data, rule.transformations || []);
 
       // Route to target
       const success = await this.deliverData(packet.target, processedData, packet.metadata);
@@ -490,13 +495,14 @@ export class DataFlowManager {
   }
 
   private insertPacketByPriority(packet: DataPacket): void {
-    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-    const packetPriority = priorityOrder[packet.priority];
+  const priorityOrder: Record<DataPacket['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const packetPriority = priorityOrder[packet.priority] ?? priorityOrder.medium;
 
     // Insert in priority order
     let inserted = false;
     for (let i = 0; i < this.flowQueue.length; i++) {
-      const queuedPriority = priorityOrder[this.flowQueue[i].priority];
+      const queued = this.flowQueue[i];
+      const queuedPriority = priorityOrder[queued?.priority ?? 'medium'];
       if (packetPriority < queuedPriority) {
         this.flowQueue.splice(i, 0, packet);
         inserted = true;
@@ -510,9 +516,13 @@ export class DataFlowManager {
   }
 
   private getPacket(packetId: string): DataPacket | null {
-    return this.activeFlows.get(packetId) ||
-           this.flowQueue.find(p => p.id === packetId) ||
-           null;
+    const active = this.activeFlows.get(packetId);
+    if (active) return active;
+
+    const queued = this.flowQueue.find(p => p.id === packetId);
+    if (queued) return queued;
+
+    return null;
   }
 
   private findApplicableRules(packet: DataPacket): DataFlowRule[] {
@@ -625,8 +635,22 @@ export class DataFlowManager {
   }
 
   private async mergePackets(packets: DataPacket[]): Promise<DataPacket> {
-    const basePacket = packets[0];
-    const mergedData = {};
+    if (!packets || packets.length === 0) {
+      // Return a safe default packet when nothing to merge
+      return {
+        id: this.generatePacketId(),
+        source: 'unknown',
+        target: 'unknown',
+        data: {},
+        timestamp: new Date(),
+        priority: 'medium',
+        metadata: {},
+        retryCount: 0
+      };
+    }
+
+  const basePacket = packets[0]!;
+    const mergedData: any = {};
 
     // Merge data from all packets
     packets.forEach(packet => {
@@ -634,10 +658,14 @@ export class DataFlowManager {
     });
 
     return {
-      ...basePacket,
       id: this.generatePacketId(),
+      source: basePacket.source || 'unknown',
+      target: basePacket.target || 'unknown',
       data: mergedData,
-      timestamp: new Date()
+      timestamp: new Date(),
+      priority: basePacket.priority || 'medium',
+      metadata: basePacket.metadata || {},
+      retryCount: basePacket.retryCount || 0
     };
   }
 

@@ -7,7 +7,7 @@ import { CognitiveStateService } from '../../services/ai/CognitiveStateService';
 import { CognitiveDataService } from '../../services/ai/CognitiveDataService';
 import { EyeTrackingService } from '../../services/learning/EyeTrackingService';
 import { AICoachingService } from '../../services/learning/AICoachingService';
-import EventSystem from '../EventSystem';
+import { EventSystem } from '../EventSystem';
 import { AuraContext } from '../../services/ai/CognitiveAuraService';
 
 interface CognitiveMetrics {

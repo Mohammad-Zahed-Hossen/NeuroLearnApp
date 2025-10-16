@@ -13,9 +13,10 @@ import { Client as NotionClient } from 'https://esm.sh/@notionhq/client@2.2.3';
 
 // Types
 interface SyncRequest {
-  action: 'sync_pages' | 'backup_pages' | 'create_reflection' | 'validate_token';
+  action: 'sync_pages' | 'backup_pages' | 'create_reflection' | 'validate_token' | 'decrypt_token';
   user_id: string;
-  notion_token: string;
+  notion_token?: string;
+  notion_token_encrypted?: string;
   sync_type?: 'full' | 'incremental';
   page_ids?: string[];
   reflection_data?: {
@@ -54,7 +55,7 @@ const corsHeaders = {
 };
 
 // Main handler
-serve(async (req) => {
+serve(async (req: Request) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -65,23 +66,33 @@ serve(async (req) => {
     console.log(`🔄 Processing ${requestData.action} for user ${requestData.user_id}`);
 
     // Validate request
-    if (!requestData.user_id || !requestData.notion_token) {
-      throw new Error('Missing required fields: user_id or notion_token');
+    if (!requestData.user_id) {
+      throw new Error('Missing required field: user_id');
     }
-
-    // Initialize Notion client
-    const notion = new NotionClient({ auth: requestData.notion_token });
 
     let response: SyncResponse;
 
     switch (requestData.action) {
       case 'validate_token':
-        response = await validateNotionToken(notion, requestData.user_id);
+        if (!requestData.notion_token) {
+          throw new Error('Missing notion_token for validation');
+        }
+        response = await validateNotionToken(new NotionClient({ auth: requestData.notion_token }), requestData.user_id);
+        break;
+
+      case 'decrypt_token':
+        if (!requestData.notion_token_encrypted) {
+          throw new Error('Missing notion_token_encrypted for decryption');
+        }
+        response = await decryptNotionToken(requestData.notion_token_encrypted);
         break;
 
       case 'sync_pages':
+        if (!requestData.notion_token) {
+          throw new Error('Missing notion_token for sync');
+        }
         response = await syncNotionPages(
-          notion,
+          new NotionClient({ auth: requestData.notion_token }),
           supabase,
           requestData.user_id,
           requestData.sync_type || 'incremental'
@@ -89,8 +100,11 @@ serve(async (req) => {
         break;
 
       case 'backup_pages':
+        if (!requestData.notion_token) {
+          throw new Error('Missing notion_token for backup');
+        }
         response = await backupNotionPages(
-          notion,
+          new NotionClient({ auth: requestData.notion_token }),
           supabase,
           requestData.user_id,
           requestData.page_ids
@@ -98,11 +112,14 @@ serve(async (req) => {
         break;
 
       case 'create_reflection':
+        if (!requestData.notion_token || !requestData.reflection_data) {
+          throw new Error('Missing notion_token or reflection_data');
+        }
         response = await createNotionReflection(
-          notion,
+          new NotionClient({ auth: requestData.notion_token }),
           supabase,
           requestData.user_id,
-          requestData.reflection_data!
+          requestData.reflection_data
         );
         break;
 
@@ -495,7 +512,7 @@ async function createNeuralLinks(
       // Find concept mentions
       const conceptMatches = Array.from(block.content_text.matchAll(CONCEPT_PATTERN));
 
-      for (const match of conceptMatches) {
+      for (const match of conceptMatches as RegExpMatchArray[]) {
         const conceptName = match[1].trim();
 
         // Create neural link
@@ -520,7 +537,61 @@ async function createNeuralLinks(
         }
       }
 
-      // Similar processing for tasks and sessions...
+      // Find task mentions
+      const taskMatches = Array.from(block.content_text.matchAll(TASK_PATTERN));
+
+      for (const match of taskMatches as RegExpMatchArray[]) {
+        const taskName = match[1].trim();
+
+        // Create neural link
+        const linkData = {
+          user_id: userId,
+          notion_block_id: block.id,
+          neural_node_id: taskName, // Simplified - would need actual node lookup
+          link_type: 'task_mapping',
+          confidence_score: 0.9,
+          auto_linked: true,
+          link_context: `Task mentioned in Notion: "${taskName}"`,
+          notion_mention_text: match[0],
+          is_active: true
+        };
+
+        const { error: linkError } = await supabase
+          .from('notion_links')
+          .upsert(linkData, { onConflict: 'user_id,notion_block_id,neural_node_id' });
+
+        if (!linkError) {
+          linksCreated++;
+        }
+      }
+
+      // Find session mentions
+      const sessionMatches = Array.from(block.content_text.matchAll(SESSION_PATTERN));
+
+      for (const match of sessionMatches as RegExpMatchArray[]) {
+        const sessionName = match[1].trim();
+
+        // Create neural link
+        const linkData = {
+          user_id: userId,
+          notion_block_id: block.id,
+          neural_node_id: sessionName, // Simplified - would need actual node lookup
+          link_type: 'session_mapping',
+          confidence_score: 0.9,
+          auto_linked: true,
+          link_context: `Session mentioned in Notion: "${sessionName}"`,
+          notion_mention_text: match[0],
+          is_active: true
+        };
+
+        const { error: linkError } = await supabase
+          .from('notion_links')
+          .upsert(linkData, { onConflict: 'user_id,notion_block_id,neural_node_id' });
+
+        if (!linkError) {
+          linksCreated++;
+        }
+      }
     }
 
     console.log(`🔗 Created ${linksCreated} neural links`);
@@ -741,6 +812,43 @@ async function createNotionReflection(
     return {
       success: false,
   error: error instanceof Error ? error.message : String(error ?? 'Failed to create reflection')
+    };
+  }
+}
+
+// ==============================
+// TOKEN DECRYPTION
+// ==============================
+
+async function decryptNotionToken(encryptedToken: string): Promise<SyncResponse> {
+  try {
+    console.log('🔐 Decrypting Notion token...');
+
+    const { data, error } = await supabase.rpc('decrypt_token', {
+      encrypted_token: encryptedToken,
+      encryption_key: Deno.env.get('ENCRYPTION_KEY') || 'neurolearn-secure-key-2024'
+    });
+
+    if (error) {
+      console.error('❌ Decrypt RPC error:', error);
+      return {
+        success: false,
+        error: 'Token decryption failed'
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        token: data
+      }
+    };
+
+  } catch (error) {
+    console.error('❌ Token decryption failed:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error ?? 'Decryption failed')
     };
   }
 }

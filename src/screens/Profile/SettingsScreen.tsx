@@ -24,6 +24,10 @@ import StorageService from '../../services/storage/StorageService';
 import { TodoistService } from '../../services/integrations/TodoistService';
 import { SupabaseService } from '../../services/storage/SupabaseService';
 import NotionSyncService from '../../services/integrations/NotionSyncService';
+import { supabase } from '../../services/storage/SupabaseService';
+import { OAuthCallbackHandler } from '../../services/integrations/OAuthCallbackHandler';
+import { OAuthButton } from '../../components/integrations/OAuthButton';
+import { OAuthStatusCard } from '../../components/integrations/OAuthStatusCard';
 import { Settings } from '../../types';
 
 interface SettingsScreenProps {
@@ -34,8 +38,23 @@ interface SettingsScreenProps {
 }
 
 interface ConnectionStatus {
-  todoist: { connected: boolean; message: string; testing: boolean };
-  notion: { connected: boolean; message: string; testing: boolean };
+  todoist: {
+    connected: boolean;
+    message: string;
+    testing: boolean;
+    usingOAuth?: boolean;
+  };
+  notion: {
+    connected: boolean;
+    message: string;
+    testing: boolean;
+    usingOAuth?: boolean;
+  };
+}
+
+interface WorkspaceInfo {
+  todoist?: { name?: string; id?: string } | undefined;
+  notion?: { name?: string; id?: string } | undefined;
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({
@@ -65,21 +84,141 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   });
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
-    todoist: { connected: false, message: 'Not configured', testing: false },
-    notion: { connected: false, message: 'Not configured', testing: false },
+    todoist: {
+      connected: false,
+      message: 'Not configured',
+      testing: false,
+      usingOAuth: false,
+    },
+    notion: {
+      connected: false,
+      message: 'Not configured',
+      testing: false,
+      usingOAuth: false,
+    },
   });
 
-  const [saving, setSaving] = useState(false);
+  const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo>({});
+
+  const [showOAuthOptions, setShowOAuthOptions] = useState({
+    todoist: false,
+    notion: false,
+  });
+
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{
+    isSyncing: boolean;
+    progress: number;
+    message: string;
+    service: 'todoist' | 'notion' | null;
+  }>({
+    isSyncing: false,
+    progress: 0,
+    message: '',
+    service: null,
+  });
+
+  // Enhanced loading states for all async operations
+  const [loadingStates, setLoadingStates] = useState({
+    savingSettings: false,
+    testingTodoist: false,
+    testingNotion: false,
+    loadingSettings: false,
+    initializingOAuth: false,
+    disconnectingTodoist: false,
+    disconnectingNotion: false,
+    checkingOAuthConnections: false,
+    syncingData: false,
+    clearingData: false,
+    exportingData: false,
+    resettingSoundLearning: false,
+    signingOut: false,
+  });
 
   const themeColors = colors[theme];
   const storage = StorageService.getInstance();
   const todoistService = TodoistService.getInstance();
+  const notionService = NotionSyncService.getInstance();
+  const oauthHandler = OAuthCallbackHandler.getInstance();
 
   useEffect(() => {
     loadSettings();
+    setupOAuthCallbacks();
+
+    return () => {
+      oauthHandler.unregisterListener('todoist');
+      oauthHandler.unregisterListener('notion');
+    };
   }, []);
+
+  const setupOAuthCallbacks = () => {
+    // Setup OAuth callback handlers
+    oauthHandler.registerListener('todoist', (result) => {
+      if (result.success) {
+        setConnectionStatus((prev) => ({
+          ...prev,
+          todoist: {
+            connected: true,
+            message: 'Connected via OAuth',
+            testing: false,
+            usingOAuth: true,
+          },
+        }));
+        Alert.alert('Success', 'Todoist connected successfully!');
+      } else {
+        setConnectionStatus((prev) => ({
+          ...prev,
+          todoist: {
+            connected: false,
+            message: result.error || 'OAuth failed',
+            testing: false,
+            usingOAuth: false,
+          },
+        }));
+        Alert.alert('Error', result.error || 'Todoist OAuth failed');
+      }
+    });
+
+    oauthHandler.registerListener('notion', (result) => {
+      if (result.success) {
+        setConnectionStatus((prev) => ({
+          ...prev,
+          notion: {
+            connected: true,
+            message: 'Connected via OAuth',
+            testing: false,
+            usingOAuth: true,
+          },
+        }));
+        if (result.token?.workspaceName || result.token?.workspaceId) {
+          setWorkspaceInfo((prev) => ({
+            ...prev,
+            notion: {
+              // Only include properties when defined to avoid undefined in required string slots
+              ...(result.token.workspaceName
+                ? { name: result.token.workspaceName }
+                : {}),
+              ...(result.token.workspaceId
+                ? { id: result.token.workspaceId }
+                : {}),
+            },
+          }));
+        }
+        Alert.alert('Success', 'Notion connected successfully!');
+      } else {
+        setConnectionStatus((prev) => ({
+          ...prev,
+          notion: {
+            connected: false,
+            message: result.error || 'OAuth failed',
+            testing: false,
+            usingOAuth: false,
+          },
+        }));
+        Alert.alert('Error', result.error || 'Notion OAuth failed');
+      }
+    });
+  };
 
   const loadSettings = async () => {
     try {
@@ -89,6 +228,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         todoist: savedSettings.todoistToken,
         notion: savedSettings.notionToken,
       });
+
+      // Check OAuth connections first
+      await checkOAuthConnections();
 
       // Test existing connections
       if (savedSettings.todoistToken) {
@@ -104,9 +246,59 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
+  const checkOAuthConnections = async () => {
+    try {
+      // Check Todoist OAuth
+      const todoistOAuth = await todoistService.isUsingOAuth();
+      if (todoistOAuth) {
+        setConnectionStatus((prev) => ({
+          ...prev,
+          todoist: {
+            connected: true,
+            message: 'Connected via OAuth',
+            testing: false,
+            usingOAuth: true,
+          },
+        }));
+      }
+
+      // Check Notion OAuth
+      const notionOAuth = await notionService.isUsingOAuth();
+      if (notionOAuth) {
+        const workspaceInfo = await notionService
+          .getOAuthService()
+          .getWorkspaceInfo();
+        setConnectionStatus((prev) => ({
+          ...prev,
+          notion: {
+            connected: true,
+            message: 'Connected via OAuth',
+            testing: false,
+            usingOAuth: true,
+          },
+        }));
+        if (workspaceInfo?.workspaceName || workspaceInfo?.workspaceId) {
+          setWorkspaceInfo((prev) => ({
+            ...prev,
+            notion: {
+              ...(workspaceInfo.workspaceName
+                ? { name: workspaceInfo.workspaceName }
+                : {}),
+              ...(workspaceInfo.workspaceId
+                ? { id: workspaceInfo.workspaceId }
+                : {}),
+            },
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error checking OAuth connections:', error);
+    }
+  };
+
   const saveSettings = async () => {
     try {
-      setSaving(true);
+      setLoadingStates((prev) => ({ ...prev, savingSettings: true }));
 
       const updatedSettings: Settings = {
         ...settings,
@@ -123,7 +315,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       console.error('Error saving settings:', error);
       Alert.alert('Error', 'Failed to save settings. Please try again.');
     } finally {
-      setSaving(false);
+      setLoadingStates((prev) => ({ ...prev, savingSettings: false }));
     }
   };
 
@@ -150,32 +342,80 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       },
     }));
 
-    try {
-      todoistService.setApiToken(testToken);
-      const result = await todoistService.testConnection();
+    setSyncProgress({
+      isSyncing: true,
+      progress: 0,
+      message: 'Initializing Todoist connection...',
+      service: 'todoist',
+    });
 
+    try {
+      // TodoistService.testConnection() throws on failure and returns void on success
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 25,
+        message: 'Setting API token...',
+      }));
+      await todoistService.setApiToken(testToken);
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 75,
+        message: 'Testing connection...',
+      }));
+      await todoistService.testConnection();
+
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 100,
+        message: 'Connection successful!',
+      }));
       setConnectionStatus((prev) => ({
         ...prev,
         todoist: {
-          connected: result.success,
-          message: result.message,
+          connected: true,
+          message: 'Connection successful',
           testing: false,
         },
       }));
 
+      setTimeout(
+        () =>
+          setSyncProgress({
+            isSyncing: false,
+            progress: 0,
+            message: '',
+            service: null,
+          }),
+        1500,
+      );
+
       if (showAlert) {
-        Alert.alert(
-          result.success ? 'Connection Successful!' : 'Connection Failed',
-          result.message,
-          [{ text: 'OK' }],
-        );
+        Alert.alert('Connection Successful!', 'Todoist connection is working', [
+          { text: 'OK' },
+        ]);
       }
     } catch (error: any) {
-      const message = `Connection failed: ${error.message}`;
+      const message = `Connection failed: ${error?.message || String(error)}`;
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 100,
+        message: 'Connection failed',
+      }));
       setConnectionStatus((prev) => ({
         ...prev,
         todoist: { connected: false, message, testing: false },
       }));
+
+      setTimeout(
+        () =>
+          setSyncProgress({
+            isSyncing: false,
+            progress: 0,
+            message: '',
+            service: null,
+          }),
+        2000,
+      );
 
       if (showAlert) {
         Alert.alert('Connection Error', message);
@@ -183,9 +423,49 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
-  const handleSaveNotionIntegration = async () => {
-    const notionService = NotionSyncService.getInstance();
+  const handleOAuthSuccess = (service: 'todoist' | 'notion', token: any) => {
+    console.log(`${service} OAuth success:`, token);
+    // Connection status will be updated by the callback handler
+  };
 
+  const handleOAuthError = (service: 'todoist' | 'notion', error: string) => {
+    console.error(`${service} OAuth error:`, error);
+    Alert.alert('OAuth Error', `Failed to connect to ${service}: ${error}`);
+  };
+
+  const handleDisconnectOAuth = async (service: 'todoist' | 'notion') => {
+    try {
+      if (service === 'todoist') {
+        await todoistService.getOAuthService().clearTokens();
+        setConnectionStatus((prev) => ({
+          ...prev,
+          todoist: {
+            connected: false,
+            message: 'Disconnected',
+            testing: false,
+            usingOAuth: false,
+          },
+        }));
+      } else if (service === 'notion') {
+        await notionService.getOAuthService().clearTokens();
+        setConnectionStatus((prev) => ({
+          ...prev,
+          notion: {
+            connected: false,
+            message: 'Disconnected',
+            testing: false,
+            usingOAuth: false,
+          },
+        }));
+        setWorkspaceInfo((prev) => ({ ...prev, notion: undefined }));
+      }
+      Alert.alert('Success', `${service} disconnected successfully`);
+    } catch (error) {
+      Alert.alert('Error', `Failed to disconnect ${service}`);
+    }
+  };
+
+  const handleSaveNotionIntegration = async () => {
     // Validate inputs first
     if (!tempTokens.notion.trim()) {
       Alert.alert('Error', 'Notion token is required');
@@ -199,19 +479,25 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
     try {
       // Connect to Notion using the service
-      const result = await notionService.connectToNotion(tempTokens.notion.trim());
+      const result: any = await notionService.connectToNotion(
+        tempTokens.notion.trim(),
+      );
 
-      if (result.success) {
+      if (result?.success) {
         Alert.alert('Success', 'Notion connected successfully!');
         setConnectionStatus((prev) => ({
           ...prev,
           notion: { connected: true, message: 'Connected', testing: false },
         }));
       } else {
-        Alert.alert('Connection Failed', result.error || 'Unknown error');
+        Alert.alert('Connection Failed', result?.error || 'Unknown error');
         setConnectionStatus((prev) => ({
           ...prev,
-          notion: { connected: false, message: result.error || 'Connection failed', testing: false },
+          notion: {
+            connected: false,
+            message: result?.error || 'Connection failed',
+            testing: false,
+          },
         }));
       }
     } catch (error: any) {
@@ -247,52 +533,131 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       },
     }));
 
+    setSyncProgress({
+      isSyncing: true,
+      progress: 0,
+      message: 'Initializing Notion connection...',
+      service: 'notion',
+    });
+
     try {
-      const notionService = NotionSyncService.getInstance();
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 25,
+        message: 'Checking existing connection...',
+      }));
 
       // Check if already connected with this token
-      if (notionService.isConnected() && notionService.getWorkspaceInfo()?.id === testToken) {
-        setConnectionStatus((prev) => ({
-          ...prev,
-          notion: {
-            connected: true,
-            message: 'Already connected',
-            testing: false,
-          },
-        }));
-        if (showAlert) {
-          Alert.alert('Connection Successful!', 'Notion integration is already connected and working correctly');
+      if (notionService.isConnected()) {
+        const ws = await (notionService.getWorkspaceInfo() as
+          | Promise<any>
+          | any);
+        if (ws && ws.id === testToken) {
+          setSyncProgress((prev) => ({
+            ...prev,
+            progress: 100,
+            message: 'Already connected!',
+          }));
+          setConnectionStatus((prev) => ({
+            ...prev,
+            notion: {
+              connected: true,
+              message: 'Already connected',
+              testing: false,
+            },
+          }));
+
+          setTimeout(
+            () =>
+              setSyncProgress({
+                isSyncing: false,
+                progress: 0,
+                message: '',
+                service: null,
+              }),
+            1500,
+          );
+
+          if (showAlert) {
+            Alert.alert(
+              'Connection Successful!',
+              'Notion integration is already connected and working correctly',
+            );
+          }
+          return;
         }
-        return;
       }
 
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 75,
+        message: 'Connecting to Notion...',
+      }));
+
       // Try to connect/test with the current token
-      const result = await notionService.connectToNotion(testToken.trim());
+      const result: any = await notionService.connectToNotion(testToken.trim());
+
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 100,
+        message: result?.success
+          ? 'Connection successful!'
+          : 'Connection failed',
+      }));
 
       setConnectionStatus((prev) => ({
         ...prev,
         notion: {
-          connected: result.success,
-          message: result.success ? 'Connection successful' : (result.error || 'Connection failed'),
+          connected: !!result?.success,
+          message: result?.success
+            ? 'Connection successful'
+            : result?.error || 'Connection failed',
           testing: false,
         },
       }));
+
+      setTimeout(
+        () =>
+          setSyncProgress({
+            isSyncing: false,
+            progress: 0,
+            message: '',
+            service: null,
+          }),
+        result?.success ? 1500 : 2000,
+      );
 
       if (showAlert) {
         Alert.alert(
           result.success ? 'Connection Successful!' : 'Connection Failed',
           result.success
             ? 'Notion integration is working correctly'
-            : (result.error || 'Unknown connection error'),
+            : result.error || 'Unknown connection error',
           [{ text: 'OK' }],
         );
       }
     } catch (error: any) {
       const message = `Connection failed: ${error.message}`;
+      setSyncProgress((prev) => ({
+        ...prev,
+        progress: 100,
+        message: 'Connection failed',
+      }));
       setConnectionStatus((prev) => ({
         ...prev,
         notion: { connected: false, message, testing: false },
       }));
+
+      setTimeout(
+        () =>
+          setSyncProgress({
+            isSyncing: false,
+            progress: 0,
+            message: '',
+            service: null,
+          }),
+        2000,
+      );
 
       if (showAlert) {
         Alert.alert('Connection Error', message);
@@ -351,6 +716,69 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     }
   };
 
+  const syncData = async () => {
+    try {
+      setLoadingStates((prev) => ({ ...prev, syncingData: true }));
+
+      // Sync settings to Supabase
+      const currentSettings = await storage.getSettings();
+      const saveResult = await SupabaseService.getInstance().saveSettings(currentSettings);
+      if (saveResult.error) {
+        throw new Error('Failed to save settings to Supabase');
+      }
+
+      // Load settings from Supabase
+      const remoteSettings = await SupabaseService.getInstance().getSettings();
+      if (remoteSettings.error) {
+        console.warn('Failed to load remote settings:', remoteSettings.error);
+      } else if (remoteSettings.data) {
+        await storage.saveSettings(remoteSettings.data);
+        setSettings(remoteSettings.data);
+        setTempTokens({
+          todoist: remoteSettings.data.todoistToken || '',
+          notion: remoteSettings.data.notionToken || '',
+        });
+      }
+
+      // Sync flashcards to Supabase
+      const localFlashcards = await storage.getFlashcards();
+      for (const flashcard of localFlashcards) {
+        const saveFlashcardResult = await SupabaseService.getInstance().saveFlashcard(flashcard);
+        if (saveFlashcardResult.error) {
+          console.warn('Failed to save flashcard:', saveFlashcardResult.error);
+        }
+      }
+
+      // Load flashcards from Supabase
+      const remoteFlashcards = await SupabaseService.getInstance().getFlashcards();
+      if (remoteFlashcards.error) {
+        console.warn('Failed to load remote flashcards:', remoteFlashcards.error);
+      } else if (remoteFlashcards.data) {
+      // Merge remote flashcards with local (simple approach: add new ones)
+      const existingIds = new Set(localFlashcards.map(f => f.id));
+      const newFlashcards = remoteFlashcards.data.filter(f => !existingIds.has(f.id));
+      if (newFlashcards.length > 0) {
+        await storage.saveFlashcards(newFlashcards);
+      }
+      }
+
+      // If Notion is connected, sync Notion data
+      if (settings.notionToken && connectionStatus.notion.connected) {
+        const notionSyncResult = await SupabaseService.getInstance().syncNotionData('sync-down');
+        if (notionSyncResult.error) {
+          console.warn('Notion sync failed:', notionSyncResult.error);
+        }
+      }
+
+      Alert.alert('Success', 'Data synced successfully with Supabase!');
+    } catch (error: any) {
+      console.error('Sync error:', error);
+      Alert.alert('Error', `Failed to sync data: ${error.message}`);
+    } finally {
+      setLoadingStates((prev) => ({ ...prev, syncingData: false }));
+    }
+  };
+
   const handleThemeChange = (newTheme: ThemeType) => {
     setSettings((prev) => ({ ...prev, theme: newTheme }));
     setHasUnsavedChanges(true);
@@ -399,7 +827,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         onMenuPress={() => setMenuVisible(true)}
         rightComponent={
           hasUnsavedChanges ? (
-            <TouchableOpacity onPress={saveSettings} disabled={saving}>
+            <TouchableOpacity
+              onPress={saveSettings}
+              disabled={loadingStates.savingSettings}
+            >
               <Text
                 style={{
                   color: themeColors.primary,
@@ -407,7 +838,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                   fontWeight: '600',
                 }}
               >
-                {saving ? 'Saving...' : 'Save'}
+                {loadingStates.savingSettings ? 'Saving...' : 'Save'}
               </Text>
             </TouchableOpacity>
           ) : null
@@ -515,7 +946,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
               ]}
               value={settings.dailyGoal.toString()}
               onChangeText={(value) => {
-                const numValue = parseInt(value) || 0;
+                const numValue = parseInt(String(value ?? '0')) || 0;
                 updateSetting(
                   'dailyGoal',
                   Math.min(Math.max(numValue, 1), 480),
@@ -558,225 +989,450 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             🔗 API Integrations
           </Text>
 
-          {/* Todoist Integration Card */}
-          <View style={[styles.integrationCard, { borderColor: themeColors.border }]}>
-            <View style={styles.integrationHeader}>
-              <View style={styles.integrationTitleRow}>
-                <Text style={[styles.integrationIcon, { color: themeColors.primary }]}>
-                  📋
-                </Text>
-                <Text style={[styles.integrationTitle, { color: themeColors.text }]}>
-                  Todoist
-                </Text>
-              </View>
-              <View style={[
-                styles.statusBadge,
-                {
-                  backgroundColor: connectionStatus.todoist.connected
-                    ? themeColors.success + '20'
-                    : connectionStatus.todoist.testing
-                    ? themeColors.warning + '20'
-                    : themeColors.error + '20'
-                }
-              ]}>
-                <Text style={[
-                  styles.statusBadgeText,
-                  {
-                    color: connectionStatus.todoist.connected
-                      ? themeColors.success
-                      : connectionStatus.todoist.testing
-                      ? themeColors.warning
-                      : themeColors.error
-                  }
-                ]}>
-                  {connectionStatus.todoist.testing ? '⏳ Testing...' :
-                   connectionStatus.todoist.connected ? '✓ Connected' : '✗ Disconnected'}
-                </Text>
-              </View>
-            </View>
-
-            <Text style={[styles.integrationDescription, { color: themeColors.textSecondary }]}>
-              Sync your tasks and focus sessions with Todoist for better productivity tracking.
-            </Text>
-
-            <View style={styles.tokenInputContainer}>
-              <TextInput
-                style={[
-                  styles.tokenInput,
-                  {
-                    borderColor: themeColors.border,
-                    color: themeColors.text,
-                    backgroundColor: themeColors.surfaceLight,
-                  },
-                ]}
-                placeholder="Enter your Todoist API token..."
-                placeholderTextColor={themeColors.textMuted}
-                value={tempTokens.todoist}
-                onChangeText={(text) => {
-                  setTempTokens((prev) => ({ ...prev, todoist: text }));
-                  setHasUnsavedChanges(true);
-                }}
-                secureTextEntry={tempTokens.todoist.length > 0}
-                autoCapitalize="none"
-                autoCorrect={false}
+          {/* Todoist Integration */}
+          {connectionStatus.todoist.usingOAuth ? (
+            <OAuthStatusCard
+              service="todoist"
+              status={
+                connectionStatus.todoist.connected
+                  ? 'connected'
+                  : 'disconnected'
+              }
+              theme={theme}
+              {...(workspaceInfo.todoist
+                ? { workspaceInfo: workspaceInfo.todoist }
+                : {})}
+              onReconnect={() => handleOAuthSuccess('todoist', {})}
+              onDisconnect={() => handleDisconnectOAuth('todoist')}
+            />
+          ) : showOAuthOptions.todoist ? (
+            <View>
+              <OAuthButton
+                service="todoist"
+                theme={theme}
+                onSuccess={(token) => handleOAuthSuccess('todoist', token)}
+                onError={(error) => handleOAuthError('todoist', error)}
               />
               <TouchableOpacity
                 onPress={() =>
-                  Alert.alert(
-                    'Get Todoist API Token',
-                    '1. Go to todoist.com/prefs/integrations\n2. Find "API token" section\n3. Copy your token\n4. Paste it in the field above',
-                  )
+                  setShowOAuthOptions((prev) => ({ ...prev, todoist: false }))
                 }
-                style={styles.tokenHelpButton}
+                style={styles.switchModeButton}
               >
-                <Text style={[styles.tokenHelpText, { color: themeColors.primary }]}>
-                  ?
+                <Text
+                  style={[
+                    styles.switchModeText,
+                    { color: themeColors.primary },
+                  ]}
+                >
+                  Use API Token Instead
                 </Text>
               </TouchableOpacity>
             </View>
+          ) : (
+            <View
+              style={[
+                styles.integrationCard,
+                { borderColor: themeColors.border },
+              ]}
+            >
+              <View style={styles.integrationHeader}>
+                <View style={styles.integrationTitleRow}>
+                  <Text
+                    style={[
+                      styles.integrationIcon,
+                      { color: themeColors.primary },
+                    ]}
+                  >
+                    📋
+                  </Text>
+                  <Text
+                    style={[
+                      styles.integrationTitle,
+                      { color: themeColors.text },
+                    ]}
+                  >
+                    Todoist
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    {
+                      backgroundColor: connectionStatus.todoist.connected
+                        ? themeColors.success + '20'
+                        : connectionStatus.todoist.testing
+                        ? themeColors.warning + '20'
+                        : themeColors.error + '20',
+                      borderWidth: connectionStatus.todoist.testing ? 2 : 0,
+                      borderColor: connectionStatus.todoist.testing
+                        ? themeColors.primary
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <View style={styles.statusBadgeContent}>
+                    <Text style={styles.statusIcon}>
+                      {connectionStatus.todoist.testing
+                        ? '⏳'
+                        : connectionStatus.todoist.connected
+                        ? '✓'
+                        : '✗'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.statusBadgeText,
+                        {
+                          color: connectionStatus.todoist.connected
+                            ? themeColors.success
+                            : connectionStatus.todoist.testing
+                            ? themeColors.warning
+                            : themeColors.error,
+                        },
+                      ]}
+                    >
+                      {connectionStatus.todoist.testing
+                        ? 'Testing...'
+                        : connectionStatus.todoist.connected
+                        ? 'Connected'
+                        : 'Disconnected'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
 
-            <View style={styles.integrationActions}>
-              <Button
-                title={connectionStatus.todoist.testing ? "Testing..." : "Test Connection"}
-                onPress={() => testTodoistConnection()}
-                variant={connectionStatus.todoist.connected ? "secondary" : "primary"}
-                size="small"
-                theme={theme}
-                disabled={
-                  connectionStatus.todoist.testing || !tempTokens.todoist.trim()
-                }
-                style={styles.actionButton}
-              />
+              <Text
+                style={[
+                  styles.integrationDescription,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
+                Sync your tasks and focus sessions with Todoist for better
+                productivity tracking.
+              </Text>
 
-              {connectionStatus.todoist.connected && (
-                <Button
-                  title="Disconnect"
-                  onPress={() => {
-                    setTempTokens((prev) => ({ ...prev, todoist: '' }));
-                    setConnectionStatus((prev) => ({
-                      ...prev,
-                      todoist: { connected: false, message: 'Disconnected', testing: false },
-                    }));
+              <View style={styles.tokenInputContainer}>
+                <TextInput
+                  style={[
+                    styles.tokenInput,
+                    {
+                      borderColor: themeColors.border,
+                      color: themeColors.text,
+                      backgroundColor: themeColors.surfaceLight,
+                    },
+                  ]}
+                  placeholder="Enter your Todoist API token..."
+                  placeholderTextColor={themeColors.textMuted}
+                  value={tempTokens.todoist}
+                  onChangeText={(text) => {
+                    setTempTokens((prev) => ({ ...prev, todoist: text }));
                     setHasUnsavedChanges(true);
                   }}
-                  variant="outline"
+                  secureTextEntry={tempTokens.todoist.length > 0}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  onPress={() =>
+                    Alert.alert(
+                      'Get Todoist API Token',
+                      '1. Go to todoist.com/prefs/integrations\n2. Find "API token" section\n3. Copy your token\n4. Paste it in the field above',
+                    )
+                  }
+                  style={styles.tokenHelpButton}
+                >
+                  <Text
+                    style={[
+                      styles.tokenHelpText,
+                      { color: themeColors.primary },
+                    ]}
+                  >
+                    ?
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.integrationActions}>
+                <Button
+                  title={
+                    connectionStatus.todoist.testing
+                      ? 'Testing...'
+                      : 'Test Connection'
+                  }
+                  onPress={() => testTodoistConnection()}
+                  variant={
+                    connectionStatus.todoist.connected ? 'secondary' : 'primary'
+                  }
                   size="small"
                   theme={theme}
-                  style={styles.disconnectButton}
-                />
-              )}
-            </View>
-          </View>
-
-          {/* Notion Integration Card */}
-          <View style={[styles.integrationCard, { borderColor: themeColors.border }]}>
-            <View style={styles.integrationHeader}>
-              <View style={styles.integrationTitleRow}>
-                <Text style={[styles.integrationIcon, { color: themeColors.primary }]}>
-                  📝
-                </Text>
-                <Text style={[styles.integrationTitle, { color: themeColors.text }]}>
-                  Notion
-                </Text>
-              </View>
-              <View style={[
-                styles.statusBadge,
-                {
-                  backgroundColor: connectionStatus.notion.connected
-                    ? themeColors.success + '20'
-                    : connectionStatus.notion.testing
-                    ? themeColors.warning + '20'
-                    : themeColors.error + '20'
-                }
-              ]}>
-                <Text style={[
-                  styles.statusBadgeText,
-                  {
-                    color: connectionStatus.notion.connected
-                      ? themeColors.success
-                      : connectionStatus.notion.testing
-                      ? themeColors.warning
-                      : themeColors.error
+                  disabled={
+                    connectionStatus.todoist.testing ||
+                    !tempTokens.todoist.trim()
                   }
-                ]}>
-                  {connectionStatus.notion.testing ? '⏳ Testing...' :
-                   connectionStatus.notion.connected ? '✓ Connected' : '✗ Disconnected'}
-                </Text>
+                  style={styles.actionButton}
+                />
+
+                {connectionStatus.todoist.connected && (
+                  <Button
+                    title="Disconnect"
+                    onPress={() => {
+                      setTempTokens((prev) => ({ ...prev, todoist: '' }));
+                      setConnectionStatus((prev) => ({
+                        ...prev,
+                        todoist: {
+                          connected: false,
+                          message: 'Disconnected',
+                          testing: false,
+                        },
+                      }));
+                      setHasUnsavedChanges(true);
+                    }}
+                    variant="outline"
+                    size="small"
+                    theme={theme}
+                    style={styles.disconnectButton}
+                  />
+                )}
               </View>
+
+              <TouchableOpacity
+                onPress={() =>
+                  setShowOAuthOptions((prev) => ({ ...prev, todoist: true }))
+                }
+                style={styles.switchModeButton}
+              >
+                <Text
+                  style={[
+                    styles.switchModeText,
+                    { color: themeColors.primary },
+                  ]}
+                >
+                  Use OAuth Instead (Recommended)
+                </Text>
+              </TouchableOpacity>
             </View>
+          )}
 
-            <Text style={[styles.integrationDescription, { color: themeColors.textSecondary }]}>
-              Connect your Notion workspace to sync notes, create mind maps, and build neural links.
-            </Text>
-
-            <View style={styles.tokenInputContainer}>
-              <TextInput
-                style={[
-                  styles.tokenInput,
-                  {
-                    borderColor: themeColors.border,
-                    color: themeColors.text,
-                    backgroundColor: themeColors.surfaceLight,
-                  },
-                ]}
-                placeholder="Enter your Notion integration secret..."
-                placeholderTextColor={themeColors.textMuted}
-                value={tempTokens.notion}
-                onChangeText={(text) => {
-                  setTempTokens((prev) => ({ ...prev, notion: text }));
-                  setHasUnsavedChanges(true);
-                }}
-                secureTextEntry={tempTokens.notion.length > 0}
-                autoCapitalize="none"
-                autoCorrect={false}
+          {/* Notion Integration */}
+          {connectionStatus.notion.usingOAuth ? (
+            <OAuthStatusCard
+              service="notion"
+              status={
+                connectionStatus.notion.connected ? 'connected' : 'disconnected'
+              }
+              theme={theme}
+              {...(workspaceInfo.notion
+                ? { workspaceInfo: workspaceInfo.notion }
+                : {})}
+              onReconnect={() => handleOAuthSuccess('notion', {})}
+              onDisconnect={() => handleDisconnectOAuth('notion')}
+            />
+          ) : showOAuthOptions.notion ? (
+            <View>
+              <OAuthButton
+                service="notion"
+                theme={theme}
+                onSuccess={(token) => handleOAuthSuccess('notion', token)}
+                onError={(error) => handleOAuthError('notion', error)}
               />
               <TouchableOpacity
                 onPress={() =>
-                  Alert.alert(
-                    'Get Notion Integration Token',
-                    '1. Go to notion.so/my-integrations\n2. Create new integration\n3. Copy the "Internal Integration Token"\n4. Share your pages with the integration',
-                  )
+                  setShowOAuthOptions((prev) => ({ ...prev, notion: false }))
                 }
-                style={styles.tokenHelpButton}
+                style={styles.switchModeButton}
               >
-                <Text style={[styles.tokenHelpText, { color: themeColors.primary }]}>
-                  ?
+                <Text
+                  style={[
+                    styles.switchModeText,
+                    { color: themeColors.primary },
+                  ]}
+                >
+                  Use Integration Token Instead
                 </Text>
               </TouchableOpacity>
             </View>
+          ) : (
+            <View
+              style={[
+                styles.integrationCard,
+                { borderColor: themeColors.border },
+              ]}
+            >
+              <View style={styles.integrationHeader}>
+                <View style={styles.integrationTitleRow}>
+                  <Text
+                    style={[
+                      styles.integrationIcon,
+                      { color: themeColors.primary },
+                    ]}
+                  >
+                    📝
+                  </Text>
+                  <Text
+                    style={[
+                      styles.integrationTitle,
+                      { color: themeColors.text },
+                    ]}
+                  >
+                    Notion
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    {
+                      backgroundColor: connectionStatus.notion.connected
+                        ? themeColors.success + '20'
+                        : connectionStatus.notion.testing
+                        ? themeColors.warning + '20'
+                        : themeColors.error + '20',
+                      borderWidth: connectionStatus.notion.testing ? 2 : 0,
+                      borderColor: connectionStatus.notion.testing
+                        ? themeColors.primary
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <View style={styles.statusBadgeContent}>
+                    <Text style={styles.statusIcon}>
+                      {connectionStatus.notion.testing
+                        ? '⏳'
+                        : connectionStatus.notion.connected
+                        ? '✓'
+                        : '✗'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.statusBadgeText,
+                        {
+                          color: connectionStatus.notion.connected
+                            ? themeColors.success
+                            : connectionStatus.notion.testing
+                            ? themeColors.warning
+                            : themeColors.error,
+                        },
+                      ]}
+                    >
+                      {connectionStatus.notion.testing
+                        ? 'Testing...'
+                        : connectionStatus.notion.connected
+                        ? 'Connected'
+                        : 'Disconnected'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
 
-            <View style={styles.integrationActions}>
-              <Button
-                title={connectionStatus.notion.testing ? "Testing..." : "Test Connection"}
-                onPress={testNotionConnection}
-                variant={connectionStatus.notion.connected ? "secondary" : "primary"}
-                size="small"
-                theme={theme}
-                disabled={
-                  connectionStatus.notion.testing || !tempTokens.notion.trim()
-                }
-                style={styles.actionButton}
-              />
+              <Text
+                style={[
+                  styles.integrationDescription,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
+                Connect your Notion workspace to sync notes, create mind maps,
+                and build neural links.
+              </Text>
 
-              {connectionStatus.notion.connected && (
-                <Button
-                  title="Disconnect"
-                  onPress={() => {
-                    setTempTokens((prev) => ({ ...prev, notion: '' }));
-                    setConnectionStatus((prev) => ({
-                      ...prev,
-                      notion: { connected: false, message: 'Disconnected', testing: false },
-                    }));
+              <View style={styles.tokenInputContainer}>
+                <TextInput
+                  style={[
+                    styles.tokenInput,
+                    {
+                      borderColor: themeColors.border,
+                      color: themeColors.text,
+                      backgroundColor: themeColors.surfaceLight,
+                    },
+                  ]}
+                  placeholder="Enter your Notion integration secret..."
+                  placeholderTextColor={themeColors.textMuted}
+                  value={tempTokens.notion}
+                  onChangeText={(text) => {
+                    setTempTokens((prev) => ({ ...prev, notion: text }));
                     setHasUnsavedChanges(true);
                   }}
-                  variant="outline"
+                  secureTextEntry={tempTokens.notion.length > 0}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  onPress={() =>
+                    Alert.alert(
+                      'Get Notion Integration Token',
+                      '1. Go to notion.so/my-integrations\n2. Create new integration\n3. Copy the "Internal Integration Token"\n4. Share your pages with the integration',
+                    )
+                  }
+                  style={styles.tokenHelpButton}
+                >
+                  <Text
+                    style={[
+                      styles.tokenHelpText,
+                      { color: themeColors.primary },
+                    ]}
+                  >
+                    ?
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.integrationActions}>
+                <Button
+                  title={
+                    connectionStatus.notion.testing
+                      ? 'Testing...'
+                      : 'Test Connection'
+                  }
+                  onPress={testNotionConnection}
+                  variant={
+                    connectionStatus.notion.connected ? 'secondary' : 'primary'
+                  }
                   size="small"
                   theme={theme}
-                  style={styles.disconnectButton}
+                  disabled={
+                    connectionStatus.notion.testing || !tempTokens.notion.trim()
+                  }
+                  style={styles.actionButton}
                 />
-              )}
+
+                {connectionStatus.notion.connected && (
+                  <Button
+                    title="Disconnect"
+                    onPress={() => {
+                      setTempTokens((prev) => ({ ...prev, notion: '' }));
+                      setConnectionStatus((prev) => ({
+                        ...prev,
+                        notion: {
+                          connected: false,
+                          message: 'Disconnected',
+                          testing: false,
+                        },
+                      }));
+                      setHasUnsavedChanges(true);
+                    }}
+                    variant="outline"
+                    size="small"
+                    theme={theme}
+                    style={styles.disconnectButton}
+                  />
+                )}
+              </View>
+
+              <TouchableOpacity
+                onPress={() =>
+                  setShowOAuthOptions((prev) => ({ ...prev, notion: true }))
+                }
+                style={styles.switchModeButton}
+              >
+                <Text
+                  style={[
+                    styles.switchModeText,
+                    { color: themeColors.primary },
+                  ]}
+                >
+                  Use OAuth Instead (Recommended)
+                </Text>
+              </TouchableOpacity>
             </View>
-          </View>
+          )}
 
           {/* Sync Progress Overlay */}
           {syncProgress && (
@@ -793,7 +1449,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     { color: themeColors.text },
                   ]}
                 >
-                  🔄 Syncing with Notion
+                  🔄 Syncing with{' '}
+                  {syncProgress.service === 'notion'
+                    ? 'Notion'
+                    : syncProgress.service === 'todoist'
+                    ? 'Todoist'
+                    : 'Service'}
                 </Text>
                 <Text
                   style={[
@@ -801,13 +1462,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     { color: themeColors.textSecondary },
                   ]}
                 >
-                  {syncProgress}
+                  {syncProgress.message}
                 </Text>
                 <View style={styles.syncProgressBar}>
                   <View
                     style={[
                       styles.syncProgressFill,
-                      { backgroundColor: themeColors.primary },
+                      {
+                        backgroundColor: themeColors.primary,
+                        width: `${syncProgress.progress}%`,
+                      },
                     ]}
                   />
                 </View>
@@ -1093,12 +1757,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         {hasUnsavedChanges && (
           <View style={styles.saveSection}>
             <Button
-              title={saving ? 'Saving Settings...' : 'Save All Changes'}
+              title={
+                loadingStates.savingSettings
+                  ? 'Saving Settings...'
+                  : 'Save All Changes'
+              }
               onPress={saveSettings}
               variant="primary"
               size="large"
               theme={theme}
-              disabled={saving}
+              disabled={loadingStates.savingSettings}
               style={styles.saveButton}
             />
           </View>
@@ -1219,6 +1887,15 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,
     alignSelf: 'flex-start',
+  },
+  statusBadgeContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  statusIcon: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   statusBadgeText: {
     ...typography.caption,
@@ -1376,5 +2053,17 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '60%', // Fixed progress for demo
     borderRadius: 2,
+  },
+
+  // OAuth Mode Switching
+  switchModeButton: {
+    alignItems: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  switchModeText: {
+    ...typography.bodySmall,
+    textDecorationLine: 'underline',
+    fontWeight: '600',
   },
 });

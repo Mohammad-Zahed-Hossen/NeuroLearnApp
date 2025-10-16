@@ -1,4 +1,4 @@
-/**
+ /**
  * CalculationEngine - Enhanced Cross-Module Calculation Engine
  *
  * Advanced calculation engine for cross-module correlations, predictive analytics,
@@ -7,6 +7,7 @@
  */
 
 import { Logger } from './utils/Logger';
+import { CalculationWorkerMessage, CalculationWorkerResponse, createCalculationMessage } from '../types/calculationWorkerMessages';
 
 export interface CalculationRequest {
   type: string;
@@ -16,6 +17,7 @@ export interface CalculationRequest {
     async?: boolean;
     cache?: boolean;
     timeout?: number;
+    progressive?: ProgressiveComputationOptions;
   };
 }
 
@@ -52,6 +54,27 @@ export interface PredictionResult {
   accuracy?: number;
 }
 
+export interface ProgressiveComputationOptions {
+  chunkSize?: number;
+  onProgress?: (progress: number, partialResult?: any) => void;
+  onChunkComplete?: (chunkIndex: number, chunkResult: any) => void;
+  cancellationToken?: { cancelled: boolean };
+}
+
+export interface CacheEntry {
+  result: any;
+  timestamp: number;
+  ttl: number;
+  hits: number;
+  accessCount: number;
+  lastAccessed: number;
+  metadata?: {
+    computationTime: number;
+    dataSize: number;
+    complexity: number;
+  };
+}
+
 /**
  * Enhanced Calculation Engine
  *
@@ -60,8 +83,18 @@ export interface PredictionResult {
 export class CalculationEngine {
   private logger: Logger;
   private isInitialized = false;
-  private calculationCache: Map<string, { result: any; timestamp: number; ttl: number }> = new Map();
+  private calculationCache: Map<string, CacheEntry> = new Map();
   private performanceMetrics: Map<string, { count: number; totalTime: number; avgTime: number }> = new Map();
+  private calculationWorker: Worker | null = null;
+  private workerPromises: Map<string, { resolve: Function; reject: Function; timeout: NodeJS.Timeout }> = new Map();
+  private cacheStats = { hits: 0, misses: 0, totalRequests: 0 };
+  private progressiveChunkSize = 1000;
+  private workerSupportedTypes = new Set([
+    'calculate_pearson',
+    'perform_stats',
+    'calculate_trend',
+    'statistical_analysis'
+  ]);
 
   constructor() {
     this.logger = new Logger('CalculationEngine');
@@ -77,6 +110,9 @@ export class CalculationEngine {
       // Initialize calculation modules
       await this.initializeStatisticalModels();
       await this.initializeMLModels();
+
+      // Initialize calculation worker
+      await this.initializeWorker();
 
       this.isInitialized = true;
       this.logger.info('Calculation Engine initialized successfully');
@@ -239,23 +275,79 @@ export class CalculationEngine {
   private async calculateCrossModuleCorrelations(data: any, options: any): Promise<CorrelationResult[]> {
     const { learningSessions, includeModules = ['wellness', 'finance', 'context'] } = data;
     const correlations: CorrelationResult[] = [];
+    const progressiveOptions = options.progressive as ProgressiveComputationOptions | undefined;
+    const chunkSize = progressiveOptions?.chunkSize || this.progressiveChunkSize;
 
-    for (const module of includeModules) {
-      const moduleData = data[`${module}Data`] || [];
+    // Prepare learning performance data once
+    const learningPerformance = learningSessions.map((s: any) => s.performance);
 
-      if (moduleData.length > 0) {
-        const correlation = await this.calculatePearsonCorrelation(
-          learningSessions.map((s: any) => s.performance),
-          moduleData.map((d: any) => d.value || d.score || 0)
-        );
+    // Process modules in chunks if progressive computation is enabled
+    if (progressiveOptions && includeModules.length > chunkSize) {
+      const chunks: any[][] = [];
+      for (let i = 0; i < includeModules.length; i += chunkSize) {
+        chunks.push(includeModules.slice(i, i + chunkSize));
+      }
 
-        correlations.push({
-          strength: Math.abs(correlation.coefficient),
-          significance: correlation.pValue < 0.05 ? 1 : 0,
-          direction: correlation.coefficient > 0 ? 'positive' : 'negative',
-          factors: [module],
-          reliability: correlation.reliability
-        });
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        // Check for cancellation
+        if (progressiveOptions.cancellationToken?.cancelled) {
+          throw new Error('Cross-module correlation calculation was cancelled');
+        }
+
+        const chunk = chunks[chunkIndex]!;
+        const chunkCorrelations: CorrelationResult[] = [];
+
+        for (const module of chunk) {
+          const moduleData = data[`${module}Data`] || [];
+
+          if (moduleData.length > 0) {
+            const correlation = await this.calculatePearsonCorrelation(
+              learningPerformance,
+              moduleData.map((d: any) => d.value || d.score || 0)
+            );
+
+            const correlationResult: CorrelationResult = {
+              strength: Math.abs(correlation.coefficient),
+              significance: correlation.pValue < 0.05 ? 1 : 0,
+              direction: correlation.coefficient > 0 ? 'positive' : 'negative',
+              factors: [module],
+              reliability: correlation.reliability
+            };
+
+            chunkCorrelations.push(correlationResult);
+            correlations.push(correlationResult);
+          }
+        }
+
+        // Report progress and chunk completion
+        const progress = ((chunkIndex + 1) / chunks.length) * 100;
+        progressiveOptions.onProgress?.(progress, correlations);
+        progressiveOptions.onChunkComplete?.(chunkIndex, chunkCorrelations);
+      }
+    } else {
+      // Process all modules at once for smaller datasets
+      for (const module of includeModules) {
+        // Check for cancellation
+        if (progressiveOptions?.cancellationToken?.cancelled) {
+          throw new Error('Cross-module correlation calculation was cancelled');
+        }
+
+        const moduleData = data[`${module}Data`] || [];
+
+        if (moduleData.length > 0) {
+          const correlation = await this.calculatePearsonCorrelation(
+            learningPerformance,
+            moduleData.map((d: any) => d.value || d.score || 0)
+          );
+
+          correlations.push({
+            strength: Math.abs(correlation.coefficient),
+            significance: correlation.pValue < 0.05 ? 1 : 0,
+            direction: correlation.coefficient > 0 ? 'positive' : 'negative',
+            factors: [module],
+            reliability: correlation.reliability
+          });
+        }
       }
     }
 
@@ -516,7 +608,7 @@ export class CalculationEngine {
     const { historicalData, currentState, timeframe = '24h' } = data;
 
     // Simple linear regression for performance prediction
-  const performanceTrend = this.calculateTrend(historicalData.map((h: any) => h.performance));
+    const performanceTrend = await this.calculateTrend(historicalData.map((h: any) => h.performance));
     const cognitiveInfluence = this.calculateCognitiveInfluence(currentState);
 
     const predictedPerformance = Math.max(0, Math.min(1,
@@ -593,35 +685,135 @@ export class CalculationEngine {
 
   private async performStatisticalAnalysis(data: any, options: any): Promise<any> {
     const { values, analysisType = 'descriptive' } = data;
+    const progressiveOptions = options.progressive as ProgressiveComputationOptions | undefined;
+    const chunkSize = progressiveOptions?.chunkSize || this.progressiveChunkSize;
 
     if (!Array.isArray(values) || values.length === 0) {
       return { error: 'Invalid data for statistical analysis' };
     }
 
+    // Use worker for heavy calculations if available
+    if (this.calculationWorker && this.workerSupportedTypes.has('perform_stats')) {
+      try {
+        return await this.offloadToWorker('perform_stats', { values, analysisType });
+      } catch (error) {
+        this.logger.warn('Worker calculation failed for statistical analysis, falling back to main thread', error);
+      }
+    }
+
     const results: any = {};
 
-    // Descriptive statistics
-    results.descriptive = {
-      mean: this.calculateMean(values),
-      median: this.calculateMedian(values),
-      mode: this.calculateMode(values),
-      standardDeviation: this.calculateStandardDeviation(values),
-      variance: this.calculateVariance(values),
-      min: Math.min(...values),
-      max: Math.max(...values),
-      range: Math.max(...values) - Math.min(...values),
-      count: values.length
-    };
+    // Check if progressive computation is needed
+    if (progressiveOptions && values.length > chunkSize) {
+      // Process in chunks for large datasets
+      const chunks: number[][] = [];
+      for (let i = 0; i < values.length; i += chunkSize) {
+        chunks.push(values.slice(i, i + chunkSize));
+      }
 
-    if (analysisType === 'comprehensive') {
-      results.distribution = {
-        skewness: this.calculateSkewness(values),
-        kurtosis: this.calculateKurtosis(values),
-        quartiles: this.calculateQuartiles(values)
+      let cumulativeStats = {
+        sum: 0,
+        sumSquares: 0,
+        count: 0,
+        min: Infinity,
+        max: -Infinity,
+        values: [] as number[]
       };
 
-      results.outliers = this.detectOutliers(values);
-      results.trends = this.calculateTrend(values);
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        // Check for cancellation
+        if (progressiveOptions.cancellationToken?.cancelled) {
+          throw new Error('Statistical analysis was cancelled');
+        }
+
+        const chunk = chunks[chunkIndex]!;
+        cumulativeStats.sum += chunk.reduce((a, b) => a + b, 0);
+        cumulativeStats.sumSquares += chunk.reduce((a, b) => a + b * b, 0);
+        cumulativeStats.count += chunk.length;
+        cumulativeStats.min = Math.min(cumulativeStats.min, ...chunk);
+        cumulativeStats.max = Math.max(cumulativeStats.max, ...chunk);
+        cumulativeStats.values.push(...chunk);
+
+        // Report progress
+        const progress = ((chunkIndex + 1) / chunks.length) * 50; // First 50% for descriptive stats
+        progressiveOptions.onProgress?.(progress, { partialStats: cumulativeStats });
+        progressiveOptions.onChunkComplete?.(chunkIndex, { chunkStats: this.calculateDescriptiveStats(chunk) });
+      }
+
+      // Calculate final descriptive statistics
+      const mean = cumulativeStats.sum / cumulativeStats.count;
+      const variance = (cumulativeStats.sumSquares / cumulativeStats.count) - (mean * mean);
+      const stdDev = Math.sqrt(variance);
+
+      results.descriptive = {
+        mean,
+        median: this.calculateMedian(cumulativeStats.values),
+        mode: this.calculateMode(cumulativeStats.values),
+        standardDeviation: stdDev,
+        variance,
+        min: cumulativeStats.min,
+        max: cumulativeStats.max,
+        range: cumulativeStats.max - cumulativeStats.min,
+        count: cumulativeStats.count
+      };
+
+      if (analysisType === 'comprehensive') {
+        // For comprehensive, process distribution in chunks
+        let skewnessSum = 0;
+        let kurtosisSum = 0;
+
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+          // Check for cancellation
+          if (progressiveOptions.cancellationToken?.cancelled) {
+            throw new Error('Statistical analysis was cancelled');
+          }
+
+          const chunk = chunks[chunkIndex]!;
+          const chunkSkew = chunk.reduce((sum, val) => sum + Math.pow((val - mean) / stdDev, 3), 0);
+          const chunkKurt = chunk.reduce((sum, val) => sum + Math.pow((val - mean) / stdDev, 4), 0);
+          skewnessSum += chunkSkew;
+          kurtosisSum += chunkKurt;
+
+          // Report progress (50-100% for comprehensive)
+          const progress = 50 + ((chunkIndex + 1) / chunks.length) * 50;
+          progressiveOptions.onProgress?.(progress, { partialDistribution: { skewness: skewnessSum, kurtosis: kurtosisSum } });
+        }
+
+        const n = cumulativeStats.count;
+        results.distribution = {
+          skewness: (n / ((n - 1) * (n - 2))) * skewnessSum,
+          kurtosis: ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * kurtosisSum - (3 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3)),
+          quartiles: this.calculateQuartiles(cumulativeStats.values)
+        };
+
+        results.outliers = this.detectOutliers(cumulativeStats.values);
+        results.trends = await this.calculateTrend(cumulativeStats.values);
+      }
+    } else {
+      // Process all at once for smaller datasets
+      // Descriptive statistics
+      results.descriptive = {
+        mean: this.calculateMean(values),
+        median: this.calculateMedian(values),
+        mode: this.calculateMode(values),
+        standardDeviation: this.calculateStandardDeviation(values),
+        variance: this.calculateVariance(values),
+        min: Math.min(...values),
+        max: Math.max(...values),
+        range: Math.max(...values) - Math.min(...values),
+        count: values.length
+      };
+
+      if (analysisType === 'comprehensive') {
+        results.distribution = {
+          skewness: this.calculateSkewness(values),
+          kurtosis: this.calculateKurtosis(values),
+          quartiles: this.calculateQuartiles(values)
+        };
+
+        results.outliers = this.detectOutliers(values);
+        results.trends = await this.calculateTrend(values);
+      }
     }
 
     return results;
@@ -639,6 +831,73 @@ export class CalculationEngine {
     this.logger.debug('Initializing ML models...');
   }
 
+  private async initializeWorker(): Promise<void> {
+    // Initialize calculation worker for heavy computations
+    this.logger.debug('Initializing calculation worker...');
+
+    try {
+      // Create worker for offloading heavy calculations
+      if (typeof Worker !== 'undefined') {
+        // In browser environment
+        this.calculationWorker = new Worker('/workers/calculationWorker.js');
+        this.setupWorkerMessageHandler();
+      } else {
+        // In Node.js environment, skip worker initialization
+        this.logger.debug('Worker not available in current environment');
+      }
+    } catch (error) {
+      this.logger.warn('Failed to initialize calculation worker, continuing without it', error);
+    }
+  }
+
+  private setupWorkerMessageHandler(): void {
+    if (!this.calculationWorker) return;
+
+    this.calculationWorker.onmessage = (event: MessageEvent<CalculationWorkerResponse>) => {
+      const { id, data, error } = event.data;
+      const promise = this.workerPromises.get(id);
+
+      if (promise) {
+        this.workerPromises.delete(id);
+        clearTimeout(promise.timeout);
+
+        if (error) {
+          promise.reject(new Error(error));
+        } else {
+          promise.resolve(data);
+        }
+      }
+    };
+
+    this.calculationWorker.onerror = (error) => {
+      this.logger.error('Calculation worker error', error);
+      // Reject all pending promises
+      for (const [id, promise] of this.workerPromises.entries()) {
+        promise.reject(new Error('Worker error occurred'));
+        this.workerPromises.delete(id);
+      }
+    };
+  }
+
+  private async offloadToWorker(type: string, data: any, timeout: number = 30000): Promise<any> {
+    if (!this.calculationWorker) {
+      throw new Error('Calculation worker not available');
+    }
+
+    const id = `${type}_${Date.now()}_${Math.random()}`;
+    const message = createCalculationMessage(type as CalculationWorkerMessage['type'], data, id);
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.workerPromises.delete(id);
+        reject(new Error(`Worker calculation timeout for ${type}`));
+      }, timeout);
+
+      this.workerPromises.set(id, { resolve, reject, timeout: timeoutId });
+      this.calculationWorker!.postMessage(message);
+    });
+  }
+
   private async getDomainData(domain: string, timeframe: string): Promise<any[]> {
     // Mock implementation - would integrate with actual data sources
     return [];
@@ -647,6 +906,15 @@ export class CalculationEngine {
   private async calculatePearsonCorrelation(x: number[], y: number[]): Promise<any> {
     if (x.length !== y.length || x.length < 2) {
       return { coefficient: 0, pValue: 1, reliability: 0 };
+    }
+
+    // Use worker for heavy calculations if available
+    if (this.calculationWorker && this.workerSupportedTypes.has('calculate_pearson')) {
+      try {
+        return await this.offloadToWorker('calculate_pearson', { x, y });
+      } catch (error) {
+        this.logger.warn('Worker calculation failed, falling back to main thread', error);
+      }
     }
 
     const n = x.length;
@@ -658,8 +926,11 @@ export class CalculationEngine {
     let sumYSquared = 0;
 
     for (let i = 0; i < n; i++) {
-      const xDiff = x[i] - meanX;
-      const yDiff = y[i] - meanY;
+      const xVal = x[i];
+      const yVal = y[i];
+      if (xVal == null || yVal == null) continue;
+      const xDiff = xVal - meanX;
+      const yDiff = yVal - meanY;
       numerator += xDiff * yDiff;
       sumXSquared += xDiff * xDiff;
       sumYSquared += yDiff * yDiff;
@@ -693,21 +964,24 @@ export class CalculationEngine {
   private calculateMedian(values: number[]): number {
     const sorted = [...values].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
   }
 
   private calculateMode(values: number[]): number {
+    if (!Array.isArray(values) || values.length === 0) return 0;
+
     const frequency: Record<number, number> = {};
     values.forEach(val => frequency[val] = (frequency[val] || 0) + 1);
 
-    let maxFreq = 0;
-    let mode = values[0];
+  let maxFreq = 0;
+  let mode: number = values[0] ?? 0;
     for (const [val, freq] of Object.entries(frequency)) {
       if (freq > maxFreq) {
         maxFreq = freq;
         mode = parseFloat(val);
       }
     }
+
     return mode;
   }
 
@@ -754,10 +1028,13 @@ export class CalculationEngine {
     const sorted = [...values].sort((a, b) => a - b);
     const n = sorted.length;
 
+    const q1Index = Math.floor(n * 0.25);
+    const q3Index = Math.floor(n * 0.75);
+
     return {
-      q1: sorted[Math.floor(n * 0.25)],
+      q1: sorted[q1Index] as number,
       q2: this.calculateMedian(sorted),
-      q3: sorted[Math.floor(n * 0.75)]
+      q3: sorted[q3Index] as number
     };
   }
 
@@ -770,9 +1047,18 @@ export class CalculationEngine {
     return values.filter(val => val < lowerBound || val > upperBound);
   }
 
-  private calculateTrend(values: number[]): any {
+  private async calculateTrend(values: number[]): Promise<any> {
     if (values.length < 2) {
       return { slope: 0, nextValue: values[0] || 0, confidence: 0 };
+    }
+
+    // Use worker for heavy calculations if available
+    if (this.calculationWorker && this.workerSupportedTypes.has('calculate_trend')) {
+      try {
+        return await this.offloadToWorker('calculate_trend', { values });
+      } catch (error) {
+        this.logger.warn('Worker calculation failed for trend calculation, falling back to main thread', error);
+      }
     }
 
     const n = values.length;
@@ -786,8 +1072,8 @@ export class CalculationEngine {
     let denominator = 0;
 
     for (let i = 0; i < n; i++) {
-      numerator += (x[i] - meanX) * (y[i] - meanY);
-      denominator += (x[i] - meanX) * (x[i] - meanX);
+      numerator += (x[i]! - meanX) * (y[i]! - meanY);
+      denominator += (x[i]! - meanX) * (x[i]! - meanX);
     }
 
     const slope = denominator === 0 ? 0 : numerator / denominator;
@@ -796,7 +1082,7 @@ export class CalculationEngine {
 
     // Calculate R-squared for confidence
     const yPredicted = x.map(xi => slope * xi + intercept);
-    const ssRes = y.reduce((sum, yi, i) => sum + Math.pow(yi - yPredicted[i], 2), 0);
+    const ssRes = y.reduce((sum, yi, i) => sum + Math.pow(yi - yPredicted[i]!, 2), 0);
     const ssTot = y.reduce((sum, yi) => sum + Math.pow(yi - meanY, 2), 0);
     const rSquared = ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
 
@@ -824,6 +1110,11 @@ export class CalculationEngine {
     const cached = this.calculationCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < cached.ttl) {
+      // Increment hit counter
+      cached.hits++;
+      this.cacheStats.hits++;
+      this.cacheStats.totalRequests++;
+      this.logger.debug(`Cache hit for key: ${key}, hits: ${cached.hits}`);
       return cached.result;
     }
 
@@ -831,14 +1122,26 @@ export class CalculationEngine {
       this.calculationCache.delete(key);
     }
 
+    // Track cache miss
+    this.cacheStats.misses++;
+    this.cacheStats.totalRequests++;
     return null;
   }
 
   private storeInCache(key: string, result: any, ttl: number): void {
+    const now = Date.now();
     this.calculationCache.set(key, {
       result,
-      timestamp: Date.now(),
-      ttl
+      timestamp: now,
+      ttl,
+      hits: 0,
+      accessCount: 0,
+      lastAccessed: now,
+      metadata: {
+        computationTime: 0, // Will be updated when result is retrieved
+        dataSize: JSON.stringify(result).length,
+        complexity: 1 // Default complexity
+      }
     });
   }
 
@@ -956,6 +1259,20 @@ export class CalculationEngine {
 
   private async optimizeAlgorithms(): Promise<void> {
     // Placeholder for algorithm optimization
+  }
+
+  private calculateDescriptiveStats(values: number[]): any {
+    return {
+      mean: this.calculateMean(values),
+      median: this.calculateMedian(values),
+      mode: this.calculateMode(values),
+      standardDeviation: this.calculateStandardDeviation(values),
+      variance: this.calculateVariance(values),
+      min: Math.min(...values),
+      max: Math.max(...values),
+      range: Math.max(...values) - Math.min(...values),
+      count: values.length
+    };
   }
 }
 

@@ -31,6 +31,10 @@ export default {
       predictiveBackGestureEnabled: false,
     },
     scheme: 'neurolearn',
+    deepLinking: {
+      scheme: 'neurolearn',
+      prefixes: ['neurolearn://'],
+    },
     web: {
       favicon: './assets/favicon.png',
     },
@@ -39,6 +43,9 @@ export default {
       SUPABASE_URL: process.env.SUPABASE_URL,
       SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
       ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
+      // Only expose public client IDs and redirect URIs - secrets stay server-side
+      EXPO_PUBLIC_TODOIST_CLIENT_ID: process.env.EXPO_PUBLIC_TODOIST_CLIENT_ID,
+      EXPO_PUBLIC_NOTION_CLIENT_ID: process.env.EXPO_PUBLIC_NOTION_CLIENT_ID,
     },
   },
 };

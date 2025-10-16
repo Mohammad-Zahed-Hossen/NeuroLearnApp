@@ -31,6 +31,8 @@ import {
 } from '../hooks/useOptimizedSelectors';
 
 import PerformanceMonitor from '../utils/PerformanceMonitor';
+import { perf } from '../utils/perfMarks';
+import EngineIntegrationTest from '../utils/EngineIntegrationTest';
 
 interface DashboardScreenProps {
   theme: ThemeType;
@@ -70,10 +72,123 @@ interface MetricGroup {
   metrics: Metric[];
 }
 
+// Helper functions for metric groups
+const getLearningProgressGroup = (stats: DashboardStats): MetricGroup => {
+  const hasData =
+    stats.dueCards > 0 ||
+    stats.logicNodesDue > 0 ||
+    stats.atRiskCards > 0 ||
+    stats.retentionRate > 0;
+  return {
+    id: 'learning',
+    title: 'Learning Progress',
+    icon: '📚',
+    subtitle: hasData
+      ? `${stats.dueCards + stats.logicNodesDue} items due`
+      : 'No learning data yet',
+    metrics: hasData
+      ? [
+          { icon: '📚', value: stats.dueCards, label: 'Due Cards' },
+          { icon: '🧠', value: stats.logicNodesDue, label: 'Logic Nodes' },
+          { icon: '⚠️', value: stats.atRiskCards, label: 'At Risk' },
+          {
+            icon: '📊',
+            value: `${stats.retentionRate}%`,
+            label: 'Retention',
+          },
+        ]
+      : [
+          { icon: '📚', value: '-', label: 'Due Cards' },
+          { icon: '🧠', value: '-', label: 'Logic Nodes' },
+          { icon: '⚠️', value: '-', label: 'At Risk' },
+          { icon: '📊', value: '-', label: 'Retention' },
+        ],
+  };
+};
+
+const getCognitiveHealthGroup = (stats: DashboardStats): MetricGroup => {
+  const hasData =
+    stats.focusStreak > 0 ||
+    stats.averageFocusRating > 0 ||
+    stats.distractionsPerSession > 0 ||
+    stats.cognitiveLoad > 0;
+  return {
+    id: 'cognitive',
+    title: 'Cognitive Health',
+    icon: '🧠',
+    subtitle: hasData ? 'Focus & mental state' : 'No focus data yet',
+    metrics: hasData
+      ? [
+          { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
+          {
+            icon: '⭐',
+            value: stats.averageFocusRating.toFixed(1),
+            label: 'Focus Rating',
+          },
+          {
+            icon: '😬',
+            value: stats.distractionsPerSession.toFixed(1),
+            label: 'Distractions/Session',
+          },
+          {
+            icon: '🧠',
+            value: stats.cognitiveLoad.toFixed(1),
+            label: 'Cognitive Load',
+          },
+        ]
+      : [
+          { icon: '🔥', value: '-', label: 'Focus Streak' },
+          { icon: '⭐', value: '-', label: 'Focus Rating' },
+          { icon: '😬', value: '-', label: 'Distractions/Session' },
+          { icon: '🧠', value: '-', label: 'Cognitive Load' },
+        ],
+  };
+};
+
+const getPerformanceGroup = (stats: DashboardStats): MetricGroup => {
+  const hasData =
+    stats.studyStreak > 0 ||
+    stats.criticalLogicCount > 0 ||
+    stats.weeklyProgress > 0 ||
+    stats.todayFocusTime > 0;
+  return {
+    id: 'performance',
+    title: 'Performance',
+    icon: '📈',
+    subtitle: hasData ? 'Streaks & achievements' : 'No performance data yet',
+    metrics: hasData
+      ? [
+          { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
+          {
+            icon: '🎯',
+            value: stats.criticalLogicCount,
+            label: 'Critical Logic',
+          },
+          {
+            icon: '📈',
+            value: `${stats.weeklyProgress}%`,
+            label: 'Weekly Progress',
+          },
+          {
+            icon: '⏱️',
+            value: stats.todayFocusTime,
+            label: 'Today Focus (min)',
+          },
+        ]
+      : [
+          { icon: '🔥', value: '-', label: 'Day Streak' },
+          { icon: '🎯', value: '-', label: 'Critical Logic' },
+          { icon: '📈', value: '-', label: 'Weekly Progress' },
+          { icon: '⏱️', value: '-', label: 'Today Focus (min)' },
+        ],
+  };
+};
+
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   theme,
   onNavigate,
 }) => {
+  const mountMarkRef = React.useRef<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
@@ -95,6 +210,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   // Load dashboard data on mount and animate header
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('DashboardScreen');
     setLoading(false); // Assume data is reactive via optimized selectors
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -102,6 +218,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       useNativeDriver: true,
     }).start();
   }, [fadeAnim]);
+
+  useEffect(() => {
+    // measure ready when loading flips to false
+    if (!loading && mountMarkRef.current) {
+      try {
+        perf.measureReady('DashboardScreen', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [loading]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -209,122 +335,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return 'System optimized. Continue with current learning schedule.';
   };
 
-  // Dynamic metric groups configuration - always show all groups but with conditional content
-  const getLearningProgressGroup = (): MetricGroup => {
-    const hasData =
-      stats.dueCards > 0 ||
-      stats.logicNodesDue > 0 ||
-      stats.atRiskCards > 0 ||
-      stats.retentionRate > 0;
-    return {
-      id: 'learning',
-      title: 'Learning Progress',
-      icon: '📚',
-      subtitle: hasData
-        ? `${stats.dueCards + stats.logicNodesDue} items due`
-        : 'No learning data yet',
-      metrics: hasData
-        ? [
-            { icon: '📚', value: stats.dueCards, label: 'Due Cards' },
-            { icon: '🧠', value: stats.logicNodesDue, label: 'Logic Nodes' },
-            { icon: '⚠️', value: stats.atRiskCards, label: 'At Risk' },
-            {
-              icon: '📊',
-              value: `${stats.retentionRate}%`,
-              label: 'Retention',
-            },
-          ]
-        : [
-            { icon: '📚', value: '-', label: 'Due Cards' },
-            { icon: '🧠', value: '-', label: 'Logic Nodes' },
-            { icon: '⚠️', value: '-', label: 'At Risk' },
-            { icon: '📊', value: '-', label: 'Retention' },
-          ],
-    };
-  };
-
-  const getCognitiveHealthGroup = (): MetricGroup => {
-    const hasData =
-      stats.focusStreak > 0 ||
-      stats.averageFocusRating > 0 ||
-      stats.distractionsPerSession > 0 ||
-      stats.cognitiveLoad > 0;
-    return {
-      id: 'cognitive',
-      title: 'Cognitive Health',
-      icon: '🧠',
-      subtitle: hasData ? 'Focus & mental state' : 'No focus data yet',
-      metrics: hasData
-        ? [
-            { icon: '🔥', value: stats.focusStreak, label: 'Focus Streak' },
-            {
-              icon: '⭐',
-              value: stats.averageFocusRating.toFixed(1),
-              label: 'Focus Rating',
-            },
-            {
-              icon: '😬',
-              value: stats.distractionsPerSession.toFixed(1),
-              label: 'Distractions/Session',
-            },
-            {
-              icon: '🧠',
-              value: stats.cognitiveLoad.toFixed(1),
-              label: 'Cognitive Load',
-            },
-          ]
-        : [
-            { icon: '🔥', value: '-', label: 'Focus Streak' },
-            { icon: '⭐', value: '-', label: 'Focus Rating' },
-            { icon: '😬', value: '-', label: 'Distractions/Session' },
-            { icon: '🧠', value: '-', label: 'Cognitive Load' },
-          ],
-    };
-  };
-
-  const getPerformanceGroup = (): MetricGroup => {
-    const hasData =
-      stats.studyStreak > 0 ||
-      stats.criticalLogicCount > 0 ||
-      stats.weeklyProgress > 0 ||
-      stats.todayFocusTime > 0;
-    return {
-      id: 'performance',
-      title: 'Performance',
-      icon: '📈',
-      subtitle: hasData ? 'Streaks & achievements' : 'No performance data yet',
-      metrics: hasData
-        ? [
-            { icon: '🔥', value: stats.studyStreak, label: 'Day Streak' },
-            {
-              icon: '🎯',
-              value: stats.criticalLogicCount,
-              label: 'Critical Logic',
-            },
-            {
-              icon: '📈',
-              value: `${stats.weeklyProgress}%`,
-              label: 'Weekly Progress',
-            },
-            {
-              icon: '⏱️',
-              value: stats.todayFocusTime,
-              label: 'Today Focus (min)',
-            },
-          ]
-        : [
-            { icon: '🔥', value: '-', label: 'Day Streak' },
-            { icon: '🎯', value: '-', label: 'Critical Logic' },
-            { icon: '📈', value: '-', label: 'Weekly Progress' },
-            { icon: '⏱️', value: '-', label: 'Today Focus (min)' },
-          ],
-    };
-  };
-
   const metricGroups: MetricGroup[] = [
-    getLearningProgressGroup(),
-    getCognitiveHealthGroup(),
-    getPerformanceGroup(),
+    getLearningProgressGroup(stats),
+    getCognitiveHealthGroup(stats),
+    getPerformanceGroup(stats),
   ];
 
   if (loading) {
@@ -511,6 +525,31 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               style={styles.actionButton}
             />
           </View>
+
+          {/* Engine Test Button (Development Only) */}
+          {__DEV__ && (
+            <View style={styles.testSection}>
+              <Button
+                title="🔧 Test Engine"
+                onPress={async () => {
+                  try {
+                    const result = await EngineIntegrationTest.runBasicTest();
+                    Alert.alert(
+                      'Engine Test Results',
+                      `Success: ${result.success}\n\nResults:\n${result.results.join('\n')}\n\nErrors:\n${result.errors.join('\n')}`,
+                      [{ text: 'OK' }]
+                    );
+                  } catch (error) {
+                    Alert.alert('Test Failed', `Error: ${error}`);
+                  }
+                }}
+                variant="outline"
+                size="small"
+                theme={theme}
+                style={styles.testButton}
+              />
+            </View>
+          )}
         </GlassCard>
 
         {/* Performance Summary */}
@@ -1112,5 +1151,16 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     fontWeight: '600',
     textAlign: 'center',
+  },
+
+  // Test Section Styles (Development Only)
+  testSection: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  testButton: {
+    width: '100%',
   },
 });

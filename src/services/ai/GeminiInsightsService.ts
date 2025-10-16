@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import StorageService from '../storage/StorageService';
 import { CircadianIntelligenceService } from '../health/CircadianIntelligenceService';
 import BudgetService from '../finance/BudgetService';
@@ -338,7 +339,7 @@ export class GeminiInsightsService {
     const financialHealth = this.calculateFinancialHealth(data.finance);
     const cognitiveLoad = data.learning.cognitiveLoad;
 
-    const recommendations = [];
+  const recommendations: string[] = [];
 
     if (healthScore < 60) {
       recommendations.push('Focus on sleep quality and stress reduction today');
@@ -400,7 +401,7 @@ export class GeminiInsightsService {
   }
 
   private async identifyCorrelations(data: any): Promise<Array<{ modules: string[]; correlation: number; insight: string }>> {
-    const correlations = [];
+  const correlations: any[] = [];
 
     // Sleep quality vs financial stress
     const sleepFinanceCorr = this.calculateCorrelation(
@@ -449,7 +450,20 @@ export class GeminiInsightsService {
 
   private async loadConversationMemory(userId: string): Promise<ConversationMemory> {
     try {
-      const stored = await this.hybridStorage.getItem(`conversation_memory_${userId}`);
+      let stored: any = null;
+      if (this.hybridStorage && typeof this.hybridStorage.getItem === 'function') {
+        stored = await this.hybridStorage.getItem(`conversation_memory_${userId}`);
+      }
+      // Fallback to AsyncStorage if hybridStorage not available or returned null
+      if (!stored) {
+        try {
+          const asyncVal = await AsyncStorage.getItem(`conversation_memory_${userId}`);
+          stored = asyncVal;
+        } catch (e) {
+          // ignore
+        }
+      }
+
       if (stored) {
         return JSON.parse(stored);
       }
@@ -483,7 +497,12 @@ export class GeminiInsightsService {
         memory.messages = memory.messages.slice(-50);
       }
 
-      await this.hybridStorage.setItem(`conversation_memory_${userId}`, JSON.stringify(memory));
+      if (this.hybridStorage && typeof this.hybridStorage.setItem === 'function') {
+        await this.hybridStorage.setItem(`conversation_memory_${userId}`, JSON.stringify(memory));
+      } else {
+        // Fallback to AsyncStorage to ensure persistence
+        await AsyncStorage.setItem(`conversation_memory_${userId}`, JSON.stringify(memory));
+      }
     } catch (error) {
       console.error('Error saving conversation memory:', error);
     }

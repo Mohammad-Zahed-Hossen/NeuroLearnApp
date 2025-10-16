@@ -28,11 +28,21 @@ function forwardMetrics(metrics: any) {
   }
 }
 
-// Register sink with HybridStorageService
+// Register sink with HybridStorageService and keep unsubscribe for teardown
+let _unsubscribe: (() => void) | null = null;
 try {
-  HybridStorageService.getInstance().registerTelemetrySink(forwardMetrics);
+  const unsub = HybridStorageService.getInstance().registerTelemetrySink(forwardMetrics);
+  if (typeof unsub === 'function') _unsubscribe = unsub;
 } catch (e) {
   // ignore registration failures (e.g., in tests where HybridStorageService is mocked)
+}
+
+export function disposeTelemetrySink() {
+  try {
+    if (_unsubscribe) _unsubscribe();
+  } catch (e) {
+    // swallow
+  }
 }
 
 export default {

@@ -25,6 +25,8 @@ import { ThemeType } from '../../theme/colors';
 import { FocusTimerService } from '../../services/learning/FocusTimerService';
 import { useSoundscape } from '../../contexts/SoundscapeContext';
 import { neuralIntegrationService } from '../../services/learning/NeuralIntegrationService';
+import { perf } from '../../utils/perfMarks';
+import { DynamicFocusTimerService } from '../../services/learning/DynamicFocusTimerService';
 
 interface FocusTimerScreenProps {
   theme: ThemeType;
@@ -86,6 +88,7 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
   theme,
   onNavigate,
 }) => {
+  const mountMarkRef = React.useRef<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [selectedMode, setSelectedMode] = useState<FocusMode | null>(null);
@@ -102,6 +105,8 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
   const [distractionTriggerType, setDistractionTriggerType] = useState<
     'internal' | 'external' | 'notification' | 'unknown'
   >('external');
+  const [dataSource, setDataSource] = useState<'static' | 'dynamic' | 'hybrid'>('hybrid');
+  const [dynamicModes, setDynamicModes] = useState<FocusMode[]>([]);
 
   // Additional picker modal states for distraction modal
   const [showReasonPicker, setShowReasonPicker] = useState<boolean>(false);
@@ -111,11 +116,38 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
 
   const themeColors = colors[theme];
   const soundscape = useSoundscape();
+  const dynamicService = DynamicFocusTimerService.getInstance();
 
-  // Notify neural integration of screen change
+  // Notify neural integration of screen change and load dynamic content
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('FocusTimerScreen');
     neuralIntegrationService.onScreenChange('focus');
-  }, []);
+    
+    // Load dynamic focus modes if enabled
+    const loadDynamicContent = async () => {
+      if (dataSource === 'dynamic' || dataSource === 'hybrid') {
+        try {
+          const generatedModes = await dynamicService.generatePersonalizedModes();
+          setDynamicModes(generatedModes);
+        } catch (error) {
+          console.error('Error loading dynamic focus modes:', error);
+        }
+      }
+    };
+    
+    loadDynamicContent();
+    
+    // measure readiness on next tick after initial integrations settle
+    const t = setTimeout(() => {
+      if (mountMarkRef.current) {
+        try {
+          perf.measureReady('FocusTimerScreen', mountMarkRef.current);
+        } catch (e) {}
+        mountMarkRef.current = null;
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [dataSource]);
 
   useEffect(() => {
     return () => {
@@ -172,7 +204,7 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
   };
 
   const handleCustomTimer = () => {
-    const duration = parseInt(customDuration);
+    const duration = parseInt(customDuration ?? '0');
     if (isNaN(duration) || duration < 1 || duration > 180) {
       Alert.alert(
         'Invalid Duration',
@@ -760,22 +792,85 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
           </Text>
         </View>
 
+        {/* Data Source Toggle */}
+        <GlassCard theme={theme} style={styles.dataSourceCard}>
+          <Text style={[styles.dataSourceTitle, { color: themeColors.text }]}>
+            🎯 Focus Modes
+          </Text>
+          <View style={styles.dataSourceButtons}>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'static' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('static')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'static' ? '#FFFFFF' : themeColors.text }]}>
+                Standard
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'hybrid' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('hybrid')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'hybrid' ? '#FFFFFF' : themeColors.text }]}>
+                Hybrid
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'dynamic' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('dynamic')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'dynamic' ? '#FFFFFF' : themeColors.text }]}>
+                Adaptive
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.dataSourceDescription, { color: themeColors.textSecondary }]}>
+            {dataSource === 'static' && 'Using standard focus timer modes'}
+            {dataSource === 'hybrid' && 'Combining standard modes with personalized timers'}
+            {dataSource === 'dynamic' && 'Using AI-optimized focus durations based on your patterns'}
+          </Text>
+          {dynamicModes.length > 0 && (
+            <Text style={[styles.dynamicModesCount, { color: themeColors.success }]}>
+              {dynamicModes.length} personalized modes available
+            </Text>
+          )}
+        </GlassCard>
+
         {/* Focus Mode Selection */}
         <View style={styles.modesContainer}>
-          {focusModes.map((mode) => (
+          {/* Static modes (always show unless dynamic-only) */}
+          {dataSource !== 'dynamic' && focusModes.map((mode) => (
             <GlassCard
               key={mode.id}
               theme={theme}
               onPress={() => handleModeSelect(mode)}
               style={[
                 styles.modeCard,
+                
+                { borderColor: themeColors.warning, borderWidth: 1 },
                 selectedMode?.id === mode.id && {
                   borderColor: themeColors.primary,
                   borderWidth: 2,
                 },
               ]}
             >
-              <Text style={styles.modeIcon}>{mode.icon}</Text>
+              <View style={styles.modeTagContainer}>
+                <Text style={styles.modeIcon}>{mode.icon}</Text>
+                <Text style={[styles.modeTag, { backgroundColor: themeColors.warning }]}>
+                  Standard
+                </Text>
+              </View>
               <Text style={[styles.modeName, { color: themeColors.text }]}>
                 {mode.name}
               </Text>
@@ -794,6 +889,8 @@ export const FocusTimerScreen: React.FC<FocusTimerScreenProps> = ({
               </Text>
             </GlassCard>
           ))}
+
+          {/* Dynamic modes */}
         </View>
 
         {/* Custom Timer Modal */}
@@ -900,9 +997,58 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     minHeight: 150,
   },
+  // Data Source Toggle
+  dataSourceCard: {
+    marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  dataSourceTitle: {
+    ...typography.h4,
+    marginBottom: spacing.md,
+  },
+  dataSourceButtons: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+  },
+  dataSourceButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    marginHorizontal: spacing.xs,
+  },
+  dataSourceButtonText: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  dataSourceDescription: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  dynamicModesCount: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  modeTagContainer: {
+    alignItems: 'center',
+    position: 'relative',
+    marginBottom: spacing.sm,
+  },
   modeIcon: {
     fontSize: 32,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  modeTag: {
+    ...typography.caption,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    position: 'absolute',
+    top: -5,
+    right: -10,
   },
   modeName: {
     ...typography.h4,

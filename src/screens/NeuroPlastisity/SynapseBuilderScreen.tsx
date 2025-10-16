@@ -130,31 +130,31 @@ const NEUROPLASTICITY_COLORS = {
     primary: '#EF4444',
     secondary: '#FCA5A5',
     glow: '#FEE2E2',
-    gradient: ['#EF4444', '#DC2626'] as const,
+    gradient: ['#EF4444', '#DC2626'],
   },
   moderate: {
     primary: '#F59E0B',
     secondary: '#FCD34D',
     glow: '#FEF3C7',
-    gradient: ['#F59E0B', '#D97706'] as const,
+    gradient: ['#F59E0B', '#D97706'],
   },
   stable: {
     primary: '#10B981',
     secondary: '#6EE7B7',
     glow: '#D1FAE5',
-    gradient: ['#10B981', '#059669'] as const,
+    gradient: ['#10B981', '#059669'],
   },
   strengthening: {
     primary: '#6366F1',
     secondary: '#A5B4FC',
     glow: '#E0E7FF',
-    gradient: ['#6366F1', '#4F46E5'] as const,
+    gradient: ['#6366F1', '#4F46E5'],
   },
   plasticity: {
     primary: '#EC4899',
     secondary: '#F9A8D4',
     glow: '#FCE7F3',
-    gradient: ['#EC4899', '#DB2777'] as const,
+    gradient: ['#EC4899', '#DB2777'],
   },
 };
 
@@ -185,7 +185,7 @@ const SynapseCard: React.FC<{
         style={styles.synapseCardContent}
       >
         <LinearGradient
-          colors={colors.gradient}
+          colors={colors.gradient as unknown as string[]}
           style={styles.synapseGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
@@ -386,7 +386,11 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
       const session: NeuroplasticitySession = {
         id: `session_${Date.now()}`,
         sessionType: 'synapse_strengthening',
-        targetEdgeIds: weakSynapses.slice(0, 5).map((e) => e.id), // Focus on top 5 weak synapses
+        // Ensure we only include existing ids
+        targetEdgeIds: weakSynapses
+          .slice(0, 5)
+          .map((e) => e?.id)
+          .filter(Boolean) as string[], // Focus on top 5 weak synapses
         startTime: new Date(),
         completedTasks: 0,
         successRate: 0,
@@ -399,7 +403,7 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
       setActiveSession(session);
 
       // Start with first weak synapse
-      if (weakSynapses.length > 0) {
+      if (weakSynapses.length > 0 && weakSynapses[0]) {
         await handleSynapseSelect(weakSynapses[0]);
       }
 
@@ -600,7 +604,10 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
                 disabled={!userResponse.trim()}
               >
                 <LinearGradient
-                  colors={NEUROPLASTICITY_COLORS.strengthening.gradient}
+                  colors={
+                    NEUROPLASTICITY_COLORS.strengthening
+                      .gradient as unknown as string[]
+                  }
                   style={styles.submitGradient}
                 >
                   <Text style={styles.submitButtonText}>Submit</Text>
@@ -624,9 +631,7 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
                 🧠 Neuroplasticity Session Complete!
               </Text>
 
-              <Animated.View
-                style={progressGlowStyle}
-              >
+              <Animated.View style={progressGlowStyle}>
                 <Text style={styles.plasticityScore}>
                   Overall Plasticity: {Math.round(plasticityScore)}%
                 </Text>
@@ -664,7 +669,10 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
               }}
             >
               <LinearGradient
-                colors={NEUROPLASTICITY_COLORS.plasticity.gradient}
+                colors={
+                  NEUROPLASTICITY_COLORS.plasticity
+                    .gradient as unknown as string[]
+                }
                 style={styles.continueGradient}
               >
                 <Text style={styles.continueButtonText}>Continue Training</Text>
@@ -708,9 +716,7 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
           <Text style={styles.screenSubtitle}>Neuroplasticity Training</Text>
         </View>
 
-        <Animated.View
-          style={headerAnimatedStyle}
-        >
+        <Animated.View style={headerAnimatedStyle}>
           <View style={styles.plasticityIndicator}>
             <Text style={styles.plasticityText}>
               {Math.round(plasticityScore)}%
@@ -748,7 +754,10 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
               onPress={startTrainingSession}
             >
               <LinearGradient
-                colors={NEUROPLASTICITY_COLORS.strengthening.gradient}
+                colors={
+                  NEUROPLASTICITY_COLORS.strengthening
+                    .gradient as unknown as string[]
+                }
                 style={styles.startGradient}
               >
                 <Text style={styles.startButtonText}>
@@ -808,8 +817,8 @@ export const SynapseBuilderScreen: React.FC<Props> = ({
               </Text>
               <Text style={styles.emptyStateText}>
                 Add more flashcards, notes, or learning content to build neural
-                connections. The more you learn, the more synapses you'll have to
-                strengthen!
+                connections. The more you learn, the more synapses you'll have
+                to strengthen!
               </Text>
             </GlassCard>
           )}

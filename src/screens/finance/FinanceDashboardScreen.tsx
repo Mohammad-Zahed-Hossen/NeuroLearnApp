@@ -1,4 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   View,
   Text,
@@ -9,153 +16,181 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../../components/GlassComponents';
-
-import { supabase } from '../../services/storage/SupabaseService';
-
-interface Transaction {
-  id: string;
-  amount: number;
-  category: string;
-  description: string;
-  type: 'income' | 'expense';
-  date: string;
-}
-
-interface Budget {
-  id: string;
-  category: string;
-  amount: number;
-}
-
-interface FinanceSummary {
-  totalBalance: number;
-  monthlyIncome: number;
-  monthlyExpenses: number;
-  budgetUtilization: number;
-}
+import { useOptimizedQuery } from '../../hooks/useOptimizedQuery';
+import type {
+  Transaction,
+  Budget,
+  FinanceSummary,
+} from '../../hooks/useOptimizedQuery';
+import DashboardSkeleton from '../../components/skeletons/DashboardSkeleton';
+import { useDebouncedRefetch } from '../../hooks/useOptimizedQuery';
 
 const FinanceDashboardScreen = ({
   onNavigate,
+  theme = 'dark',
 }: {
   onNavigate: (screen: string) => void;
+  theme?: 'light' | 'dark';
 }) => {
   console.log('FinanceDashboardScreen onNavigate:', onNavigate); // Debug log
 
-  const [summary, setSummary] = useState<FinanceSummary>({
-    totalBalance: 0,
-    monthlyIncome: 0,
-    monthlyExpenses: 0,
-    budgetUtilization: 0,
-  });
-  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>(
-    [],
-  );
-  const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-
-  useEffect(() => {
-    loadFinanceData();
-  }, []);
-
-  const loadFinanceData = async () => {
-    try {
-      setLoading(true);
+  // Use optimized query directly for finance data
+  const { data, isLoading, refetch } = useOptimizedQuery<{
+    summary: FinanceSummary;
+    recentTransactions: Transaction[];
+    budgets: Budget[];
+  }>({
+    queryKey: ['finance-data'],
+    queryFn: async () => {
+      // Import Supabase service (bundler mode resolves .ts without extension)
+      const { supabase } = await import(
+        '../../services/storage/SupabaseService'
+      );
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      let transactions: Transaction[] = [];
-      let budgetsData: Budget[] = [];
+      if (!user) {
+        return {
+          summary: {
+            totalBalance: 0,
+            monthlyIncome: 0,
+            monthlyExpenses: 0,
+            budgetUtilization: 0,
+          },
+          recentTransactions: [],
+          budgets: [],
+        };
+      }
 
-      if (user) {
-        // Get current month date range
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-          .toISOString()
-          .split('T')[0];
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-          .toISOString()
-          .split('T')[0];
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+        .toISOString()
+        .split('T')[0];
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+        .toISOString()
+        .split('T')[0];
 
-        // Load transactions for current month
-        const { data: transactionsData, error: transactionsError } = await supabase
+      const [transactionsRes, budgetsRes] = await Promise.all([
+        supabase
           .from('transactions')
           .select('*')
           .eq('user_id', user.id)
           .gte('date', startOfMonth)
           .lte('date', endOfMonth)
-          .order('date', { ascending: false });
-
-        if (!transactionsError && transactionsData) {
-          transactions = transactionsData;
-        }
-
-        // Load budgets
-        const { data: budgets, error: budgetsError } = await supabase
+          .order('date', { ascending: false }),
+        supabase
           .from('budgets')
           .select('*')
           .eq('user_id', user.id)
-          .eq('is_active', true);
+          .eq('is_active', true),
+      ]);
 
-        if (!budgetsError && budgets) {
-          budgetsData = budgets;
-        }
-      }
+      const transactions = transactionsRes.data || [];
+      const budgetsData = budgetsRes.data || [];
 
-      // If no real data available, show empty state instead of static data
-      // This ensures the app uses actual data, not dummy data
-
-      // Calculate summary
       const monthlyIncome =
         transactions
-          ?.filter((t) => t.type === 'income')
-          .reduce((sum, t) => sum + t.amount, 0) || 0;
+          ?.filter((t: any) => t.type === 'income')
+          .reduce((s: number, t: any) => s + t.amount, 0) || 0;
 
       const monthlyExpenses =
         transactions
-          ?.filter((t) => t.type === 'expense')
-          .reduce((sum, t) => sum + t.amount, 0) || 0;
+          ?.filter((t: any) => t.type === 'expense')
+          .reduce((s: number, t: any) => s + t.amount, 0) || 0;
 
       const totalBalance = monthlyIncome - monthlyExpenses;
 
-      // Calculate budget utilization
       const totalBudget =
-        budgetsData?.reduce((sum, b) => sum + b.amount, 0) || 0;
+        budgetsData?.reduce((s: number, b: any) => s + b.amount, 0) || 0;
       const budgetUtilization =
         totalBudget > 0 ? (monthlyExpenses / totalBudget) * 100 : 0;
 
-      setSummary({
+      const summary = {
         totalBalance,
         monthlyIncome,
         monthlyExpenses,
         budgetUtilization: Math.min(100, budgetUtilization),
-      });
+      };
 
-      setRecentTransactions(transactions?.slice(0, 5) || []);
-      setBudgets(budgetsData || []);
-    } catch (error) {
-      console.error('Error loading finance data:', error);
-      // Show empty state on error - no fallback to dummy data
-      setSummary({
-        totalBalance: 0,
-        monthlyIncome: 0,
-        monthlyExpenses: 0,
-        budgetUtilization: 0,
-      });
-      setRecentTransactions([]);
-      setBudgets([]);
-    } finally {
-      setLoading(false);
+      return {
+        summary,
+        recentTransactions: transactions?.slice(0, 5) || [],
+        budgets: budgetsData || [],
+      };
+    },
+  });
+  // Performance instrumentation (optional, guarded so tests won't fail)
+  const mountMarkRef = useRef<string | null>(null);
+  useEffect(() => {
+    try {
+      if (typeof performance !== 'undefined' && performance.mark) {
+        const mark = `FinanceDashboard:mount:${Date.now()}`;
+        performance.mark(mark);
+        mountMarkRef.current = mark;
+      }
+    } catch (e) {
+      // performance API not available in some test envs
     }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (
+        mountMarkRef.current &&
+        typeof performance !== 'undefined' &&
+        performance.measure
+      ) {
+        // when data becomes ready, measure from mount mark to ready
+        if (!isLoading) {
+          const measureName = `FinanceDashboard:ready:${Date.now()}`;
+          performance.measure(measureName, mountMarkRef.current);
+          // Optionally log a small, parseable message for quick collection
+          // eslint-disable-next-line no-console
+          console.log(
+            '[perf]',
+            measureName,
+            performance.getEntriesByName(measureName).pop(),
+          );
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [isLoading]);
+
+  // Ensure TS knows the shape when using optional chaining elsewhere
+  const typedData = data as
+    | {
+        summary: FinanceSummary;
+        recentTransactions: Transaction[];
+        budgets: Budget[];
+      }
+    | undefined;
+
+  const summary: FinanceSummary = typedData?.summary ?? {
+    totalBalance: 0,
+    monthlyIncome: 0,
+    monthlyExpenses: 0,
+    budgetUtilization: 0,
   };
 
-  const onRefresh = async () => {
+  const recentTransactions: Transaction[] = typedData?.recentTransactions ?? [];
+  const budgets: Budget[] = typedData?.budgets ?? [];
+
+  const onRefreshInternal = useCallback(async () => {
     setRefreshing(true);
-    await loadFinanceData();
-    setRefreshing(false);
-  };
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetch]);
+
+  // debounce the refresh to avoid multiple rapid refreshes
+  const onRefresh = useDebouncedRefetch(onRefreshInternal, 350);
 
   const getCategoryIcon = (category: string) => {
     const icons: { [key: string]: string } = {
@@ -174,13 +209,118 @@ const FinanceDashboardScreen = ({
     return `৳${amount.toLocaleString()}`;
   };
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Icon name="loading" size={48} color="#2D3BE3" />
-        <Text style={styles.loadingText}>Loading finance data...</Text>
-      </View>
+  // Memoize heavy child components
+  const TransactionList = useMemo(() => {
+    const Inner: React.FC = () => (
+      <>
+        {recentTransactions.length > 0 ? (
+          recentTransactions.map((transaction) => (
+            <View key={transaction.id} style={styles.transactionItem}>
+              <View style={styles.transactionLeft}>
+                <View
+                  style={[
+                    styles.transactionIcon,
+                    {
+                      backgroundColor:
+                        transaction.type === 'income'
+                          ? '#10B98120'
+                          : '#EF444420',
+                    },
+                  ]}
+                >
+                  <Icon
+                    name={getCategoryIcon(transaction.category)}
+                    size={18}
+                    color={
+                      transaction.type === 'income' ? '#10B981' : '#EF4444'
+                    }
+                  />
+                </View>
+                <View style={styles.transactionDetails}>
+                  <Text style={styles.transactionDescription}>
+                    {transaction.description || transaction.category}
+                  </Text>
+                  <Text style={styles.transactionMeta}>
+                    {transaction.category} •{' '}
+                    {new Date(transaction.date).toLocaleDateString()}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={[
+                  styles.transactionAmount,
+                  {
+                    color:
+                      transaction.type === 'income' ? '#10B981' : '#EF4444',
+                  },
+                ]}
+              >
+                {transaction.type === 'income' ? '+' : '-'}
+                {formatCurrency(transaction.amount)}
+              </Text>
+            </View>
+          ))
+        ) : (
+          <View style={styles.emptyState}>
+            <Icon name="receipt-outline" size={32} color="#9CA3AF" />
+            <Text style={styles.emptyText}>
+              No transactions yet. Add your first transaction to get started.
+            </Text>
+          </View>
+        )}
+      </>
     );
+
+    return React.memo(Inner);
+  }, [recentTransactions]);
+
+  const BudgetChart = useMemo(() => {
+    const Inner: React.FC = () => (
+      <>
+        {budgets.length > 0 && (
+          <GlassCard theme="dark" style={styles.budgetCard}>
+            <View style={styles.budgetHeader}>
+              <Text style={styles.cardTitle}>Budget Status</Text>
+              <TouchableOpacity onPress={() => onNavigate('budget-manager')}>
+                <Text style={styles.manageText}>Manage</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.progressRow}>
+              <View style={styles.progressBar}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${summary.budgetUtilization}%`,
+                      backgroundColor:
+                        summary.budgetUtilization > 90
+                          ? '#EF4444'
+                          : summary.budgetUtilization > 70
+                          ? '#F59E0B'
+                          : '#10B981',
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.progressText}>
+                {Math.round(summary.budgetUtilization)}%
+              </Text>
+            </View>
+            <Text style={styles.budgetStatus}>
+              {summary.budgetUtilization > 100
+                ? 'Over budget'
+                : 'Within budget'}
+            </Text>
+          </GlassCard>
+        )}
+      </>
+    );
+
+    return React.memo(Inner);
+  }, [budgets, summary]);
+
+  if (isLoading) {
+    return <DashboardSkeleton variant="finance" theme={theme} />;
   }
 
   return (
@@ -389,8 +529,6 @@ const FinanceDashboardScreen = ({
           </View>
         </GlassCard>
       </View>
-
-
     </ScrollView>
   );
 };

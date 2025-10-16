@@ -43,6 +43,7 @@ import {
 } from '../../services/learning/FocusTimerService';
 import { Task } from '../../types';
 import { useFocus } from '../../contexts/FocusContext';
+import { perf } from '../../utils/perfMarks';
 
 /**
  * Phase 5, Step 3: Adaptive Focus Timer Screen
@@ -82,6 +83,7 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
   theme,
   onNavigate,
 }) => {
+  const mountMarkRef = useRef<string | null>(null);
   const themeColors = colors[theme];
   const { width, height } = Dimensions.get('window');
 
@@ -303,6 +305,8 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
    * Initialize screen with focus targets and adaptive configuration
    */
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('AdaptiveFocusScreen');
+
     const initializeScreen = async () => {
       try {
         setIsLoading(true);
@@ -329,6 +333,15 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
     initializeScreen();
   }, []);
 
+  useEffect(() => {
+    if (!isLoading && mountMarkRef.current) {
+      try {
+        perf.measureReady('AdaptiveFocusScreen', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [isLoading]);
+
   /**
    * Load available focus targets from multiple sources
    */
@@ -348,16 +361,17 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         urgent.forEach((task) => {
           if (!addedTaskIds.has(task.id)) {
             addedTaskIds.add(task.id);
-            targets.push({
+            const t: FocusTarget = {
               id: `task_${task.id}`,
               title: task.content,
               type: 'task',
               source: 'todoist',
               priority: 4,
-              description: task.description,
               estimatedTime: 25,
               taskId: task.id,
-            });
+            };
+            if (task.description) t.description = task.description;
+            targets.push(t);
           }
         });
 
@@ -365,16 +379,17 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         important.forEach((task) => {
           if (!addedTaskIds.has(task.id)) {
             addedTaskIds.add(task.id);
-            targets.push({
+            const t2: FocusTarget = {
               id: `task_${task.id}`,
               title: task.content,
               type: 'task',
               source: 'todoist',
               priority: task.priority,
-              description: task.description,
               estimatedTime: 30,
               taskId: task.id,
-            });
+            };
+            if (task.description) t2.description = task.description;
+            targets.push(t2);
           }
         });
 
@@ -382,16 +397,17 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         quick.forEach((task) => {
           if (!addedTaskIds.has(task.id)) {
             addedTaskIds.add(task.id);
-            targets.push({
+            const t3: FocusTarget = {
               id: `task_${task.id}`,
               title: task.content,
               type: 'task',
               source: 'todoist',
               priority: 2,
-              description: task.description,
               estimatedTime: 15,
               taskId: task.id,
-            });
+            };
+            if (task.description) t3.description = task.description;
+            targets.push(t3);
           }
         });
       } catch (error) {
@@ -406,16 +422,18 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
         const dueNodes = neuralGraph.nodes.filter((node) => node.isActive);
         dueNodes.slice(0, 10).forEach((node) => {
           // Limit to prevent overwhelm
-          targets.push({
+          const n: FocusTarget = {
             id: `node_${node.id}`,
             title: `Learn: ${node.label}`,
             type: 'node',
             source: 'neural',
             priority: 3,
-            description: `${node.type} concept - ${node.category}`,
             estimatedTime: 20,
             neuralNodeId: node.id,
-          });
+          };
+          if (node.category)
+            n.description = `${node.type} concept - ${node.category}`;
+          targets.push(n);
         });
 
         // Add critical logic nodes from Phase 4
@@ -424,16 +442,17 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
             node.type === 'logic' && node.healthScore && node.healthScore < 0.5,
         );
         logicNodes.slice(0, 5).forEach((node) => {
-          targets.push({
+          const ln: FocusTarget = {
             id: `logic_${node.id}`,
             title: `Logic Training: ${node.label}`,
             type: 'logic',
             source: 'logic',
             priority: 4,
-            description: 'Critical thinking exercise',
             estimatedTime: 15,
             neuralNodeId: node.id,
-          });
+          };
+          ln.description = 'Critical thinking exercise';
+          targets.push(ln);
         });
       } catch (error) {
         console.warn('Could not load neural nodes for focus targets:', error);
@@ -446,7 +465,7 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
 
       // Auto-select highest priority target if none selected
       if (!selectedTarget && targets.length > 0) {
-        setSelectedTarget(targets[0]);
+        setSelectedTarget(targets[0]!);
       }
 
       console.log(`🎯 Loaded ${targets.length} focus targets`);
@@ -521,15 +540,17 @@ export const AdaptiveFocusScreen: React.FC<FocusTimerScreenProps> = ({
     async (outcome: 'completed' | 'interrupted') => {
       if (activeSession) {
         // End session using FocusTimerService
-        const sessionEndOptions = {
+        const sessionEndOptions: any = {
           selfReportFocus:
             outcome === 'completed' ? (4 as const) : (2 as const),
-          distractionReason:
-            outcome === 'completed' ? undefined : 'Session interrupted',
           completionRate: outcome === 'completed' ? 1.0 : 0.5,
           todoistTaskCompleted:
             outcome === 'completed' && selectedTarget?.taskId ? true : false,
         };
+
+        if (outcome !== 'completed') {
+          sessionEndOptions.distractionReason = 'Session interrupted';
+        }
 
         await focusTimerService.endSession(sessionEndOptions);
       }

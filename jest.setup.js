@@ -92,7 +92,30 @@ jest.doMock('@supabase/supabase-js', () => {
 jest.doMock('./src/services/storage/SupabaseService', () => {
   const { createClient } = require('@supabase/supabase-js');
   const client = createClient();
-  return { supabase: client };
+
+  // Provide a minimal SupabaseService-compatible class for tests that
+  // instantiate SupabaseService directly (some legacy tests do `new SupabaseService()`).
+  class MockSupabaseService {
+    constructor() {
+      this.client = client;
+    }
+    getClient() {
+      return this.client;
+    }
+    async safeExecute(fn) {
+      return fn();
+    }
+    // minimal auth helper used by components/tests
+    async getCurrentUser() {
+      return this.client.auth.getUser();
+    }
+  }
+
+  return {
+    supabase: client,
+    SupabaseService: MockSupabaseService,
+    default: MockSupabaseService,
+  };
 });
 
 // Prevent Jest from trying to import real native modules for react-native-vector-icons
@@ -160,6 +183,18 @@ jest.doMock('react-native', () => {
     return React.createElement('ScrollView', props, props.children || null);
   }
 
+  function MockModal(props) {
+    return React.createElement('Modal', props, props.children || null);
+  }
+
+  function MockKeyboardAvoidingView(props) {
+    return React.createElement(
+      'KeyboardAvoidingView',
+      props,
+      props.children || null,
+    );
+  }
+
   function MockTouchableOpacity(props) {
     return React.createElement(
       'TouchableOpacity',
@@ -194,6 +229,10 @@ jest.doMock('react-native', () => {
   const NativeModules = {};
   const Alert = { alert: jest.fn() };
 
+  const ActivityIndicator = (props) =>
+    React.createElement('ActivityIndicator', props, null);
+  const Vibration = { vibrate: jest.fn() };
+
   // Minimal Animated mock used by services relying on Animated.Value
   const Animated = {
     Value: class MockAnimatedValue {
@@ -225,11 +264,14 @@ jest.doMock('react-native', () => {
     Text: MockText,
     TextInput: MockTextInput,
     ScrollView: MockScrollView,
+    Modal: MockModal,
+    KeyboardAvoidingView: MockKeyboardAvoidingView,
     TouchableOpacity: MockTouchableOpacity,
     TouchableHighlight: MockTouchableOpacity,
     Pressable: MockTouchableOpacity,
     Button: MockButton,
     FlatList: MockFlatList,
+    ActivityIndicator,
     Platform,
     PixelRatio,
     NativeModules,
@@ -269,6 +311,19 @@ jest.doMock('expo-blur', () => {
   return {
     BlurView: (props) =>
       React.createElement('View', props, props.children || null),
+  };
+});
+
+// Mock react-native-safe-area-context to provide safe area insets in tests
+jest.doMock('react-native-safe-area-context', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: 0 }),
+    SafeAreaProvider: ({ children }) => children,
+    SafeAreaView: ({ children, style }) =>
+      React.createElement(View, { style }, children),
+    __esModule: true,
   };
 });
 

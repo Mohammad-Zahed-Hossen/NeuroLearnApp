@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Dimensions,
   RefreshControl,
-  Alert
+  Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
@@ -16,13 +16,15 @@ import Reanimated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
-  interpolate
+  interpolate,
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import GradientFallback from '../../components/shared/GradientFallback';
 import { format, differenceInDays } from 'date-fns';
 
 import { GlassCard } from '../../components/GlassComponents';
+import { perf } from '../../utils/perfMarks';
 import FloatingChatBubble from '../../components/ai/FloatingChatBubble';
 import { supabase } from '../../services/storage/SupabaseService';
 import { CircadianIntelligenceService } from '../../services/health/CircadianIntelligenceService';
@@ -32,6 +34,7 @@ import GeminiInsightsService from '../../services/ai/GeminiInsightsService';
 import GamificationService from '../../services/health/GamificationService';
 import CrossModuleBridgeService from '../../services/integrations/CrossModuleBridgeService';
 import { colors } from '../../theme/colors';
+import { HolisticSkeleton } from '../../components/skeletons';
 
 interface HolisticDashboardProps {
   userId: string;
@@ -52,6 +55,13 @@ interface DashboardData {
   adaptiveColors: any;
 }
 
+interface LoadingStates {
+  core: boolean;
+  correlations: boolean;
+  achievements: boolean;
+  recommendations: boolean;
+}
+
 /**
  * Holistic Dashboard showcasing all integrated NeuroLearn features
  * Demonstrates cross-module intelligence and adaptive UI
@@ -59,12 +69,23 @@ interface DashboardData {
 const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   userId,
   theme,
-  onNavigate
+  onNavigate,
 }) => {
-  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const mountMarkRef = React.useRef<string | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedTimeframe, setSelectedTimeframe] = useState<'day' | 'week' | 'month'>('week');
+  const [selectedTimeframe, setSelectedTimeframe] = useState<
+    'day' | 'week' | 'month'
+  >('week');
+  const [loadingStates, setLoadingStates] = useState<LoadingStates>({
+    core: true,
+    correlations: true,
+    achievements: true,
+    recommendations: true,
+  });
 
   const screenWidth = Dimensions.get('window').width;
 
@@ -83,7 +104,22 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   const cardEntranceAnimation = useSharedValue(0);
 
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('HolisticDashboardScreen');
     loadDashboardData();
+
+    // Cleanup function to prevent memory leaks
+    return () => {
+      // Cancel any ongoing service subscriptions
+      if (mountMarkRef.current) {
+        try {
+          // Clear performance marks to prevent memory buildup
+          if (typeof performance !== 'undefined' && performance.clearMarks) {
+            performance.clearMarks(mountMarkRef.current);
+          }
+        } catch (e) {}
+        mountMarkRef.current = null;
+      }
+    };
   }, [userId, selectedTimeframe]);
 
   useEffect(() => {
@@ -95,53 +131,121 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   const loadDashboardData = async () => {
     try {
       setLoading(true);
+      setLoadingStates({
+        core: true,
+        correlations: true,
+        achievements: true,
+        recommendations: true,
+      });
 
+      // Load core data first (critical for initial render)
       const [
         holisticInsights,
         healthMetrics,
         budgetAnalysis,
-        achievements,
-        biometricColors
+        biometricColors,
+        sleepPressureData,
       ] = await Promise.all([
         geminiService.generateHolisticInsights(userId),
         bridgeService.getHealthMetrics(userId),
         budgetService.getBudgetAnalysis(userId),
-        gamificationService.checkAchievements(userId),
-        chromotherapyService.adaptColorsToPhysiology(75, 30, 'optimal')
+        chromotherapyService.adaptColorsToPhysiology(75, 30, 'optimal'),
+        circadianService.calculateSleepPressure(userId),
       ]);
 
-      const correlations = await bridgeService.getHolisticInsights(userId);
-
+      // Set core data immediately
       setDashboardData({
         healthScore: holisticInsights.dailyCheckIn.healthScore,
         financialHealth: holisticInsights.dailyCheckIn.financialHealth,
         cognitiveLoad: holisticInsights.dailyCheckIn.cognitiveLoad,
         crdiScore: healthMetrics.crdiScore * 100,
-        sleepPressure: (await circadianService.calculateSleepPressure(userId)).currentPressure,
-        budgetAdherence: budgetAnalysis.analysis.overBudgetCategories.length === 0 ? 100 :
-          Math.max(0, 100 - (budgetAnalysis.analysis.overBudgetCategories.length * 25)),
-        achievements: achievements.newAchievements,
-        correlations: holisticInsights.crossModuleCorrelations,
-        recommendations: holisticInsights.dailyCheckIn.recommendations,
-        adaptiveColors: biometricColors.recommendedPalette
+        sleepPressure: sleepPressureData.currentPressure,
+        budgetAdherence:
+          budgetAnalysis.analysis.overBudgetCategories.length === 0
+            ? 100
+            : Math.max(
+                0,
+                100 - budgetAnalysis.analysis.overBudgetCategories.length * 25,
+              ),
+        achievements: [],
+        correlations: [],
+        recommendations: [],
+        adaptiveColors: biometricColors.recommendedPalette,
       });
+
+      setLoadingStates(prev => ({ ...prev, core: false }));
+
+      // Load non-essential data asynchronously
+      const loadNonEssentialData = async () => {
+        try {
+          const [correlations, achievements, recommendations] = await Promise.all([
+            bridgeService.getHolisticInsights(userId),
+            gamificationService.checkAchievements(userId),
+            Promise.resolve(holisticInsights.dailyCheckIn.recommendations), // Already available
+          ]);
+
+          setDashboardData(prev => prev ? {
+            ...prev,
+            achievements: achievements.newAchievements,
+            correlations: correlations as any,
+            recommendations: recommendations,
+          } : null);
+
+          setLoadingStates({
+            core: false,
+            correlations: false,
+            achievements: false,
+            recommendations: false,
+          });
+        } catch (error) {
+          console.error('Error loading non-essential data:', error);
+          setLoadingStates({
+            core: false,
+            correlations: false,
+            achievements: false,
+            recommendations: false,
+          });
+        }
+      };
+
+      // Start loading non-essential data
+      loadNonEssentialData();
 
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       Alert.alert('Error', 'Failed to load dashboard data. Please try again.');
+      setLoadingStates({
+        core: false,
+        correlations: false,
+        achievements: false,
+        recommendations: false,
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
+  useEffect(() => {
+    if (dashboardData && mountMarkRef.current) {
+      try {
+        perf.measureReady('HolisticDashboardScreen', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [dashboardData]);
+
   const startAnimations = () => {
     if (!dashboardData) return;
 
     // Animate scores
     healthScoreAnimation.value = withSpring(dashboardData.healthScore / 100);
-    financialScoreAnimation.value = withSpring(dashboardData.financialHealth / 100);
-    cognitiveLoadAnimation.value = withSpring(dashboardData.cognitiveLoad / 100);
+    financialScoreAnimation.value = withSpring(
+      dashboardData.financialHealth / 100,
+    );
+    cognitiveLoadAnimation.value = withSpring(
+      dashboardData.cognitiveLoad / 100,
+    );
 
     // Stagger card entrance
     cardEntranceAnimation.value = withTiming(1, { duration: 800 });
@@ -152,42 +256,56 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
     loadDashboardData();
   };
 
-  // Helper function for color interpolation
-  const getInterpolatedColor = (value: number, colors: string[]) => {
-    if (value <= 0) return colors[0];
-    if (value >= 1) return colors[colors.length - 1];
+  // Memoized helper function for color interpolation
+  const getInterpolatedColor = useMemo(() => {
+    return (value: number, colors: string[]) => {
+      if (value <= 0) return colors[0];
+      if (value >= 1) return colors[colors.length - 1];
 
-    const segment = (colors.length - 1) * value;
-    const index = Math.floor(segment);
-    const fraction = segment - index;
+      const segment = (colors.length - 1) * value;
+      const index = Math.floor(segment);
+      const fraction = segment - index;
 
-    if (index >= colors.length - 1) return colors[colors.length - 1];
+      if (index >= colors.length - 1) return colors[colors.length - 1];
 
-    // Simple interpolation between two colors
-    const color1 = colors[index];
-    const color2 = colors[index + 1];
+      // Simple interpolation between two colors
+      const color1 = colors[index];
+      const color2 = colors[index + 1];
 
-    // For simplicity, return the closer color
-    return fraction < 0.5 ? color1 : color2;
-  };
+      // For simplicity, return the closer color
+      return fraction < 0.5 ? color1 : color2;
+    };
+  }, []);
 
   // Animated styles
   const healthScoreStyle = useAnimatedStyle(() => ({
-    backgroundColor: getInterpolatedColor(healthScoreAnimation.value, ['#EF4444', '#F59E0B', '#10B981']),
-    transform: [{ scale: withSpring(0.9 + healthScoreAnimation.value * 0.1) }]
+    backgroundColor: getInterpolatedColor(healthScoreAnimation.value, [
+      '#EF4444',
+      '#F59E0B',
+      '#10B981',
+    ]),
+    transform: [{ scale: withSpring(0.9 + healthScoreAnimation.value * 0.1) }],
   }));
 
   const financialScoreStyle = useAnimatedStyle(() => ({
-    backgroundColor: getInterpolatedColor(financialScoreAnimation.value, ['#EF4444', '#F59E0B', '#10B981'])
+    backgroundColor: getInterpolatedColor(financialScoreAnimation.value, [
+      '#EF4444',
+      '#F59E0B',
+      '#10B981',
+    ]),
   }));
 
   const cognitiveLoadStyle = useAnimatedStyle(() => ({
-    backgroundColor: getInterpolatedColor(cognitiveLoadAnimation.value, ['#10B981', '#F59E0B', '#EF4444'])
+    backgroundColor: getInterpolatedColor(cognitiveLoadAnimation.value, [
+      '#10B981',
+      '#F59E0B',
+      '#EF4444',
+    ]),
   }));
 
   const cardEntranceStyle = useAnimatedStyle(() => ({
     opacity: cardEntranceAnimation.value,
-    transform: [{ translateY: (1 - cardEntranceAnimation.value) * 20 }]
+    transform: [{ translateY: (1 - cardEntranceAnimation.value) * 20 }],
   }));
 
   const renderWellnessScores = () => {
@@ -198,19 +316,26 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
       data: [
         dashboardData.healthScore / 100,
         dashboardData.financialHealth / 100,
-        1 - (dashboardData.cognitiveLoad / 100) // Invert cognitive load
-      ]
+        1 - dashboardData.cognitiveLoad / 100, // Invert cognitive load
+      ],
     };
 
     return (
       <Reanimated.View style={cardEntranceStyle}>
         <GlassCard theme={theme} style={styles.scoresCard}>
           <LinearGradient
-            colors={[dashboardData.adaptiveColors.primary + '20', dashboardData.adaptiveColors.accent + '10']}
+            colors={[
+              dashboardData.adaptiveColors.primary + '20',
+              dashboardData.adaptiveColors.accent + '10',
+            ]}
             style={styles.scoresGradient}
           >
             <View style={styles.scoresHeader}>
-              <Icon name="chart-donut" size={24} color={dashboardData.adaptiveColors.primary} />
+              <Icon
+                name="chart-donut"
+                size={24}
+                color={dashboardData.adaptiveColors.primary}
+              />
               <Text style={styles.scoresTitle}>Holistic Wellness Score</Text>
             </View>
 
@@ -226,25 +351,43 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
                   backgroundGradientFrom: 'transparent',
                   backgroundGradientTo: 'transparent',
                   color: (opacity = 1, index = 0) => {
-                    const colors = [dashboardData.adaptiveColors.primary, dashboardData.adaptiveColors.accent, dashboardData.adaptiveColors.success];
-                    return colors[index] || dashboardData.adaptiveColors.primary;
-                  }
+                    const colors = [
+                      dashboardData.adaptiveColors.primary,
+                      dashboardData.adaptiveColors.accent,
+                      dashboardData.adaptiveColors.success,
+                    ];
+                    return (
+                      colors[index] || dashboardData.adaptiveColors.primary
+                    );
+                  },
                 }}
                 hideLegend={false}
               />
 
               <View style={styles.scoresLegend}>
                 <View style={styles.legendItem}>
-                  <Reanimated.View style={[styles.legendDot, healthScoreStyle]} />
-                  <Text style={styles.legendText}>Health: {dashboardData.healthScore}/100</Text>
+                  <Reanimated.View
+                    style={[styles.legendDot, healthScoreStyle]}
+                  />
+                  <Text style={styles.legendText}>
+                    Health: {dashboardData.healthScore}/100
+                  </Text>
                 </View>
                 <View style={styles.legendItem}>
-                  <Reanimated.View style={[styles.legendDot, financialScoreStyle]} />
-                  <Text style={styles.legendText}>Finance: {dashboardData.financialHealth}/100</Text>
+                  <Reanimated.View
+                    style={[styles.legendDot, financialScoreStyle]}
+                  />
+                  <Text style={styles.legendText}>
+                    Finance: {dashboardData.financialHealth}/100
+                  </Text>
                 </View>
                 <View style={styles.legendItem}>
-                  <Reanimated.View style={[styles.legendDot, cognitiveLoadStyle]} />
-                  <Text style={styles.legendText}>Focus: {100 - dashboardData.cognitiveLoad}/100</Text>
+                  <Reanimated.View
+                    style={[styles.legendDot, cognitiveLoadStyle]}
+                  />
+                  <Text style={styles.legendText}>
+                    Focus: {100 - dashboardData.cognitiveLoad}/100
+                  </Text>
                 </View>
               </View>
             </View>
@@ -264,8 +407,18 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
 
           <View style={styles.metricsGrid}>
             <View style={styles.metricItem}>
-              <View style={[styles.metricCircle, { borderColor: dashboardData.adaptiveColors.primary }]}>
-                <Text style={[styles.metricValue, { color: dashboardData.adaptiveColors.primary }]}>
+              <View
+                style={[
+                  styles.metricCircle,
+                  { borderColor: dashboardData.adaptiveColors.primary },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.metricValue,
+                    { color: dashboardData.adaptiveColors.primary },
+                  ]}
+                >
                   {dashboardData.crdiScore}
                 </Text>
               </View>
@@ -274,8 +427,18 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
             </View>
 
             <View style={styles.metricItem}>
-              <View style={[styles.metricCircle, { borderColor: dashboardData.adaptiveColors.accent }]}>
-                <Text style={[styles.metricValue, { color: dashboardData.adaptiveColors.accent }]}>
+              <View
+                style={[
+                  styles.metricCircle,
+                  { borderColor: dashboardData.adaptiveColors.accent },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.metricValue,
+                    { color: dashboardData.adaptiveColors.accent },
+                  ]}
+                >
                   {dashboardData.sleepPressure}
                 </Text>
               </View>
@@ -284,8 +447,18 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
             </View>
 
             <View style={styles.metricItem}>
-              <View style={[styles.metricCircle, { borderColor: dashboardData.adaptiveColors.success }]}>
-                <Text style={[styles.metricValue, { color: dashboardData.adaptiveColors.success }]}>
+              <View
+                style={[
+                  styles.metricCircle,
+                  { borderColor: dashboardData.adaptiveColors.success },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.metricValue,
+                    { color: dashboardData.adaptiveColors.success },
+                  ]}
+                >
                   {dashboardData.budgetAdherence}%
                 </Text>
               </View>
@@ -299,7 +472,17 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   };
 
   const renderCrossModuleInsights = () => {
-    if (!dashboardData || dashboardData.correlations.length === 0) return null;
+    if (!dashboardData || loadingStates.correlations) {
+      return (
+        <Reanimated.View style={cardEntranceStyle}>
+          <GlassCard theme={theme} style={styles.insightsCard}>
+            <HolisticSkeleton theme={theme} />
+          </GlassCard>
+        </Reanimated.View>
+      );
+    }
+
+    if (dashboardData.correlations.length === 0) return null;
 
     return (
       <Reanimated.View style={cardEntranceStyle}>
@@ -317,16 +500,25 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
                     {correlation.modules.join(' ↔ ')}
                   </Text>
                 </View>
-                <View style={[
-                  styles.correlationStrength,
-                  { backgroundColor: Math.abs(correlation.correlation) > 0.7 ? '#10B981' : '#F59E0B' }
-                ]}>
+                <View
+                  style={[
+                    styles.correlationStrength,
+                    {
+                      backgroundColor:
+                        Math.abs(correlation.correlation) > 0.7
+                          ? '#10B981'
+                          : '#F59E0B',
+                    },
+                  ]}
+                >
                   <Text style={styles.correlationValue}>
                     {(correlation.correlation * 100).toFixed(0)}%
                   </Text>
                 </View>
               </View>
-              <Text style={styles.correlationInsight}>{correlation.insight}</Text>
+              <Text style={styles.correlationInsight}>
+                {correlation.insight}
+              </Text>
             </View>
           ))}
         </GlassCard>
@@ -335,7 +527,17 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   };
 
   const renderAchievements = () => {
-    if (!dashboardData || dashboardData.achievements.length === 0) return null;
+    if (!dashboardData || loadingStates.achievements) {
+      return (
+        <Reanimated.View style={cardEntranceStyle}>
+          <GlassCard theme={theme} style={styles.achievementsCard}>
+            <HolisticSkeleton theme={theme} />
+          </GlassCard>
+        </Reanimated.View>
+      );
+    }
+
+    if (dashboardData.achievements.length === 0) return null;
 
     return (
       <Reanimated.View style={cardEntranceStyle}>
@@ -348,17 +550,28 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
           {dashboardData.achievements.slice(0, 3).map((achievement, index) => (
             <View key={achievement.id} style={styles.achievementItem}>
               <LinearGradient
-                colors={achievement.rarity === 'legendary' ? ['#FFD700', '#FFA500'] :
-                        achievement.rarity === 'epic' ? ['#8B5CF6', '#6366F1'] :
-                        achievement.rarity === 'rare' ? ['#10B981', '#059669'] :
-                        ['#6B7280', '#4B5563']}
+                colors={
+                  achievement.rarity === 'legendary'
+                    ? ['#FFD700', '#FFA500']
+                    : achievement.rarity === 'epic'
+                    ? ['#8B5CF6', '#6366F1']
+                    : achievement.rarity === 'rare'
+                    ? ['#10B981', '#059669']
+                    : ['#6B7280', '#4B5563']
+                }
                 style={styles.achievementGradient}
               >
                 <Icon name={achievement.icon} size={24} color="#FFFFFF" />
                 <View style={styles.achievementContent}>
-                  <Text style={styles.achievementTitle}>{achievement.title}</Text>
-                  <Text style={styles.achievementDescription}>{achievement.description}</Text>
-                  <Text style={styles.achievementPoints}>+{achievement.rewards.points} points</Text>
+                  <Text style={styles.achievementTitle}>
+                    {achievement.title}
+                  </Text>
+                  <Text style={styles.achievementDescription}>
+                    {achievement.description}
+                  </Text>
+                  <Text style={styles.achievementPoints}>
+                    +{achievement.rewards.points} points
+                  </Text>
                 </View>
               </LinearGradient>
             </View>
@@ -369,7 +582,17 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   };
 
   const renderRecommendations = () => {
-    if (!dashboardData || dashboardData.recommendations.length === 0) return null;
+    if (!dashboardData || loadingStates.recommendations) {
+      return (
+        <Reanimated.View style={cardEntranceStyle}>
+          <GlassCard theme={theme} style={styles.recommendationsCard}>
+            <HolisticSkeleton theme={theme} />
+          </GlassCard>
+        </Reanimated.View>
+      );
+    }
+
+    if (dashboardData.recommendations.length === 0) return null;
 
     return (
       <Reanimated.View style={cardEntranceStyle}>
@@ -399,14 +622,16 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
           key={timeframe}
           style={[
             styles.timeframeButton,
-            selectedTimeframe === timeframe && styles.timeframeButtonActive
+            selectedTimeframe === timeframe && styles.timeframeButtonActive,
           ]}
           onPress={() => setSelectedTimeframe(timeframe)}
         >
-          <Text style={[
-            styles.timeframeText,
-            selectedTimeframe === timeframe && styles.timeframeTextActive
-          ]}>
+          <Text
+            style={[
+              styles.timeframeText,
+              selectedTimeframe === timeframe && styles.timeframeTextActive,
+            ]}
+          >
             {timeframe.charAt(0).toUpperCase() + timeframe.slice(1)}
           </Text>
         </TouchableOpacity>
@@ -424,13 +649,19 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors[theme].background }]}>
+    <View
+      style={[styles.container, { backgroundColor: colors[theme].background }]}
+    >
       {/* Adaptive Background */}
       <LinearGradient
-        colors={dashboardData ? [
-          dashboardData.adaptiveColors.background,
-          colors[theme].background
-        ] : [colors[theme].background, colors[theme].background]}
+        colors={
+          dashboardData
+            ? [
+                dashboardData.adaptiveColors.background,
+                colors[theme].background,
+              ]
+            : [colors[theme].background, colors[theme].background]
+        }
         style={styles.backgroundGradient}
       />
 
@@ -448,7 +679,12 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
             <Text style={[styles.headerTitle, { color: colors[theme].text }]}>
               Holistic Dashboard
             </Text>
-            <Text style={[styles.headerSubtitle, { color: colors[theme].textSecondary }]}>
+            <Text
+              style={[
+                styles.headerSubtitle,
+                { color: colors[theme].textSecondary },
+              ]}
+            >
               Cross-module intelligence powered by AI
             </Text>
           </View>
@@ -466,10 +702,7 @@ const HolisticDashboardScreen: React.FC<HolisticDashboardProps> = ({
       </ScrollView>
 
       {/* Floating AI Chat */}
-      <FloatingChatBubble
-        userId={userId}
-        theme={theme}
-      />
+      <FloatingChatBubble userId={userId} theme={theme} />
     </View>
   );
 };

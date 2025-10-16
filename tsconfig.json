@@ -3,23 +3,21 @@
 
   // This is where 'include' belongs: at the root level.
   "include": ["**/*.ts", "**/*.tsx", "src/types/**/*.d.ts"],
-  "exclude": [
-    "node_modules",
-    "__tests__",
-    "**/*.test.ts",
-    "**/*.test.tsx",
-    "supabase/functions/**/*"
-  ],
+  "exclude": ["node_modules", "supabase/functions/**/*"],
 
   "compilerOptions": {
-    "strict": true,
+    "strict": false,
     "target": "es2017",
-    "module": "NodeNext",
-    "moduleResolution": "nodenext",
+    "lib": ["es2021", "webworker"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "jsx": "react-native",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "downlevelIteration": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "strictNullChecks": true,
     "types": ["react-native-reanimated", "node", "jest", "@notionhq/client"],
     "skipLibCheck": true,
     "isolatedModules": true

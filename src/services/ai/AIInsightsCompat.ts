@@ -8,6 +8,9 @@ const aiAny: any = (AIInsightsService as any).default || AIInsightsService;
 const predAny: any = (PredictiveAnalyticsService as any).default || PredictiveAnalyticsService;
 
 const AIInsightsCompat: any = {
+  getInstance() {
+    return this;
+  },
   async initialize() {
     if (typeof aiAny.initialize === 'function') await aiAny.initialize();
     if (typeof predAny.initialize === 'function') await predAny.initialize();
@@ -47,5 +50,8 @@ const AIInsightsCompat: any = {
     return Promise.resolve([]);
   }
 };
+
+// Add getInstance as a static method
+AIInsightsCompat.getInstance = () => AIInsightsCompat;
 
 export default AIInsightsCompat;

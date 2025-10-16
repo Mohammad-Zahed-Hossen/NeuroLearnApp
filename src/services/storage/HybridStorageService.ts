@@ -56,6 +56,38 @@ export class HybridStorageService {
     }
   }
 
+  /**
+   * Persist legacy (AsyncStorage) queue safely: trim to a max size and persist in batches.
+   */
+  private async persistLegacySafely(items: any[]): Promise<void> {
+    try {
+      const legacyKey = '@neurolearn/sync_queue';
+      const raw = await AsyncStorage.getItem(legacyKey);
+      let queue: any[] = [];
+      try { queue = raw ? JSON.parse(raw) : []; if (!Array.isArray(queue)) queue = []; } catch { queue = []; }
+
+      // Append new items, but cap total size to avoid unbounded growth
+      const combined = queue.concat(items || []);
+      const max = 200; // keep last 200 entries
+      const trimmed = combined.slice(-max);
+
+      try {
+        await AsyncStorage.setItem(legacyKey, JSON.stringify(trimmed));
+      } catch (e) {
+        // Fallback: try to persist only the last N items
+        try {
+          const fallback = trimmed.slice(-50);
+          await AsyncStorage.setItem(legacyKey, JSON.stringify(fallback));
+        } catch (err) {
+          // As last resort, drop to an in-memory best-effort cache (non-persistent)
+          console.warn('Failed to persist legacy queue to AsyncStorage; dropping to in-memory cache');
+        }
+      }
+    } catch (e) {
+      console.warn('persistLegacySafely error:', e);
+    }
+  }
+
   // Cache keys for AsyncStorage
   private static readonly CACHE_KEYS = {
     FLASHCARDS: '@neurolearn/cache_flashcards',
@@ -306,7 +338,26 @@ export class HybridStorageService {
     try {
       // Use MMKV for hot cache when available for fast writes
       if (MMKVStorageService.isAvailable() && (key.startsWith(HybridStorageService.HOT_KEYS.CONTEXT_CACHE) || key.startsWith(HybridStorageService.HOT_KEYS.CONTEXT_SNAPSHOT_PREFIX))) {
+        // Proactively check if MMKV reports low space and try to evict least-recently-used items
         try {
+          if (typeof (MMKVStorageService as any).isSpaceLow === 'function') {
+            try {
+              const low = await (MMKVStorageService as any).isSpaceLow();
+              if (low) {
+                // Try to free a small amount of space before attempting the write
+                try {
+                  await (MMKVStorageService as any).evictLeastRecentlyUsed?.();
+                  console.debug('MMKV eviction attempted proactively before silentCache write');
+                } catch (evErr) {
+                  console.warn('Proactive MMKV eviction failed:', evErr);
+                }
+              }
+            } catch (chkErr) {
+              // ignore probe errors
+              console.debug('MMKV isSpaceLow probe failed:', chkErr);
+            }
+          }
+
           // validate key
           if (typeof key !== 'string' || key.length === 0) throw new Error('invalid key for MMKV');
           await MMKVStorageService.setObject(key, data);
@@ -316,13 +367,32 @@ export class HybridStorageService {
           console.warn('MMKV setObject in silentCache failed:', e);
           if (msg.includes('SQLITE_FULL') || msg.toLowerCase().includes('database or disk is full')) {
             try { (MMKVStorageService as any).markUnhealthy?.(); } catch(_) {}
-            // Set global unhealthy flag for 5 minutes (only if not already in cooldown)
-            if (!this.storageUnhealthyUntil || Date.now() >= this.storageUnhealthyUntil) {
-              this.storageUnhealthyUntil = Date.now() + (5 * 60 * 1000);
-              this.silentSkipAccumulated = 0;
-              this.lastSilentLogAt = 0;
-              console.warn('Global storage entered cooldown due to SQLITE_FULL; will skip all local cache writes for 5 minutes');
+            // Attempt an immediate best-effort cleanup to free space before entering full cooldown
+            try {
+              await this.performStorageCleanup();
+            } catch (cleanupErr) {
+              console.debug('performStorageCleanup during MMKV SQLITE_FULL handling failed:', cleanupErr);
             }
+            // Also attempt to trim legacy AsyncStorage sync queue as a last-resort
+            try {
+              const legacyKey = '@neurolearn/sync_queue';
+              try {
+                const raw = await AsyncStorage.getItem(legacyKey);
+                let queue: any[] = [];
+                try { queue = raw ? JSON.parse(raw) : []; if (!Array.isArray(queue)) queue = []; } catch { queue = []; }
+                if (queue.length > 25) {
+                  const trimmed = queue.slice(-25);
+                  await AsyncStorage.setItem(legacyKey, JSON.stringify(trimmed));
+                  console.debug('Trimmed legacy sync queue to 25 items during MMKV SQLITE_FULL handling');
+                }
+              } catch (trimErr) {
+                console.debug('Trimming legacy sync queue during MMKV SQLITE_FULL handling failed:', trimErr);
+              }
+            } catch (e) {
+              // ignore
+            }
+            // Centralized handling: notify storage unhealthy (cooldown + notification)
+            try { this.notifyStorageUnhealthy('MMKV SQLITE_FULL', 5 * 60 * 1000); } catch (e) {}
             return;
           }
           // fallthrough to AsyncStorage
@@ -330,17 +400,48 @@ export class HybridStorageService {
       }
 
       // Warm-tier writes (if it's context snapshots and DB available) are handled elsewhere; default to AsyncStorage for other cache keys
-      try {
-        await AsyncStorage.setItem(key, JSON.stringify(data));
-      } catch (error) {
-        const msg = String((error as any)?.message || error || '');
-        if (msg.includes('SQLITE_FULL') || msg.toLowerCase().includes('database or disk is full')) {
-          this.storageUnhealthyUntil = Date.now() + (5 * 60 * 1000);
-          console.warn('Global storage entered cooldown due to SQLITE_FULL; will skip all local cache writes for 5 minutes');
-          return;
+        try {
+          // Ensure data is properly serializable
+          let stringifiedData: string;
+          try {
+            stringifiedData = JSON.stringify(data);
+          } catch (serializeError) {
+            console.error('Failed to serialize data for AsyncStorage:', serializeError);
+            return; // Skip saving corrupted data
+          }
+
+          await AsyncStorage.setItem(key, stringifiedData);
+        } catch (error) {
+          const msg = String((error as any)?.message || error || '');
+          if (msg.includes('SQLITE_FULL') || msg.toLowerCase().includes('database or disk is full')) {
+            // Try a quick best-effort cleanup and trimming of legacy queues to free space
+            try {
+              // Trim the legacy sync queue to last 25 entries
+              try {
+                const legacyKey = '@neurolearn/sync_queue';
+                const raw = await AsyncStorage.getItem(legacyKey);
+                let queue: any[] = [];
+                try { queue = raw ? JSON.parse(raw) : []; if (!Array.isArray(queue)) queue = []; } catch { queue = []; }
+                if (queue.length > 25) {
+                  const trimmed = queue.slice(-25);
+                  await AsyncStorage.setItem(legacyKey, JSON.stringify(trimmed));
+                  console.debug('Trimmed legacy sync queue to 25 items during SQLITE_FULL handling');
+                }
+              } catch (trimErr) {
+                console.debug('Trimming legacy sync queue failed:', trimErr);
+              }
+
+              // Attempt a broader storage cleanup
+              try { await this.performStorageCleanup(); } catch (cleanupErr) { console.debug('performStorageCleanup failed during AsyncStorage SQLITE_FULL handling:', cleanupErr); }
+            } catch (e) {
+              // ignore inner cleanup errors
+            }
+
+            try { this.notifyStorageUnhealthy('AsyncStorage SQLITE_FULL', 5 * 60 * 1000); } catch (e) {}
+            return;
+          }
+          throw error;
         }
-        throw error;
-      }
     } catch (error) {
       console.error('Silent cache failed:', error);
       // Don't throw - caching is optional
@@ -412,15 +513,12 @@ export class HybridStorageService {
         }
       }
     } catch (e) {
-      // If underlying storage reports disk full, attempt to mark MMKV as unhealthy
+      // If underlying storage reports disk full, attempt to mark MMKV as unhealthy and notify
       const msg = String((e as any)?.message || e || '');
       console.warn('writeToHot failed:', e);
       if (msg.includes('SQLITE_FULL') || msg.toLowerCase().includes('database or disk is full')) {
-        try {
-          (MMKVStorageService as any).markUnhealthy?.();
-        } catch (mErr) {
-          // ignore
-        }
+        try { (MMKVStorageService as any).markUnhealthy?.(); } catch (mErr) { /* ignore */ }
+        try { this.notifyStorageUnhealthy('writeToHot SQLITE_FULL', 5 * 60 * 1000); } catch (e) {}
       }
       throw e;
     }
@@ -673,36 +771,35 @@ export class HybridStorageService {
         return { migrated: 0 };
       }
 
-      // Prepare payloads for batch upload
-      const snapshots: any[] = candidates.map((rec: any) => {
-        const raw = rec._raw ?? rec;
-        const payload = raw.payload ? (typeof raw.payload === 'string' ? JSON.parse(raw.payload) : raw.payload) : raw;
-        // normalize shape
-        return {
-          id: raw.id || payload.id || undefined,
-          sessionId: payload.sessionId || payload.session_id || null,
-          timestamp: payload.timestamp || payload.created_at || Date.now(),
-          contextHash: payload.contextHash || payload.context_hash || null,
-          version: payload.version || payload.v || 1,
-          userId: payload.userId || payload.user_id || null,
-          ...payload,
-        };
-      });
-
+      // Stream snapshots and upload in controlled batches to reduce memory spikes
       try {
         const batchSize = (STORAGE_CONFIG && STORAGE_CONFIG.cold && STORAGE_CONFIG.cold.batchSize) || 50;
         const compression = (STORAGE_CONFIG && STORAGE_CONFIG.cold && STORAGE_CONFIG.cold.compression) || false;
-        // Upload in chunks
-        for (let i = 0; i < snapshots.length; i += batchSize) {
-          const chunk = snapshots.slice(i, i + batchSize);
+
+        // Process candidates in streaming fashion
+        for (let i = 0; i < candidates.length; i += batchSize) {
+          const window = candidates.slice(i, i + batchSize);
+          const chunk = window.map((rec: any) => {
+            const raw = rec._raw ?? rec;
+            const payload = raw.payload ? (typeof raw.payload === 'string' ? JSON.parse(raw.payload) : raw.payload) : raw;
+            return {
+              id: raw.id || payload.id || undefined,
+              sessionId: payload.sessionId || payload.session_id || null,
+              timestamp: payload.timestamp || payload.created_at || Date.now(),
+              contextHash: payload.contextHash || payload.context_hash || null,
+              version: payload.version || payload.v || 1,
+              userId: payload.userId || payload.user_id || null,
+              ...payload,
+            };
+          });
+
           try {
             await this.supabaseService.saveContextSnapshotsBatch(chunk, { compression, batchSize });
-            // mark records in this chunk as synced
             const chunkHashes = chunk.map((s: any) => s.contextHash).filter(Boolean);
             if (chunkHashes.length > 0) await this.markContextSnapshotsSynced(chunkHashes);
             migrated += chunk.length;
           } catch (batchErr) {
-            // If batch fails, fallback to per-record upload to capture errors and continue
+            // fallback to per-record upload
             for (const s of chunk) {
               try {
                 await this.writeToCold(s);
@@ -759,6 +856,27 @@ export class HybridStorageService {
   // Telemetry sink(s) - optional callbacks that receive metrics after each migration/cleanup run
   private telemetrySinks: Array<(metrics: any) => void> = [];
 
+  // Notification sinks for user-visible alerts (e.g., low-disk warnings)
+  private notificationSinks: Array<(payload: { level: 'info' | 'warning' | 'critical'; message: string; meta?: any }) => void> = [];
+
+  /**
+   * Centralized notification when storage enters unhealthy state due to low-disk.
+   */
+  private notifyStorageUnhealthy(reason: string, cooldownMs: number = 5 * 60 * 1000) {
+    try {
+      this.storageUnhealthyUntil = Date.now() + cooldownMs;
+      this.silentSkipAccumulated = 0;
+      this.lastSilentLogAt = 0;
+      const payload = { level: 'critical' as const, message: `Storage entered cooldown: ${reason}`, meta: { cooldownMs } };
+      for (const s of this.notificationSinks) {
+        try { s(payload); } catch (e) { /* swallow sink errors */ }
+      }
+      console.warn('Global storage entered cooldown due to:', reason);
+    } catch (e) {
+      // ignore
+    }
+  }
+
   // Configurable retention and batching
   private CLEANUP_BATCH_SIZE = 100;
   private HOT_MAX_ITEMS = 1000;
@@ -805,9 +923,41 @@ export class HybridStorageService {
     }
   }
 
-  /** Register a telemetry sink callback that will receive run metrics. */
-  public registerTelemetrySink(cb: (metrics: any) => void) {
+  /**
+   * Register a telemetry sink callback that will receive run metrics.
+   * Returns an unsubscribe function to remove the sink.
+   */
+  public registerTelemetrySink(cb: (metrics: any) => void): () => void {
     if (typeof cb === 'function') this.telemetrySinks.push(cb);
+    // Return unsubscribe function
+    return () => {
+      try {
+        this.telemetrySinks = this.telemetrySinks.filter(s => s !== cb);
+      } catch (e) {
+        // swallow
+      }
+    };
+  }
+
+  /** Unregister a previously registered telemetry sink. */
+  public unregisterTelemetrySink(cb: (metrics: any) => void): void {
+    try { this.telemetrySinks = this.telemetrySinks.filter(s => s !== cb); } catch (e) { /* ignore */ }
+  }
+
+  /**
+   * Register a user-visible notification sink. Called when storage enters cooldown or critical events occur.
+   * Returns unsubscribe function.
+   */
+  public registerNotificationSink(cb: (payload: { level: 'info' | 'warning' | 'critical'; message: string; meta?: any }) => void): () => void {
+    if (typeof cb === 'function') this.notificationSinks.push(cb);
+    return () => {
+      try { this.notificationSinks = this.notificationSinks.filter(s => s !== cb); } catch (e) { /* ignore */ }
+    };
+  }
+
+  /** Unregister a previously registered notification sink. */
+  public unregisterNotificationSink(cb: (payload: { level: 'info' | 'warning' | 'critical'; message: string; meta?: any }) => void): void {
+    try { this.notificationSinks = this.notificationSinks.filter(s => s !== cb); } catch (e) { /* ignore */ }
   }
 
   /** Stop the background migration loop if running. Useful for tests and app teardown. */
@@ -1158,8 +1308,12 @@ export class HybridStorageService {
         }
       }
 
-  // Persist remaining legacy items
-  await syncQueue.persistLegacyQueue(remainingLegacy);
+  // Persist remaining legacy items using a safe persister that trims and batches when necessary
+  try {
+    await this.persistLegacySafely(remainingLegacy);
+  } catch (e) {
+    console.warn('persistLegacySafely failed:', e);
+  }
 
       if (synced > 0) {
         console.log(`✅ Background sync completed: ${synced} synced, ${failed} failed`);
@@ -1444,7 +1598,9 @@ export class HybridStorageService {
       const currentNodes = await this.getLogicNodes();
       const nodeIndex = currentNodes.findIndex(node => node.id === nodeId);
       if (nodeIndex !== -1 && updatedNode) {
-        currentNodes[nodeIndex] = updatedNode;
+        // updatedNode may be Partial due to remote update; cast explicitly to LogicNode after ensuring id exists
+        if (!updatedNode.id) updatedNode.id = nodeId;
+        currentNodes[nodeIndex] = updatedNode as LogicNode;
         await this.silentCache(HybridStorageService.CACHE_KEYS.LOGIC_NODES, currentNodes);
       }
 
@@ -1457,10 +1613,15 @@ export class HybridStorageService {
       const nodeIndex = currentNodes.findIndex(node => node.id === nodeId);
 
       if (nodeIndex !== -1) {
-        const updatedNode = { ...currentNodes[nodeIndex], ...updates, modified: new Date() };
-        currentNodes[nodeIndex] = updatedNode;
+        let updatedNode: any = { ...currentNodes[nodeIndex], ...updates, modified: new Date() };
+        // Ensure required id field is present before returning as LogicNode
+        if (!updatedNode.id) {
+          updatedNode.id = nodeId;
+        }
+        // Cast to LogicNode for assignment to cached array
+        currentNodes[nodeIndex] = updatedNode as LogicNode;
         await this.saveLogicNodes(currentNodes);
-        return updatedNode;
+        return updatedNode as LogicNode;
       }
 
       return null;
@@ -1503,6 +1664,24 @@ export class HybridStorageService {
   async getFocusSession(sessionId: string): Promise<FocusSession | null> {
     const sessions = await this.getFocusSessions();
     return sessions.find(session => session.id === sessionId) || null;
+  }
+
+  async recordFocusSession(sessionData: any): Promise<void> {
+    try {
+      // Try to save to Supabase if online
+      if (this.isOnline && this.supabaseService.saveFocusSession) {
+        await this.supabaseService.saveFocusSession(sessionData);
+      }
+
+      // Update cache
+      const currentSessions = await this.getFocusSessions();
+      await this.silentCache(HybridStorageService.CACHE_KEYS.FOCUS_SESSIONS, [...currentSessions, sessionData]);
+    } catch (error) {
+      console.warn('🔄 Recording focus session offline');
+
+      // Fallback: Queue for sync
+      await this.queueForSync(HybridStorageService.CACHE_KEYS.FOCUS_SESSIONS, sessionData);
+    }
   }
 
   // ==================== READING SESSIONS ====================
@@ -1973,7 +2152,7 @@ export class HybridStorageService {
 
   async getHabitCompletionHistory(userId: string, habitId: string, days: number): Promise<any[]> {
     // Stub implementation - return mock history
-    const history = [];
+  const history: any[] = [];
     for (let i = 0; i < days; i++) {
       history.push({
         date: new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -2006,7 +2185,7 @@ export class HybridStorageService {
 
   async getRewardHistory(userId: string, days: number): Promise<any[]> {
     // Stub implementation - return mock reward history
-    const history = [];
+  const history: any[] = [];
     for (let i = 0; i < days; i++) {
       history.push({
         date: new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -2045,21 +2224,37 @@ export class HybridStorageService {
 
   // ==================== GENERIC ITEM METHODS ====================
 
-  async getItem(key: string): Promise<any> {
+  async setItem(key: string, value: any): Promise<void> {
     try {
-      const value = await AsyncStorage.getItem(key);
-      return value ? JSON.parse(value) : null;
+      // Ensure value is properly serializable
+      let stringifiedValue: string;
+      try {
+        stringifiedValue = typeof value === 'string' ? value : JSON.stringify(value);
+      } catch (e) {
+        console.error('Error serializing value for storage:', e);
+        return; // Skip saving corrupted data
+      }
+
+      await AsyncStorage.setItem(key, stringifiedValue);
     } catch (error) {
-      console.error('Error getting item from storage:', error);
-      return null;
+      console.error('Error setting item in storage:', error);
     }
   }
 
-  async setItem(key: string, value: any): Promise<void> {
+  async removeItem(key: string): Promise<void> {
     try {
-      await AsyncStorage.setItem(key, JSON.stringify(value));
+      await AsyncStorage.removeItem(key);
     } catch (error) {
-      console.error('Error setting item in storage:', error);
+      console.error('Error removing item from storage:', error);
+    }
+  }
+
+  async getItem(key: string): Promise<string | null> {
+    try {
+      return await AsyncStorage.getItem(key);
+    } catch (error) {
+      console.error('Error getting item from storage:', error);
+      return null;
     }
   }
 
@@ -2223,13 +2418,8 @@ export class HybridStorageService {
       console.warn('Warm DB saveContextSnapshot failed:', dbErr);
       if (msg.includes('sqlite_full') || msg.includes('database or disk is full')) {
         try {
-          // Set global unhealthy flag for 5 minutes (only set/log if not already cooling down)
-          if (!this.storageUnhealthyUntil || Date.now() >= this.storageUnhealthyUntil) {
-            this.storageUnhealthyUntil = Date.now() + (5 * 60 * 1000);
-            this.silentSkipAccumulated = 0;
-            this.lastSilentLogAt = 0;
-            console.warn('Global storage entered cooldown due to SQLITE_FULL; will skip all local cache writes for 5 minutes');
-          }
+          // Centralized handling: notify storage unhealthy
+          try { this.notifyStorageUnhealthy('Warm DB SQLITE_FULL', 5 * 60 * 1000); } catch (e) {}
         } catch (e) {}
         try {
           // Persist a minimal legacy queue entry to AsyncStorage to ensure data isn't lost
@@ -2728,6 +2918,15 @@ export class HybridStorageService {
       const warmCleaned = warmResult.cleaned || 0;
 
       console.log(`✅ Storage cleanup completed: ${hotCleaned} hot items, ${warmCleaned} warm items removed`);
+
+      // Update cleanup metrics snapshot and emit telemetry to any registered sinks
+      try {
+        this.cleanupMetrics.lastRunAt = Date.now();
+        // emit a lightweight cleanup-specific telemetry object
+        this.emitTelemetry();
+      } catch (e) {
+        // ignore telemetry errors
+      }
 
       return { hotCleaned, warmCleaned };
     } catch (error) {

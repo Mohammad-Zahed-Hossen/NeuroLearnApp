@@ -45,11 +45,40 @@ export interface LoggerConfig {
 export class Logger {
   private context: string;
   private static config: LoggerConfig = {
-    level: __DEV__ ? LogLevel.DEBUG : LogLevel.INFO,
-    enableConsole: true,
+    // Determine defaults from environment where possible. Allow overrides via
+    // process.env.LOG_LEVEL and other variables in dev or CI.
+    level: ((): LogLevel => {
+      try {
+        const envLevel = (typeof process !== 'undefined' && process.env && process.env.LOG_LEVEL) ? process.env.LOG_LEVEL.toLowerCase() : undefined;
+        if (envLevel) {
+          switch (envLevel) {
+            case 'debug': return LogLevel.DEBUG;
+            case 'info': return LogLevel.INFO;
+            case 'warn': return LogLevel.WARN;
+            case 'error': return LogLevel.ERROR;
+            case 'critical': return LogLevel.CRITICAL;
+            default: break;
+          }
+        }
+      } catch {}
+      return typeof __DEV__ !== 'undefined' && __DEV__ ? LogLevel.DEBUG : LogLevel.INFO;
+    })(),
+    enableConsole: ((): boolean => {
+      try {
+        const v = (typeof process !== 'undefined' && process.env && process.env.LOG_ENABLE_CONSOLE);
+        if (v !== undefined) return String(v).toLowerCase() === 'true';
+      } catch {}
+      return true;
+    })(),
     enablePersistence: true,
     maxLogEntries: 1000,
-    enablePerformanceMetrics: true,
+    enablePerformanceMetrics: ((): boolean => {
+      try {
+        const v = (typeof process !== 'undefined' && process.env && process.env.LOG_ENABLE_PERF_METRICS);
+        if (v !== undefined) return String(v).toLowerCase() === 'true';
+      } catch {}
+      return typeof __DEV__ !== 'undefined' && __DEV__;
+    })(),
     enableRemoteLogging: false
   };
 
@@ -243,11 +272,13 @@ export class Logger {
       context: this.context,
       message,
       data,
-      stack,
-      performanceMetrics: Logger.config.enablePerformanceMetrics ? {
-        memory: this.getMemoryUsage(),
-        cpu: this.getCpuUsage()
-      } : undefined
+      ...(stack && { stack }),
+      ...(Logger.config.enablePerformanceMetrics && {
+        performanceMetrics: {
+          memory: this.getMemoryUsage(),
+          cpu: this.getCpuUsage()
+        }
+      })
     };
 
     // Add to history
@@ -281,7 +312,7 @@ export class Logger {
       context: this.context,
       message,
       data,
-      stack
+      ...(stack && { stack })
     };
 
     console.error(`[CRITICAL] ${this.formatEntry(entry)}`);

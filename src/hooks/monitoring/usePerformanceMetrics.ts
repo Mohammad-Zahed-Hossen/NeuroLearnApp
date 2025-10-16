@@ -49,7 +49,7 @@ export const usePerformanceMetrics = () => {
         // Calculate render time (average of recent paint timings)
         const paintEntries = performance.getEntriesByType('paint');
         const renderTime = paintEntries.length > 0 ?
-          paintEntries[paintEntries.length - 1].startTime : 0;
+          paintEntries[paintEntries.length - 1]!.startTime : 0;
 
         // Get battery level (would require react-native-device-info)
         const batteryLevel = 0.85; // Placeholder - implement with actual battery API

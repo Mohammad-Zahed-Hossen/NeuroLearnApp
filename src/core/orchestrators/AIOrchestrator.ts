@@ -129,19 +129,38 @@ export class AIOrchestrator {
     try {
       this.logger.info('Initializing AI Orchestrator...');
 
-      // Initialize AI services
-      this.aiInsightsService = AIInsightsService.getInstance();
-  // Use compatibility shims to avoid strict API drift issues
-  this.geminiService = AdvancedGeminiCompat;
-  this.geminiInsights = GeminiInsightsCompat;
-      this.predictiveAnalytics = PredictiveAnalyticsService.getInstance();
-      this.analyticsAggregation = AnalyticsAggregationService.getInstance();
+      // Initialize AI services with error handling
+      try {
+        this.aiInsightsService = AIInsightsService.getInstance();
+      } catch (error) {
+        this.logger.warn('AIInsightsService not available, using fallback');
+        this.aiInsightsService = { initialize: () => Promise.resolve(), analyzePatterns: () => Promise.resolve([]) };
+      }
 
-      // Initialize services
+      this.geminiService = AdvancedGeminiCompat;
+      this.geminiInsights = GeminiInsightsCompat;
+
+      // Initialize analytics services with fallbacks
+      try {
+        this.predictiveAnalytics = PredictiveAnalyticsService.getInstance();
+      } catch (error) {
+        this.logger.warn('PredictiveAnalyticsService not available, using fallback');
+        this.predictiveAnalytics = { initialize: () => Promise.resolve(), predictTrends: () => Promise.resolve([]) };
+      }
+
+      try {
+        this.analyticsAggregation = AnalyticsAggregationService.getInstance();
+      } catch (error) {
+        this.logger.warn('AnalyticsAggregationService not available, using fallback');
+        // Cast to any to provide a minimal runtime fallback without widening the service type
+        this.analyticsAggregation = ({ initialize: () => Promise.resolve() } as any);
+      }
+
+      // Initialize services with error handling
       await Promise.all([
-        this.aiInsightsService.initialize(),
-        this.geminiService.initialize(),
-        this.predictiveAnalytics.initialize()
+        this.aiInsightsService.initialize?.() || Promise.resolve(),
+        this.geminiService.initialize?.() || Promise.resolve(),
+        this.predictiveAnalytics.initialize?.() || Promise.resolve()
       ]);
 
       // Setup event listeners
@@ -554,6 +573,7 @@ export class AIOrchestrator {
     const patterns = await this.aiInsightsService.analyzePatterns(domainData);
 
     for (const pattern of patterns.patterns || []) {
+      const actions = includeRecommendations ? await this.generateActions(pattern) : undefined;
       const insight: AIInsight = {
         id: this.generateInsightId(),
         type: 'pattern',
@@ -562,7 +582,7 @@ export class AIOrchestrator {
         confidence: pattern.confidence,
         data: pattern,
         timestamp: new Date(),
-        actions: includeRecommendations ? await this.generateActions(pattern) : undefined
+        ...(actions && { actions })
       };
 
       insights.push(insight);
@@ -635,7 +655,7 @@ export class AIOrchestrator {
   }
 
   private async calculateCrossDomainCorrelations(domains: string[], timeframe: string, minCorrelation: number): Promise<any[]> {
-    const correlations = [];
+  const correlations: any[] = [];
 
     for (let i = 0; i < domains.length; i++) {
       for (let j = i + 1; j < domains.length; j++) {
@@ -894,7 +914,7 @@ export class AIOrchestrator {
 
   private async generateActions(pattern: any): Promise<string[]> {
     // Generate actionable recommendations based on pattern
-    const actions = [];
+    const actions: string[] = [];
 
     if (pattern.type === 'declining_performance') {
       actions.push('suggest_break', 'adjust_difficulty', 'change_approach');
@@ -924,7 +944,7 @@ export class AIOrchestrator {
     if (!match) return new Date(now.getTime() - 24 * 60 * 60 * 1000); // Default 1 day
 
     const [, amount, unit] = match;
-    const num = parseInt(amount);
+  const num = parseInt(String(amount ?? '0'));
 
     switch (unit) {
       case 'h': return new Date(now.getTime() - num * 60 * 60 * 1000);

@@ -17,7 +17,7 @@ import { CommandContext, CommandResult } from '../NeuroLearnEngine';
 import SpacedRepetitionCompat from '../../services/learning/SpacedRepetitionCompat';
 import { MindMapGenerator } from '../../services/learning/MindMapGeneratorService';
 import FocusTimerCompat from '../../services/learning/FocusTimerCompat';
-import CognitiveAuraCompat from '../../services/cognitive/CognitiveAuraCompat';
+import CognitiveAuraCompat from '../../services/integrations/cognitive/CognitiveAuraCompat';
 
 export interface LearningConfig {
   maxCognitiveLoad: number;
@@ -677,7 +677,7 @@ export class LearningOrchestrator {
     const recentPerformance = await this.analyzePerformance('7d', false);
     const cognitiveState = await this.cognitiveAura.getCurrentState();
 
-    const recommendations = [];
+  const recommendations: any[] = [];
 
     // Add cognitive load recommendations
     if (this.metrics.cognitiveLoadAverage > 0.8) {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,10 +11,13 @@ import {
   Vibration,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../GlassComponents';
 import { CognitiveLoadIndicator } from '../CognitiveIndicators';
 import { colors, spacing, borderRadius, typography } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
+import { useDynamicMenuItems } from '../../hooks/useDynamicMenuItems';
+import { MenuItem } from '../../types/navigation';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -198,21 +201,13 @@ const styles = StyleSheet.create({
   },
 });
 
-interface MenuItem {
-  id: string;
-  title: string;
-  icon: string;
-  screen: string;
-  description: string;
-  cognitiveLoad: number; // Changed from cognitiveWeight (1-5) to cognitiveLoad (0-1) for consistency
-  usageFrequency: number; // 1-5 scale for how often used
-}
+
 
 interface HamburgerMenuProps {
   visible: boolean;
   onClose: () => void;
   onNavigate: (screen: string) => void;
-  currentScreen: string;
+  currentScreen?: string | undefined;
   theme: ThemeType;
   userBehavior?: {
     frequentlyUsed: string[];
@@ -349,255 +344,332 @@ const menuItems: MenuItem[] = [
   },
 ];
 
-export const HamburgerMenu: React.FC<HamburgerMenuProps> = ({
-  visible,
-  onClose,
-  onNavigate,
-  currentScreen,
-  theme,
-  userBehavior,
-}) => {
-  const themeColors = colors[theme];
-  const slideAnim = React.useRef(new Animated.Value(-320)).current;
-  const fadeAnim = React.useRef(new Animated.Value(0)).current;
+export const HamburgerMenu = React.memo<HamburgerMenuProps>(
+  ({ visible, onClose, onNavigate, currentScreen, theme, userBehavior }) => {
+    const themeColors = colors[theme];
+    const slideAnim = React.useRef(new Animated.Value(-320)).current;
+    const fadeAnim = React.useRef(new Animated.Value(0)).current;
+    const queryClient = useQueryClient();
+    const { generateMenuItems } = useDynamicMenuItems();
+    const [dynamicMenuItems, setDynamicMenuItems] = React.useState<MenuItem[]>(menuItems);
 
-  // Miller's Law: Chunk items into meaningful groups (7±2 items)
-  const primaryItems = menuItems.filter((item) => item.usageFrequency >= 3);
-  const secondaryItems = menuItems.filter((item) => item.usageFrequency < 3);
+    React.useEffect(() => {
+      const loadMenuItems = async () => {
+        try {
+          const items = await generateMenuItems();
+          setDynamicMenuItems(items);
+        } catch (error) {
+          console.error('Failed to load dynamic menu items:', error);
+          // Fallback to static menu items
+          setDynamicMenuItems(menuItems);
+        }
+      };
+      loadMenuItems();
+    }, [generateMenuItems]);
 
-  React.useEffect(() => {
-    if (visible) {
-      // Animate menu entrance with proper timing based on research
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      // Reset animations when closing
-      slideAnim.setValue(-320);
-      fadeAnim.setValue(0);
-    }
-  }, [visible]);
+    // Miller's Law: Chunk items into meaningful groups (7±2 items)
+    const primaryItems = useMemo(
+      () => dynamicMenuItems.filter((item) => item.usageFrequency >= 3),
+      [dynamicMenuItems],
+    );
+    const secondaryItems = useMemo(
+      () => dynamicMenuItems.filter((item) => item.usageFrequency < 3),
+      [dynamicMenuItems],
+    );
 
-  const handleNavigate = (screen: string) => {
-    // Provide haptic feedback (sensory confirmation)
-    Vibration.vibrate(5);
-    onNavigate(screen);
-    onClose();
-  };
+    React.useEffect(() => {
+      if (visible) {
+        // Animate menu entrance with proper timing based on research
+        Animated.parallel([
+          Animated.timing(slideAnim, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start();
 
-  const getMenuItemStyle = (item: MenuItem, isActive: boolean) => {
-    // Fitts's Law: Larger touch targets for frequent actions
-    const baseStyle = {
-      minHeight: item.usageFrequency >= 4 ? 70 : 60,
-      paddingVertical: item.usageFrequency >= 4 ? spacing.lg : spacing.md,
+        // Prefetch frequently used menu items
+        if (userBehavior?.frequentlyUsed) {
+          userBehavior.frequentlyUsed.forEach((itemId) => {
+            const item = menuItems.find((menuItem) => menuItem.id === itemId);
+            if (item) {
+              // Prefetch data for frequently accessed menu items
+              queryClient.prefetchQuery({
+                queryKey: [`menu-${item.id}-data`],
+                queryFn: async () => {
+                  // Simulate prefetching relevant data for the menu item
+                  // In a real app, this would fetch screen-specific data
+                  return {
+                    screen: item.screen,
+                    title: item.title,
+                    preloaded: true,
+                  };
+                },
+                staleTime: 5 * 60 * 1000, // 5 minutes
+              });
+              console.log(`Prefetching data for ${item.title}`);
+            }
+          });
+        }
+      } else {
+        // Reset animations when closing
+        slideAnim.setValue(-320);
+        fadeAnim.setValue(0);
+      }
+    }, [visible, userBehavior?.frequentlyUsed]);
+
+    const handleNavigate = (screen: string) => {
+      // Provide haptic feedback (sensory confirmation)
+      Vibration.vibrate(5);
+      onNavigate(screen);
+      onClose();
     };
 
-    if (isActive) {
-      return {
-        ...baseStyle,
-        backgroundColor: themeColors.primary + '20', // 20% opacity
-        borderLeftWidth: 4,
-        borderLeftColor: themeColors.primary,
+    const getMenuItemStyle = (item: MenuItem, isActive: boolean) => {
+      // Fitts's Law: Larger touch targets for frequent actions
+      const baseStyle = {
+        minHeight: item.usageFrequency >= 4 ? 70 : 60,
+        paddingVertical: item.usageFrequency >= 4 ? spacing.lg : spacing.md,
       };
-    }
 
-    return baseStyle;
-  };
+      if (isActive) {
+        return {
+          ...baseStyle,
+          backgroundColor: themeColors.primary + '20', // 20% opacity
+          borderLeftWidth: 4,
+          borderLeftColor: themeColors.primary,
+        };
+      }
 
-  const renderMenuSection = (items: MenuItem[], title?: string) => (
-    <View style={styles.section}>
-      {title && (
-        <Text style={[styles.sectionTitle, { color: themeColors.textMuted }]}>
-          {title}
-        </Text>
-      )}
-      {items.map((item) => {
-        const isActive = currentScreen === item.screen;
-        const isFrequentlyUsed = userBehavior?.frequentlyUsed?.includes(
-          item.id,
-        );
+      return baseStyle;
+    };
 
-        return (
-          <TouchableOpacity
-            key={item.id}
-            onPress={() => handleNavigate(item.screen)}
-            style={[
-              styles.menuItem,
-              getMenuItemStyle(item, isActive),
-              isFrequentlyUsed && styles.frequentItem,
-            ]}
-            activeOpacity={0.7}
-            // Accessibility: Larger touch area for cognitive ease
-            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-          >
-            <View style={styles.menuItemContent}>
-              <View style={styles.iconContainer}>
-                <Text
-                  style={[
-                    styles.menuIcon,
-                    isActive && { transform: [{ scale: 1.1 }] },
-                  ]}
-                >
-                  {item.icon}
-                </Text>
-                {isFrequentlyUsed && (
-                  <View
-                    style={[
-                      styles.frequencyDot,
-                      { backgroundColor: themeColors.primary },
-                    ]}
-                  />
-                )}
-              </View>
-
-              <View style={styles.menuTextContent}>
-                <Text
-                  style={[
-                    styles.menuTitle,
-                    {
-                      color: isActive ? themeColors.primary : themeColors.text,
-                      fontWeight: isActive ? '600' : '500',
-                    },
-                  ]}
-                  numberOfLines={1}
-                  // Optimal line length for reading (45-75 characters)
-                >
-                  {item.title}
-                </Text>
-                <Text
-                  style={[
-                    styles.menuDescription,
-                    { color: themeColors.textSecondary },
-                  ]}
-                  numberOfLines={2}
-                  // Cognitive load reduction: Limit description length
-                >
-                  {item.description}
-                </Text>
-              </View>
-
-              {/* Visual hierarchy indicator */}
-              <View style={styles.cognitiveWeight}>
+    const MenuItemComponent = React.memo(
+      ({
+        item,
+        isActive,
+        isFrequentlyUsed = false,
+        themeColors,
+        onPress,
+      }: {
+        item: MenuItem;
+        isActive: boolean;
+        isFrequentlyUsed?: boolean;
+        themeColors: any;
+        onPress: () => void;
+      }) => (
+        <TouchableOpacity
+          onPress={onPress}
+          style={[
+            styles.menuItem,
+            getMenuItemStyle(item, isActive),
+            isFrequentlyUsed && styles.frequentItem,
+          ]}
+          activeOpacity={0.7}
+          // Accessibility: Larger touch area for cognitive ease
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+        >
+          <View style={styles.menuItemContent}>
+            <View style={styles.iconContainer}>
+              <Text
+                style={[
+                  styles.menuIcon,
+                  isActive && { transform: [{ scale: 1.1 }] },
+                ]}
+              >
+                {item.icon}
+              </Text>
+              {isFrequentlyUsed && (
                 <View
                   style={[
-                    styles.weightBar,
-                    {
-                      width: `${item.cognitiveLoad * 100}%`,
-                      backgroundColor:
-                        item.cognitiveLoad >= 0.7
-                          ? themeColors.warning
-                          : item.cognitiveLoad >= 0.5
-                          ? themeColors.primary
-                          : themeColors.success,
-                    },
+                    styles.frequencyDot,
+                    { backgroundColor: themeColors.primary },
                   ]}
                 />
-              </View>
+              )}
             </View>
 
-            {isActive && (
-              <View
+            <View style={styles.menuTextContent}>
+              <Text
                 style={[
-                  styles.activeIndicator,
-                  { backgroundColor: themeColors.primary },
+                  styles.menuTitle,
+                  {
+                    color: isActive ? themeColors.primary : themeColors.text,
+                    fontWeight: isActive ? '600' : '500',
+                  },
                 ]}
-              />
-            )}
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-
-  return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="none" // We handle animation manually
-      onRequestClose={onClose}
-      statusBarTranslucent={true}
-    >
-      <Animated.View style={[styles.overlay, { opacity: fadeAnim }]}>
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={onClose}
-          // Fitts's Law: Easy to dismiss by tapping anywhere outside
-        />
-
-        <Animated.View
-          style={[
-            styles.menuContainer,
-            {
-              backgroundColor: themeColors.surface,
-              transform: [{ translateX: slideAnim }],
-            },
-          ]}
-        >
-          {/* Header with optimized information density */}
-          <View style={styles.header}>
-            <View style={styles.headerContent}>
-              <Text style={[styles.appTitle, { color: themeColors.text }]}>
-                NeuroLearn
+                numberOfLines={1}
+                // Optimal line length for reading (45-75 characters)
+              >
+                {item.title}
               </Text>
               <Text
-                style={[styles.subtitle, { color: themeColors.textSecondary }]}
-                numberOfLines={1}
+                style={[
+                  styles.menuDescription,
+                  { color: themeColors.textSecondary },
+                ]}
+                numberOfLines={2}
+                // Cognitive load reduction: Limit description length
               >
-                Smart Cognitive Learning System
+                {item.description}
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={onClose}
+
+            {/* Visual hierarchy indicator */}
+            <View style={styles.cognitiveWeight}>
+              <View
+                style={[
+                  styles.weightBar,
+                  {
+                    width: `${item.cognitiveLoad * 100}%`,
+                    backgroundColor:
+                      item.cognitiveLoad >= 0.7
+                        ? themeColors.warning
+                        : item.cognitiveLoad >= 0.5
+                        ? themeColors.primary
+                        : themeColors.success,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+
+          {isActive && (
+            <View
               style={[
-                styles.closeButton,
-                {
-                  borderColor: themeColors.border,
-                  // Fitts's Law: Larger close target
-                  width: 44,
-                  height: 44,
-                },
+                styles.activeIndicator,
+                { backgroundColor: themeColors.primary },
               ]}
-              hitSlop={8}
-            >
-              <Text style={[styles.closeIcon, { color: themeColors.text }]}>
-                ×
+            />
+          )}
+        </TouchableOpacity>
+      ),
+    );
+
+    const renderMenuSection = React.useMemo(
+      () => (items: MenuItem[], title?: string) =>
+        (
+          <View style={styles.section}>
+            {title && (
+              <Text
+                style={[styles.sectionTitle, { color: themeColors.textMuted }]}
+              >
+                {title}
               </Text>
-            </TouchableOpacity>
-          </View>
+            )}
+            {items.map((item) => {
+              const isActive = currentScreen === item.screen;
+              const isFrequentlyUsed = userBehavior?.frequentlyUsed?.includes(
+                item.id,
+              );
 
-          {/* Scrollable content with chunked sections */}
-          <ScrollView
-            style={styles.menuList}
-            showsVerticalScrollIndicator={false}
-            // Gestalt: Clear visual separation
-            contentContainerStyle={styles.scrollContent}
+              return (
+                <MenuItemComponent
+                  key={item.id}
+                  item={item}
+                  isActive={isActive}
+                  isFrequentlyUsed={!!isFrequentlyUsed}
+                  themeColors={themeColors}
+                  onPress={() => handleNavigate(item.screen)}
+                />
+              );
+            })}
+          </View>
+        ),
+      [currentScreen, userBehavior?.frequentlyUsed, themeColors],
+    );
+
+    return (
+      <Modal
+        visible={visible}
+        transparent={true}
+        animationType="none" // We handle animation manually
+        onRequestClose={onClose}
+        statusBarTranslucent={true}
+      >
+        <Animated.View style={[styles.overlay, { opacity: fadeAnim }]}>
+          <TouchableOpacity
+            style={styles.backdrop}
+            activeOpacity={1}
+            onPress={onClose}
+            // Fitts's Law: Easy to dismiss by tapping anywhere outside
+          />
+
+          <Animated.View
+            style={[
+              styles.menuContainer,
+              {
+                backgroundColor: themeColors.surface,
+                transform: [{ translateX: slideAnim }],
+              },
+            ]}
           >
-            {renderMenuSection(primaryItems, 'Frequently Used')}
-            {secondaryItems.length > 0 &&
-              renderMenuSection(secondaryItems, 'Advanced Tools')}
-          </ScrollView>
+            {/* Header with optimized information density */}
+            <View style={styles.header}>
+              <View style={styles.headerContent}>
+                <Text style={[styles.appTitle, { color: themeColors.text }]}>
+                  NeuroLearn
+                </Text>
+                <Text
+                  style={[
+                    styles.subtitle,
+                    { color: themeColors.textSecondary },
+                  ]}
+                  numberOfLines={1}
+                >
+                  Smart Cognitive Learning System
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={onClose}
+                style={[
+                  styles.closeButton,
+                  {
+                    borderColor: themeColors.border,
+                    // Fitts's Law: Larger close target
+                    width: 44,
+                    height: 44,
+                  },
+                ]}
+                hitSlop={8}
+              >
+                <Text style={[styles.closeIcon, { color: themeColors.text }]}>
+                  ×
+                </Text>
+              </TouchableOpacity>
+            </View>
 
-          {/* Footer with minimal cognitive load */}
-          <View style={styles.footer}>
-            <Text style={[styles.footerText, { color: themeColors.textMuted }]}>
-              v1.0.0 • Evidence-Based Design
-            </Text>
-          </View>
+            {/* Scrollable content with chunked sections */}
+            <ScrollView
+              style={styles.menuList}
+              showsVerticalScrollIndicator={false}
+              // Gestalt: Clear visual separation
+              contentContainerStyle={styles.scrollContent}
+            >
+              {renderMenuSection(primaryItems, 'Frequently Used')}
+              {secondaryItems.length > 0 &&
+                renderMenuSection(secondaryItems, 'Advanced Tools')}
+            </ScrollView>
+
+            {/* Footer with minimal cognitive load */}
+            <View style={styles.footer}>
+              <Text
+                style={[styles.footerText, { color: themeColors.textMuted }]}
+              >
+                v1.0.0 • Evidence-Based Design
+              </Text>
+            </View>
+          </Animated.View>
         </Animated.View>
-      </Animated.View>
-    </Modal>
-  );
-};
+      </Modal>
+    );
+  },
+);
 
 interface HeaderProps {
   title: string;

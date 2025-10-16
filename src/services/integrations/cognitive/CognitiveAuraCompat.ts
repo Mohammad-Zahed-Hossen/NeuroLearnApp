@@ -10,7 +10,7 @@
  * canonical implementations. Keep this file minimal and non-invasive.
  */
 
-import { cognitiveAuraService } from '../ai/CognitiveAuraService';
+import { cognitiveAuraService } from '../../ai/CognitiveAuraService';
 
 // Re-export the singleton for callers that import the instance directly
 // Use `any` to remain flexible for legacy method names expected by adapters

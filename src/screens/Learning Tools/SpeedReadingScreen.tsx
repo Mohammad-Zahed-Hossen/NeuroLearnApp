@@ -27,10 +27,20 @@ import SpeedReadingService from '../../services/learning/SpeedReadingService';
 import { useSoundscape } from '../../contexts/SoundscapeContext';
 import { neuralIntegrationService } from '../../services/learning/NeuralIntegrationService';
 import { StudySession } from '../../types';
+import { DynamicSpeedReadingService } from '../../services/learning/DynamicSpeedReadingService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface SpeedReadingScreenProps {
   theme: ThemeType;
   onNavigate: (screen: string) => void;
+}
+
+interface OnboardingStep {
+  id: string;
+  title: string;
+  description: string;
+  highlightElement?: string; // CSS selector or component to highlight
+  actionText: string;
 }
 
 interface ReadingState {
@@ -138,6 +148,14 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   const [lastTextRead, setLastTextRead] = useState<string>('');
   const [currentWord, setCurrentWord] = useState<string>('Ready to read...');
   const [analytics, setAnalytics] = useState<any>(null);
+  const [dataSource, setDataSource] = useState<'static' | 'dynamic' | 'hybrid'>('hybrid');
+  const [dynamicTexts, setDynamicTexts] = useState<TextPreset[]>([]);
+  const [dynamicTextsLoading, setDynamicTextsLoading] = useState(false);
+
+  // Onboarding state
+  const [onboardingVisible, setOnboardingVisible] = useState(false);
+  const [currentOnboardingStep, setCurrentOnboardingStep] = useState(0);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
 
   // Animation and refs
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -251,11 +269,35 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
   const storage = StorageService.getInstance();
   const speedReadingService = SpeedReadingService.getInstance();
   const soundscape = useSoundscape();
+  const dynamicService = DynamicSpeedReadingService.getInstance();
 
-  // Notify neural integration of screen change
+  // Notify neural integration of screen change and load dynamic content
   useEffect(() => {
     neuralIntegrationService.onScreenChange('speed_reading');
-  }, []);
+
+    // Load dynamic texts if enabled
+    const loadDynamicContent = async () => {
+      if (dataSource === 'dynamic' || dataSource === 'hybrid') {
+        setDynamicTextsLoading(true);
+        try {
+          const generatedTexts = await dynamicService.generatePersonalizedTexts();
+          setDynamicTexts(generatedTexts);
+        } catch (error) {
+          console.error('Error loading dynamic texts:', error);
+          Alert.alert(
+            'AI Service Unavailable',
+            'Unable to generate personalized texts. Using curated texts only.',
+            [{ text: 'OK' }]
+          );
+          setDynamicTexts([]);
+        } finally {
+          setDynamicTextsLoading(false);
+        }
+      }
+    };
+
+    loadDynamicContent();
+  }, [dataSource]);
 
   useEffect(() => {
     return () => {
@@ -290,8 +332,12 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
 
       // Start optimal soundscape for speed reading
       if (soundscape.isInitialized && !soundscape.isActive) {
+        // Guard against missing presets
         await soundscape.startPreset('speed_integration', {
-          cognitiveLoad: 0.6,
+          cognitiveLoad:
+            textPresets && textPresets[1] && textPresets[1].content
+              ? textPresets[1].content
+              : 'No preset available',
           fadeIn: true,
         });
       }
@@ -518,8 +564,8 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
     } catch (error) {
       console.warn('Quiz generation failed', error);
       Alert.alert(
-        'Quiz generation failed',
-        'Unable to create quiz at this time.',
+        'AI Service Unavailable',
+        'Unable to generate quiz. Please try again later.',
       );
     } finally {
       setQuizLoading(false);
@@ -824,6 +870,61 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
         style={styles.content}
         contentContainerStyle={styles.container}
       >
+        {/* Data Source Toggle */}
+        <GlassCard theme={theme} style={styles.dataSourceCard}>
+          <Text style={[styles.dataSourceTitle, { color: themeColors.text }]}>
+            📚 Content Source
+          </Text>
+          <View style={styles.dataSourceButtons}>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'static' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('static')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'static' ? '#FFFFFF' : themeColors.text }]}>
+                Static
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'hybrid' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('hybrid')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'hybrid' ? '#FFFFFF' : themeColors.text }]}>
+                Hybrid
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'dynamic' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('dynamic')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'dynamic' ? '#FFFFFF' : themeColors.text }]}>
+                Personalized
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.dataSourceDescription, { color: themeColors.textSecondary }]}>
+            {dataSource === 'static' && 'Using curated reading materials only'}
+            {dataSource === 'hybrid' && 'Combining curated texts with personalized content'}
+            {dataSource === 'dynamic' && 'Using AI-generated content based on your interests'}
+          </Text>
+          {dynamicTexts.length > 0 && (
+            <Text style={[styles.dynamicTextsCount, { color: themeColors.success }]}>
+              {dynamicTexts.length} personalized texts available
+            </Text>
+          )}
+        </GlassCard>
+
         {/* Speed Settings */}
         <GlassCard theme={theme} style={styles.settingsCard}>
           <Text style={[styles.cardTitle, { color: themeColors.text }]}>
@@ -966,19 +1067,94 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
         <View style={styles.presetsSection}>
           <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
             📚 Practice Texts
+            {dynamicTexts.length > 0 && (
+              <Text style={[styles.dynamicTextsIndicator, { color: themeColors.success }]}>
+                {' '}(+{dynamicTexts.length} personalized)
+              </Text>
+            )}
           </Text>
 
-          {textPresets.map((preset) => (
+          {/* Static texts (always show unless dynamic-only) */}
+          {dataSource !== 'dynamic' && textPresets.map((preset) => (
             <GlassCard
               key={preset.id}
               theme={theme}
               onPress={() => startReading(preset.content, preset)}
-              style={styles.presetCard}
+              style={[
+                styles.presetCard,
+                { borderColor: themeColors.warning, borderWidth: 1 }
+              ]}
             >
               <View style={styles.presetHeader}>
-                <Text style={[styles.presetTitle, { color: themeColors.text }]}>
-                  {preset.title}
+                <View style={styles.presetTitleContainer}>
+                  <Text style={[styles.presetTitle, { color: themeColors.text }]}>
+                    {preset.title}
+                  </Text>
+                  <Text style={[styles.presetTag, { backgroundColor: themeColors.warning }]}>
+                    Curated
+                  </Text>
+                </View>
+                <View style={styles.presetMeta}>
+                  <Text
+                    style={[
+                      styles.difficultyBadge,
+                      {
+                        backgroundColor:
+                          preset.difficulty === 'Easy'
+                            ? themeColors.success
+                            : preset.difficulty === 'Medium'
+                            ? themeColors.warning
+                            : themeColors.error,
+                        color: '#FFFFFF',
+                      },
+                    ]}
+                  >
+                    {preset.difficulty}
+                  </Text>
+                </View>
+              </View>
+
+              <Text
+                style={[
+                  styles.presetDescription,
+                  { color: themeColors.textSecondary },
+                ]}
+              >
+                {preset.content.substring(0, 120)}...
+              </Text>
+
+              <View style={styles.presetFooter}>
+                <Text
+                  style={[styles.presetStats, { color: themeColors.textMuted }]}
+                >
+                  {preset.wordCount} words • ~
+                  {Math.round(preset.wordCount / readingState.wpm)} min at{' '}
+                  {readingState.wpm} WPM
                 </Text>
+              </View>
+            </GlassCard>
+          ))}
+
+          {/* Dynamic texts */}
+          {(dataSource === 'dynamic' || dataSource === 'hybrid') && dynamicTexts.map((preset) => (
+            <GlassCard
+              key={preset.id}
+              theme={theme}
+              onPress={() => startReading(preset.content, preset)}
+              style={[
+                styles.presetCard,
+                { borderColor: themeColors.success, borderWidth: 1 }
+              ]}
+            >
+              <View style={styles.presetHeader}>
+                <View style={styles.presetTitleContainer}>
+                  <Text style={[styles.presetTitle, { color: themeColors.text }]}>
+                    {preset.title}
+                  </Text>
+                  <Text style={[styles.presetTag, { backgroundColor: themeColors.success }]}>
+                    AI-Generated
+                  </Text>
+                </View>
                 <View style={styles.presetMeta}>
                   <Text
                     style={[
@@ -1047,8 +1223,14 @@ export const SpeedReadingScreen: React.FC<SpeedReadingScreenProps> = ({
                     { text: 'Cancel', style: 'cancel' },
                     {
                       text: 'Start Test',
-                      onPress: () =>
-                        startReading(textPresets[1].content, textPresets[1]),
+                      onPress: () => {
+                        const preset =
+                          textPresets && textPresets[1] ? textPresets[1] : null;
+                        startReading(
+                          preset ? preset.content : 'No preset available',
+                          preset || undefined,
+                        );
+                      },
                     },
                   ],
                 );
@@ -1335,6 +1517,58 @@ const styles = StyleSheet.create({
   },
   controlButton: {
     flex: 0.48,
+  },
+
+  // Data Source Toggle
+  dataSourceCard: {
+    marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  dataSourceTitle: {
+    ...typography.h4,
+    marginBottom: spacing.md,
+  },
+  dataSourceButtons: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+  },
+  dataSourceButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    marginHorizontal: spacing.xs,
+  },
+  dataSourceButtonText: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  dataSourceDescription: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  dynamicTextsCount: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  dynamicTextsIndicator: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  presetTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  presetTag: {
+    ...typography.caption,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 
   // Main View Styles

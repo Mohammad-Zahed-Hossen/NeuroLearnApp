@@ -4,12 +4,12 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  Suspense,
+  lazy,
 } from 'react';
 import { View, Dimensions, Keyboard, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCurrentAuraState } from '../../store/useAuraStore';
-import FloatingCommandCenter from './FloatingCommandCenter';
-import { MiniPlayer } from '../MiniPlayerComponent';
 import FloatingElementsContext, {
   useFloatingElements as useFloatingElementsFromContext,
 } from './FloatingElementsContext';
@@ -21,6 +21,16 @@ import {
   View as RNView,
   StyleSheet,
 } from 'react-native';
+import PerformanceMonitor from '../../utils/PerformanceMonitor';
+import { applyMorph } from '../../features/morphing/morphEngine';
+
+// Lazy load floating elements for better performance
+const FloatingCommandCenter = lazy(() => import('./FloatingCommandCenter'));
+const MiniPlayer = lazy(() =>
+  import('../MiniPlayerComponent').then((module) => ({
+    default: module.MiniPlayer,
+  })),
+);
 
 // Position constants based on ergonomics research
 export const POSITION_CONSTANTS = {
@@ -102,6 +112,10 @@ export const FloatingElementsOrchestrator: React.FC<
   const { height: screenHeight } = Dimensions.get('window');
   const auraState = useCurrentAuraState();
 
+  // Performance monitoring
+  const performanceMonitor = PerformanceMonitor.getInstance();
+  const renderStartTime = React.useRef<number>(0);
+
   // Internal state
   const [cognitiveLoad, setCognitiveLoad] = useState<CognitiveLoadLevel>('low');
   const [currentScreen, setCurrentScreen] = useState<string>('dashboard');
@@ -158,7 +172,7 @@ export const FloatingElementsOrchestrator: React.FC<
     externalCognitiveLoad || getCognitiveLoadFromAura() || cognitiveLoad;
   const effectiveCurrentScreen = externalCurrentScreen || currentScreen;
 
-  // Calculate positions based on ergonomics and current state
+  // Memoized positioning logic to reduce re-render frequency
   const positions = React.useMemo(() => {
     const baseBottom = POSITION_CONSTANTS.BOTTOM_OFFSET + insets.bottom;
 
@@ -218,6 +232,114 @@ export const FloatingElementsOrchestrator: React.FC<
     }
   }, [effectiveCognitiveLoad, isMiniPlayerActive, effectiveCurrentScreen]);
 
+  // Hysteresis: debounce visibility changes to avoid rapid flips
+  const desiredVisibilityRef = React.useRef(visibility);
+  const [stagedVisibility, setStagedVisibility] = useState(visibility);
+  const hysteresisTimer = React.useRef<number | null>(null);
+  useEffect(() => {
+    const prev = desiredVisibilityRef.current;
+    const prevJson = JSON.stringify(prev);
+    const nextJson = JSON.stringify(visibility);
+    const changed = prevJson !== nextJson;
+    desiredVisibilityRef.current = visibility;
+
+    if (!changed) return;
+
+    // Determine change magnitude: simple metric = number of differing keys / total keys
+    const prevKeys = Object.keys(prev);
+    const diffs = prevKeys.reduce(
+      (acc, k) =>
+        prev[k as keyof typeof prev] ===
+        visibility[k as keyof typeof visibility]
+          ? acc
+          : acc + 1,
+      0,
+    );
+    const magnitude = diffs / prevKeys.length;
+
+    // If magnitude is large (>0.15) apply immediately; otherwise require 2s stability
+    const immediate = magnitude > 0.15;
+
+    if (hysteresisTimer.current) {
+      clearTimeout(hysteresisTimer.current as any);
+      hysteresisTimer.current = null;
+    }
+
+    if (immediate) {
+      setStagedVisibility(visibility);
+      try {
+        const perf = PerformanceMonitor.getInstance();
+        perf.recordMarker &&
+          perf.recordMarker('visibility_change_applied', { visibility });
+      } catch (e) {}
+      return;
+    }
+
+    hysteresisTimer.current = setTimeout(() => {
+      setStagedVisibility(visibility);
+      hysteresisTimer.current = null;
+      try {
+        const perf = PerformanceMonitor.getInstance();
+        perf.recordMarker &&
+          perf.recordMarker('visibility_change_applied_delayed', {
+            visibility,
+          });
+      } catch (e) {}
+    }, 2000) as unknown as number;
+
+    return () => {
+      if (hysteresisTimer.current) {
+        clearTimeout(hysteresisTimer.current as any);
+        hysteresisTimer.current = null;
+      }
+    };
+  }, [visibility]);
+
+  // Apply morph transitions when stagedVisibility (after hysteresis) changes.
+  // We use a battery-based CPU-aware fallback: if battery < 20% use opacity-only transitions.
+  const prevStagedRef = React.useRef(stagedVisibility);
+  useEffect(() => {
+    const prev = prevStagedRef.current;
+    const next = stagedVisibility;
+    prevStagedRef.current = next;
+
+    // Compute which elements changed
+    const keys = Object.keys(next) as Array<keyof typeof next>;
+    const changed = keys.filter((k) => prev[k] !== next[k]);
+    if (changed.length === 0) return;
+
+    // Async check for battery level (expo-battery if available)
+    const checkBatteryAndApply = async () => {
+      let opacityOnly = false;
+      try {
+        // Try to require expo-battery dynamically (safe in tests/native mocks)
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const Battery = require('expo-battery');
+        if (Battery && Battery.getBatteryLevelAsync) {
+          const level = await Battery.getBatteryLevelAsync();
+          const pct = typeof level === 'number' ? level * 100 : 100;
+          if (pct < 20) opacityOnly = true;
+        }
+      } catch (e) {
+        // ignore, default to false
+      }
+
+      changed.forEach((k) => {
+        const elementId = k as string;
+        // If visibility turned on or off, trigger a morph
+        const spec = {
+          durationMs: next[elementId as keyof typeof next] ? 280 : 180,
+          opacityOnly,
+        } as any;
+        try {
+          applyMorph(elementId, spec).catch(() => {});
+        } catch (e) {}
+      });
+    };
+
+    checkBatteryAndApply();
+  }, [stagedVisibility]);
+
   // Keyboard visibility handling
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
@@ -236,17 +358,13 @@ export const FloatingElementsOrchestrator: React.FC<
     };
   }, []);
 
-  // Hide all floating elements when keyboard is visible
-  const effectiveVisibility = React.useMemo(() => {
-    if (isKeyboardVisible) {
-      return {
-        aiChat: false,
-        fab: false,
-        miniPlayer: false,
-      };
-    }
-    return visibility;
-  }, [visibility, isKeyboardVisible]);
+  // Hide all floating elements when keyboard is visible, and apply hysteresis
+  const keyboardAdjustedVisibility = React.useMemo(() => {
+    const source = isKeyboardVisible
+      ? { aiChat: false, fab: false, miniPlayer: false }
+      : stagedVisibility;
+    return source;
+  }, [stagedVisibility, isKeyboardVisible]);
 
   // Context value
   const contextValue: FloatingElementsContextType = {
@@ -262,8 +380,22 @@ export const FloatingElementsOrchestrator: React.FC<
     showAIChat,
     setShowAIChat: setShowAIChatWrapped,
     positions,
-    visibility: effectiveVisibility,
+    visibility: keyboardAdjustedVisibility,
   };
+
+  // Performance monitoring - track render time
+  React.useEffect(() => {
+    renderStartTime.current = performance.now();
+    return () => {
+      const renderTime = performance.now() - renderStartTime.current;
+      performanceMonitor.collectMetrics();
+      console.log(
+        `[FloatingElementsOrchestrator] Render time: ${renderTime.toFixed(
+          2,
+        )}ms`,
+      );
+    };
+  });
 
   // Debug visibility traces (helpful to see computed visibility changes)
   useEffect(() => {
@@ -271,17 +403,19 @@ export const FloatingElementsOrchestrator: React.FC<
       // eslint-disable-next-line no-console
       console.log(
         '[FloatingElementsOrchestrator] visibility',
-        effectiveVisibility,
+        keyboardAdjustedVisibility,
       );
     } catch {}
-  }, [effectiveVisibility]);
+  }, [keyboardAdjustedVisibility]);
 
   return (
     <FloatingElementsContext.Provider value={contextValue}>
       {children}
 
-      {/* Unified Smart Morphing Bubble */}
-      <FloatingCommandCenter onNavigate={onNavigate} />
+      {/* Unified Smart Morphing Bubble - Lazy loaded */}
+      <Suspense fallback={null}>
+        <FloatingCommandCenter {...(onNavigate && { onNavigate })} />
+      </Suspense>
 
       {/* MiniPlayer modal is owned by the orchestrator to avoid circular imports.
           FloatingCommandCenter only requests the orchestrator to open the mini
@@ -307,7 +441,15 @@ export const FloatingElementsOrchestrator: React.FC<
             >
               <Text style={styles.closeIcon}>✕</Text>
             </TouchableOpacity>
-            <MiniPlayer theme={'dark' as any} />
+            <Suspense
+              fallback={
+                <RNView style={styles.miniPlayerModal}>
+                  <Text>Loading...</Text>
+                </RNView>
+              }
+            >
+              <MiniPlayer theme={'dark' as any} />
+            </Suspense>
           </RNView>
         </BlurView>
       </Modal>

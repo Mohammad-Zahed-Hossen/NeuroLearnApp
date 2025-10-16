@@ -115,60 +115,64 @@ export class BudgetService {
     const beta = 0.2;  // Trend smoothing
     const gamma = 0.1; // Seasonality smoothing
 
-    if (monthlyData.length < 3) {
+    const n = monthlyData ? monthlyData.length : 0;
+    if (n < 3) {
+      const last = n > 0 ? monthlyData[n - 1] ?? 0 : 0;
       return {
-        prediction: monthlyData[monthlyData.length - 1] || 0,
+        prediction: last,
         confidence: 0.3,
         trend: 'stable',
         seasonality: 0
       };
     }
 
-    // Initialize components
-    let level = monthlyData[0];
-    let trend = monthlyData.length > 1 ? monthlyData[1] - monthlyData[0] : 0;
-    const seasonalPeriod = Math.min(12, monthlyData.length);
+    // Initialize components (use safe defaults)
+    let level = monthlyData[0] ?? 0;
+    let trend = n > 1 ? (monthlyData[1] ?? 0) - (monthlyData[0] ?? 0) : 0;
+    const seasonalPeriod = Math.min(12, n);
     const seasonal: number[] = new Array(seasonalPeriod).fill(1);
 
-    // ETS calculations
-    for (let i = 1; i < monthlyData.length; i++) {
+    // ETS calculations with safe indexing and fallbacks
+    for (let i = 1; i < n; i++) {
       const seasonalIndex = i % seasonalPeriod;
       const prevLevel = level;
       const prevTrend = trend;
+      const md = monthlyData[i] ?? 0;
+
+      // Prevent division by zero in seasonality lookups
+      const seasonVal = seasonal[seasonalIndex] ?? 1;
 
       // Update level
-      level = alpha * (monthlyData[i] / seasonal[seasonalIndex]) +
-              (1 - alpha) * (prevLevel + prevTrend);
+      level = alpha * (md / seasonVal) + (1 - alpha) * (prevLevel + prevTrend);
 
       // Update trend
       trend = beta * (level - prevLevel) + (1 - beta) * prevTrend;
 
-      // Update seasonality
-      seasonal[seasonalIndex] = gamma * (monthlyData[i] / level) +
-                               (1 - gamma) * seasonal[seasonalIndex];
+      // Update seasonality (guard against level === 0)
+      seasonal[seasonalIndex] = gamma * (level !== 0 ? (md / level) : 0) + (1 - gamma) * (seasonal[seasonalIndex] ?? 1);
     }
 
-    // Forecast next period
-    const nextSeasonalIndex = monthlyData.length % seasonalPeriod;
-    const prediction = (level + trend) * seasonal[nextSeasonalIndex];
+    // Forecast next period safely
+    const nextSeasonalIndex = n % seasonalPeriod;
+    const seasonNext = seasonal[nextSeasonalIndex] ?? 1;
+    const prediction = (level + trend) * seasonNext;
 
     // Calculate confidence based on historical accuracy
     const confidence = this.calculateForecastConfidence(monthlyData, level, trend);
 
     // Determine trend direction
-    const trendDirection = Math.abs(trend) < 0.1 ? 'stable' :
-                          trend > 0 ? 'up' : 'down';
+    const trendDirection = Math.abs(trend) < 0.1 ? 'stable' : trend > 0 ? 'up' : 'down';
 
     return {
       prediction: Math.max(0, prediction),
       confidence,
       trend: trendDirection,
-      seasonality: seasonal[nextSeasonalIndex]
+      seasonality: seasonNext
     };
   }
 
   private calculateForecastConfidence(data: number[], level: number, trend: number): number {
-    if (data.length < 3) return 0.3;
+    if (!data || data.length < 3) return 0.3;
 
     // Calculate Mean Absolute Percentage Error (MAPE)
     let totalError = 0;
@@ -178,7 +182,7 @@ export class BudgetService {
       const predicted = level + trend * (i - data.length + 1);
       const actual = data[i];
 
-      if (actual > 0) {
+      if (typeof actual === 'number' && actual > 0) {
         totalError += Math.abs((actual - predicted) / actual);
         validPredictions++;
       }
@@ -265,6 +269,8 @@ export class BudgetService {
     const recent = monthlySpending[monthlySpending.length - 1];
     const previous = monthlySpending[monthlySpending.length - 2];
 
+    if (recent === undefined || previous === undefined || previous === 0) return 'stable';
+
     const change = (recent - previous) / previous;
 
     if (change > 0.1) return 'increasing';
@@ -283,7 +289,7 @@ export class BudgetService {
         monthlySpending[monthKey] = (monthlySpending[monthKey] || 0) + Math.abs(t.amount);
       });
 
-    return Object.values(monthlySpending).slice(-3);
+    return Object.values(monthlySpending).slice(-3).filter((value): value is number => value !== undefined);
   }
 
   private calculateSimpleForecast(category: string, transactions: any[]): number {
@@ -369,7 +375,7 @@ export class BudgetService {
     // Sort by month and return values
     return Object.keys(monthlySpending)
       .sort()
-      .map(key => monthlySpending[key]);
+      .map(key => monthlySpending[key] ?? 0);
   }
 
   private generateSmartRecommendations(analysis: BudgetAnalysis, forecasts: ETSForecast[]): string[] {

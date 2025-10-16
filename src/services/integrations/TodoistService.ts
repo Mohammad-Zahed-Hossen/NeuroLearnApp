@@ -1,19 +1,25 @@
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Task } from '../../types';
 import StorageService from '../storage/StorageService';
 import { FocusSession, DistractionEvent } from '../storage/StorageService';
+import SecureStorageService from '../storage/SecureStorageService';
+import { TodoistOAuthService } from './TodoistOAuthService';
+import { SmartCacheManager } from '../../utils/SmartCacheManager';
+import { RequestDeduplicator, globalRequestDeduplicator } from '../../utils/RequestDeduplicator';
+// import BackgroundSyncService from '../BackgroundSyncService'; // Removed to break circular dependency
 
 /**
  * Phase 5 Enhancement: TodoistService with Focus Timer Integration
  *
  * Adds adaptive focus session tracking and task convergence
  * Ensures external to-do list aligns with internal learning goals
+ * Uses SecureStorageService for secure token management with Keychain storage
  */
 
 export class TodoistService {
   private static instance: TodoistService;
   private apiToken: string = '';
+  private oauthService: TodoistOAuthService;
   private baseURL = 'https://api.todoist.com/rest/v2';
   private storageService: StorageService;
 
@@ -22,9 +28,19 @@ export class TodoistService {
   private activeFocusSession: FocusSession | null = null;
   private focusSessionHistory: FocusSession[] = [];
 
+  // Performance optimization: Caching and background sync
+  private cacheManager: SmartCacheManager;
+  private requestDeduplicator: RequestDeduplicator;
+  // private backgroundSyncService: BackgroundSyncService; // Removed to break circular dependency
+
   private constructor() {
-  this.storageService = StorageService.getInstance();
+    this.storageService = StorageService.getInstance();
+    this.oauthService = TodoistOAuthService.getInstance();
+    this.cacheManager = SmartCacheManager.getInstance();
+    this.requestDeduplicator = globalRequestDeduplicator;
+    // this.backgroundSyncService = BackgroundSyncService.getInstance(); // Removed to break circular dependency
     this.loadFocusHistory();
+    this.initializeToken();
   }
 
   private async loadFocusHistory(): Promise<void> {
@@ -40,17 +56,34 @@ export class TodoistService {
     }
   }
 
+  private async initializeToken(): Promise<void> {
+    try {
+      // Try OAuth token first
+      const oauthToken = await this.oauthService.getAccessToken();
+      if (oauthToken) {
+        this.apiToken = oauthToken;
+        console.log('🔑 Todoist OAuth token loaded');
+        return;
+      }
+
+      // Fallback to legacy API token
+      await this.loadApiToken();
+    } catch (error) {
+      console.error('Error initializing Todoist token:', error);
+    }
+  }
+
   private async loadApiToken(): Promise<void> {
     try {
-      // Load settings from HybridStorageService (which uses Supabase as primary)
-      const settings = await this.storageService.getSettings();
-      const token = settings?.todoistToken;
+      // Load token from SecureStorageService
+      const secureStorage = SecureStorageService.getInstance();
+      const token = await secureStorage.getToken('todoist');
 
       if (token) {
         this.apiToken = token;
-        console.log('🔑 Todoist API token loaded from storage');
+        console.log('🔐 Todoist API token loaded securely');
       } else {
-        console.log('ℹ️ No Todoist API token found in storage');
+        console.log('ℹ️ No Todoist API token found in secure storage');
       }
     } catch (error) {
       console.error('Error loading Todoist API token:', error);
@@ -81,25 +114,19 @@ export class TodoistService {
 
 
   /**
-   * Set and persist the Todoist API token using the StorageService facade.
-   * Falls back to AsyncStorage only if the facade fails.
+   * Set and persist the Todoist API token using SecureStorageService.
+   * Uses Keychain for secure storage with no fallbacks to insecure storage.
    */
   async setApiToken(token: string) {
     this.apiToken = token;
     try {
-      // Save token to settings via StorageService facade
-      const settings = await this.storageService.getSettings();
-      await this.storageService.saveSettings({
-        ...settings,
-        todoistToken: token,
-      });
+      // Use SecureStorageService for secure token storage
+      const secureStorage = SecureStorageService.getInstance();
+      await secureStorage.storeToken('todoist', token, 'Todoist API', 0); // No expiration for API tokens
+      console.log('🔐 Todoist token stored securely');
     } catch (err) {
-      console.warn('StorageService.saveSettings failed, falling back to AsyncStorage:', err);
-      try {
-        await AsyncStorage.setItem('todoistApiToken', token);
-      } catch (e) {
-        console.error('AsyncStorage fallback failed for Todoist API token:', e);
-      }
+      console.error('❌ Failed to store Todoist API token securely:', err);
+      throw new Error('Secure token storage failed - cannot proceed with insecure storage');
     }
   }
 
@@ -113,49 +140,70 @@ export class TodoistService {
 
 
   /**
-   * Get all tasks from Todoist
+   * Get all tasks from Todoist with caching and deduplication
    */
-  async getTasks(): Promise<Task[]> {
+  async getTasks(limit?: number, offset?: number): Promise<Task[]> {
     if (!this.apiToken) {
-      await this.loadApiToken();
+      await this.initializeToken();
       if (!this.apiToken) {
         // No token available, return empty array instead of throwing
         return [];
       }
     }
 
-    try {
-      const response = await axios.get(`${this.baseURL}/tasks`, {
-        headers: this.getAuthHeaders(),
-        timeout: 10000,
-      });
+    const cacheKey = `todoist_tasks_${limit || 'all'}_${offset || 0}`;
 
-      // Line ~110: Change 'title' to 'content'
-      const tasks: Task[] = response.data.map((item: any) => ({
-        id: item.id,
-        content: item.content, // ✅ This is correct
-        description: item.description || '',
-        isCompleted: item.is_completed || false,
-        priority: item.priority || 1,
-        due: item.due?.date
-          ? {
-              // ✅ Change dueDate to due
-              date: item.due.date,
-              datetime: item.due.datetime,
-            }
-          : undefined,
-        projectName: item.project_name || '', // ✅ Change projectId to projectName
-        source: 'todoist' as const,
-        labels: item.labels || [],
-        created: new Date(item.created_at),
-      }));
-
-      console.log(`📋 Loaded ${tasks.length} tasks from Todoist`);
-      return tasks;
-    } catch (error: any) {
-      console.error('Error fetching tasks:', error);
-      throw new Error(`Failed to fetch tasks: ${error.message}`);
+    // Try to get from cache first
+    const cachedTasks = await this.cacheManager.get<Task[]>(cacheKey);
+    if (cachedTasks) {
+      console.log(`📋 Loaded ${cachedTasks.length} tasks from cache`);
+      return cachedTasks;
     }
+
+    // Use request deduplicator to prevent duplicate API calls
+    return this.requestDeduplicator.execute(cacheKey, async () => {
+      try {
+        // Build query parameters for pagination
+        const params: any = {};
+        if (limit) params.limit = limit;
+        if (offset) params.offset = offset;
+
+        const response = await axios.get(`${this.baseURL}/tasks`, {
+          headers: this.getAuthHeaders(),
+          params,
+          timeout: 10000,
+        });
+
+        // Line ~110: Change 'title' to 'content'
+        const tasks: Task[] = response.data.map((item: any) => ({
+          id: item.id,
+          content: item.content, // ✅ This is correct
+          description: item.description || '',
+          isCompleted: item.is_completed || false,
+          priority: item.priority || 1,
+          due: item.due?.date
+            ? {
+                // ✅ Change dueDate to due
+                date: item.due.date,
+                datetime: item.due.datetime,
+              }
+            : undefined,
+          projectName: item.project_name || '', // ✅ Change projectId to projectName
+          source: 'todoist' as const,
+          labels: item.labels || [],
+          created: new Date(item.created_at),
+        }));
+
+        // Cache the result as warm data (changes moderately)
+        await this.cacheManager.set(cacheKey, tasks, 'warm');
+
+        console.log(`📋 Loaded ${tasks.length} tasks from Todoist${limit ? ` (limit: ${limit}, offset: ${offset || 0})` : ''}`);
+        return tasks;
+      } catch (error: any) {
+        console.error('Error fetching tasks:', error);
+        throw new Error(`Failed to fetch tasks: ${error.message}`);
+      }
+    });
   }
 
   /**
@@ -181,6 +229,33 @@ export class TodoistService {
       return true;
     } catch (error: any) {
       console.error(`Error completing task ${taskId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Reopen a task in Todoist
+   */
+  async reopenTask(taskId: string): Promise<boolean> {
+    if (!this.apiToken) {
+      console.warn('No API token - cannot reopen task in Todoist');
+      return false;
+    }
+
+    try {
+      await axios.post(
+        `${this.baseURL}/tasks/${taskId}/reopen`,
+        {},
+        {
+          headers: this.getAuthHeaders(),
+          timeout: 10000,
+        },
+      );
+
+      console.log(`🔄 Task ${taskId} reopened in Todoist`);
+      return true;
+    } catch (error: any) {
+      console.error(`Error reopening task ${taskId}:`, error);
       return false;
     }
   }
@@ -302,7 +377,7 @@ export class TodoistService {
     const session: FocusSession = {
       id: `focus_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       taskId,
-      nodeId,
+      ...(nodeId !== undefined && { nodeId }),
       startTime: now,
       endTime: now, // Will be updated when session ends
       durationMinutes: 0, // Will be updated when session ends
@@ -388,7 +463,7 @@ export class TodoistService {
       durationMinutes: actualDurationMinutes,
       selfReportFocus,
       completionRate,
-      distractionReason,
+      distractionReason: distractionReason || '',
       modified: now,
     };
 
@@ -677,7 +752,10 @@ export class TodoistService {
  */
 public async testConnection(): Promise<void> {
   if (!this.apiToken) {
-    throw new Error('Todoist API token not configured');
+    await this.initializeToken();
+    if (!this.apiToken) {
+      throw new Error('Todoist API token not configured');
+    }
   }
 
   try {
@@ -721,6 +799,20 @@ public async isTokenValid(): Promise<boolean> {
     console.warn('Todoist token validation failed:', error);
     return false;
   }
+}
+
+/**
+ * Check if using OAuth authentication
+ */
+public async isUsingOAuth(): Promise<boolean> {
+  return await this.oauthService.isAuthenticated();
+}
+
+/**
+ * Get OAuth service instance
+ */
+public getOAuthService(): TodoistOAuthService {
+  return this.oauthService;
 }
 }
 

@@ -234,7 +234,8 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({
     const { peakPerformanceHours } = cognitiveState.weeklyTrends;
 
     const isPeakHour = peakPerformanceHours.some((peakHour) => {
-      const peakHourNum = parseInt(peakHour.split(':')[0]);
+      const hourPart = (peakHour ?? '').split(':')[0] ?? '0';
+      const peakHourNum = parseInt(hourPart);
       return Math.abs(hour - peakHourNum) <= 1;
     });
 
@@ -426,7 +427,11 @@ export const CognitiveProvider: React.FC<CognitiveProviderProps> = ({
       cognitiveState;
 
     // Get circadian data for personalized recommendations
-    let circadianData = null;
+    let circadianData: {
+      sleepPressure: any;
+      optimalWindow: any;
+      crdi: number;
+    } | null = null;
     try {
       // Assuming we have a userId - in real implementation, this would come from auth context
       const userId = 'current_user'; // Placeholder

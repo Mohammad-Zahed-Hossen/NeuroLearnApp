@@ -135,6 +135,14 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
   private adaptationCooldown = 30000; // 30 seconds between adaptations
   private healthMonitoringInterval: NodeJS.Timeout | null = null;
 
+  // Request queuing for background processing
+  private requestQueue: Array<{ type: 'applyAuraState' | 'setAuraContext'; data: any; resolve: Function; reject: Function }> = [];
+  private isProcessingQueue = false;
+
+  // Throttling for real-time monitoring
+  private adaptationDebounceTimer: NodeJS.Timeout | null = null;
+  private adaptationDebounceDelay = 5000; // 5 seconds debounce delay
+
   public static getInstance(): CognitiveSoundscapeEngine {
     if (!CognitiveSoundscapeEngine.instance) {
       CognitiveSoundscapeEngine.instance = new CognitiveSoundscapeEngine();
@@ -381,43 +389,106 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
 
   /**
    * Apply soundscape based on aura state - THE CORE INTEGRATION METHOD
+   * Now uses request queuing for background processing
    */
   public async applyAuraState(auraState: AuraState): Promise<void> {
-    try {
-      console.log(`🔮 Applying aura state: ${auraState.context} (CCS: ${(auraState.compositeCognitiveScore * 100).toFixed(1)}%)`);
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push({
+        type: 'applyAuraState',
+        data: auraState,
+        resolve,
+        reject
+      });
+      this.processQueue();
+    });
+  }
 
-      this.currentAuraState = auraState;
-      this.currentAuraContext = auraState.context;
+  /**
+   * Process the request queue sequentially
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue || this.requestQueue.length === 0) {
+      return;
+    }
 
-      // Check adaptation cooldown
-      const now = Date.now();
-      if (!this.isAutoAdaptationEnabled || (now - this.lastAdaptationTime) < this.adaptationCooldown) {
-        console.log('🔄 Adaptation on cooldown, skipping');
-        return;
+    this.isProcessingQueue = true;
+
+    while (this.requestQueue.length > 0) {
+      const request = this.requestQueue.shift()!;
+      try {
+        if (request.type === 'applyAuraState') {
+          await this.processAuraStateRequest(request.data);
+        } else if (request.type === 'setAuraContext') {
+          await this.processSetAuraContextRequest(request.data);
+        }
+        request.resolve();
+      } catch (error) {
+        console.error('❌ Failed to process queued request:', error);
+        request.reject(error);
+      }
+    }
+
+    this.isProcessingQueue = false;
+  }
+
+  /**
+   * Process individual aura state request with throttling
+   */
+  private async processAuraStateRequest(auraState: AuraState): Promise<void> {
+    console.log(`🔮 Processing aura state: ${auraState.context} (CCS: ${(auraState.compositeCognitiveScore * 100).toFixed(1)}%)`);
+
+    this.currentAuraState = auraState;
+    this.currentAuraContext = auraState.context;
+
+    // Check adaptation cooldown
+    const now = Date.now();
+    if (!this.isAutoAdaptationEnabled || (now - this.lastAdaptationTime) < this.adaptationCooldown) {
+      console.log('🔄 Adaptation on cooldown, skipping');
+      return;
+    }
+
+    // Use debounced adaptation to prevent excessive real-time monitoring
+    await this.debouncedAdaptation(auraState);
+  }
+
+  /**
+   * Debounced adaptation method for optimized real-time monitoring
+   */
+  private async debouncedAdaptation(auraState: AuraState): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.adaptationDebounceTimer) {
+        clearTimeout(this.adaptationDebounceTimer);
       }
 
-      // Get optimal soundscape for this aura state
-      const optimalSoundscape = this.getOptimalSoundscapeForAuraState(auraState);
+      this.adaptationDebounceTimer = setTimeout(async () => {
+        try {
+          // Get optimal soundscape for this aura state
+          const optimalSoundscape = this.getOptimalSoundscapeForAuraState(auraState);
 
-      // Apply soundscape with health-aware modulation
-      await this.applyHealthAwareSoundscape(optimalSoundscape, auraState);
+          // Apply soundscape with health-aware modulation
+          await this.applyHealthAwareSoundscape(optimalSoundscape, auraState);
 
-      // Update tracking
-      this.lastAdaptationTime = now;
-      this.sessionStartTime = new Date();
+          // Update tracking
+          this.lastAdaptationTime = Date.now();
+          this.sessionStartTime = new Date();
 
-      // Emit integration event
-      this.emit('aura_soundscape_applied', {
-        auraContext: auraState.context,
-        soundscape: optimalSoundscape,
-        cognitiveLoad: auraState.compositeCognitiveScore,
-        timestamp: new Date(),
-      });
+          // Emit integration event
+          this.emit('aura_soundscape_applied', {
+            auraContext: auraState.context,
+            soundscape: optimalSoundscape,
+            cognitiveLoad: auraState.compositeCognitiveScore,
+            timestamp: new Date(),
+          });
 
-    } catch (error) {
-      console.error('❌ Failed to apply aura state:', error);
-      throw error;
-    }
+          console.log(`✅ Debounced adaptation completed for ${auraState.context}`);
+        } catch (error) {
+          console.error('❌ Debounced adaptation failed:', error);
+        } finally {
+          this.adaptationDebounceTimer = null;
+          resolve();
+        }
+      }, this.adaptationDebounceDelay);
+    });
   }
 
   /**
@@ -688,15 +759,31 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
 
   /**
    * Manually trigger aura context change (for testing or user override)
+   * Now uses request queuing for background processing
    */
   public async setAuraContext(context: AuraContext, cognitiveLoad: number = 0.5): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push({
+        type: 'setAuraContext',
+        data: { context, cognitiveLoad },
+        resolve,
+        reject
+      });
+      this.processQueue();
+    });
+  }
+
+  /**
+   * Process setAuraContext request from queue
+   */
+  private async processSetAuraContextRequest(data: { context: AuraContext; cognitiveLoad: number }): Promise<void> {
     try {
-      this.currentAuraContext = context;
+      this.currentAuraContext = data.context;
 
       const mockAuraState: AuraState = {
-        compositeCognitiveScore: cognitiveLoad,
-        cognitiveLoad,
-        context,
+        compositeCognitiveScore: data.cognitiveLoad,
+        cognitiveLoad: data.cognitiveLoad,
+        context: data.context,
         targetNode: null,
         targetNodePriority: null,
         microTask: '',
@@ -774,7 +861,7 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
         biologicalAlignment: 0.8,
       };
 
-      await this.applyAuraState(mockAuraState);
+      await this.processAuraStateRequest(mockAuraState);
 
     } catch (error) {
       console.error('❌ Failed to set aura context manually:', error);
@@ -1102,6 +1189,12 @@ export class CognitiveSoundscapeEngine extends EventEmitter {
       clearInterval(this.healthMonitoringInterval);
       this.healthMonitoringInterval = null;
     }
+    if (this.adaptationDebounceTimer) {
+      clearTimeout(this.adaptationDebounceTimer);
+      this.adaptationDebounceTimer = null;
+    }
+    this.requestQueue = [];
+    this.isProcessingQueue = false;
     this.removeAllListeners();
     this.performanceHistory = [];
     this.currentAuraContext = null;

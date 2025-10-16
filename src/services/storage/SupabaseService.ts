@@ -52,7 +52,7 @@ export class SupabaseService {
   private lastSyncTime: { [key: string]: number } = {};
   private syncQueue: SyncQueueItem[] = [];
 
-  private constructor() {
+  public constructor() {
     this.client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         storage: AsyncStorage,
@@ -94,6 +94,54 @@ export class SupabaseService {
     } catch (e) {
       console.error('Error getting current user:', e);
       return this.currentUser; // Fallback to cached user
+    }
+  }
+
+  /**
+   * Ensure session is valid, attempt refresh if expired.
+   */
+  public async ensureValidSession(): Promise<boolean> {
+    try {
+      const { data: { session } } = await this.client.auth.getSession();
+      if (session && session.expires_at && session.expires_at * 1000 > Date.now()) return true;
+
+      // Try to refresh by retrieving a new session from storage
+      try {
+        // supabase-js autoRefreshToken=true should handle this, but call getSession again
+        const res = await this.client.auth.getSession();
+        const fresh = res?.data?.session;
+        if (fresh) {
+          this.currentUser = fresh.user || null;
+          return true;
+        }
+      } catch (inner) {
+        console.warn('Session refresh attempt failed:', inner);
+      }
+
+      // As last resort, attempt to refresh using stored refresh token via server endpoint if available
+      // (Implementers may add a refresh endpoint). For now, clear cached user.
+      this.currentUser = null;
+      return false;
+    } catch (e) {
+      console.error('ensureValidSession error:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Execute a Supabase call with auto-retry on auth failure.
+   */
+  public async safeExecute<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      // Detect auth/session related errors
+      if (msg.toLowerCase().includes('jwt') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('expired')) {
+        const ok = await this.ensureValidSession();
+        if (ok) return await fn();
+      }
+      throw err;
     }
   }
 
@@ -192,19 +240,35 @@ export class SupabaseService {
       return { error: new Error('Not authenticated') };
     }
 
-    const { error } = await this.client
-      .from('user_profiles')
-      .upsert({
+    try {
+      // Encrypt sensitive tokens before saving
+      const encryptedSettings: any = {
         id: this.currentUser.id,
         theme: settings.theme,
         daily_goal: settings.dailyGoal,
         auto_sync_enabled: settings.autoSync,
-        todoist_token: settings.todoistToken,
-        notion_token: settings.notionToken,
         notifications: settings.notifications,
-      });
+      };
 
-    return { error };
+      // Encrypt Todoist token if provided
+      if (settings.todoistToken) {
+        encryptedSettings.todoist_token = await this.encryptToken(settings.todoistToken);
+      }
+
+      // Encrypt Notion token if provided
+      if (settings.notionToken) {
+        encryptedSettings.notion_token = await this.encryptToken(settings.notionToken);
+      }
+
+      const { error } = await this.client
+        .from('user_profiles')
+        .upsert(encryptedSettings);
+
+      return { error };
+    } catch (encryptionError) {
+      console.error('Failed to encrypt tokens:', encryptionError);
+      return { error: new Error('Failed to save settings securely') };
+    }
   }
 
   public async getSettings(): Promise<{ data: any | null; error: any }> {
@@ -218,7 +282,28 @@ export class SupabaseService {
       .eq('id', this.currentUser.id)
       .single();
 
-    return { data, error };
+    if (error || !data) {
+      return { data, error };
+    }
+
+    try {
+      // Decrypt sensitive tokens if they exist
+      const decryptedData = { ...data };
+
+      if (data.todoist_token) {
+        decryptedData.todoistToken = await this.decryptToken(data.todoist_token);
+      }
+
+      if (data.notion_token) {
+        decryptedData.notionToken = await this.decryptToken(data.notion_token);
+      }
+
+      return { data: decryptedData, error: null };
+    } catch (decryptionError) {
+      console.error('Failed to decrypt tokens:', decryptionError);
+      // Return data without decrypted tokens rather than failing completely
+      return { data, error: null };
+    }
   }
 
   /**
@@ -251,17 +336,26 @@ export class SupabaseService {
    */
   private async decryptToken(encryptedToken: string): Promise<string> {
     // Use Supabase RPC to decrypt token
-    const { data, error } = await this.client.rpc('decrypt_token', {
-      encrypted_token: encryptedToken,
-      encryption_key: ENCRYPTION_KEY
-    });
+    try {
+      const { data, error } = await this.client.rpc('decrypt_token', {
+        encrypted_token: encryptedToken,
+        encryption_key: ENCRYPTION_KEY,
+      });
 
-    if (error) {
-      console.error('Token decryption failed:', error);
-      throw new Error('Failed to decrypt token');
+      if (error) {
+        // Specific error when RPC not found: let callers handle fallback
+        console.error('Token decryption RPC returned error:', error);
+        return null as any;
+      }
+
+      return data;
+    } catch (e: any) {
+      // If the RPC function is not available in the database schema (common
+      // in local or test setups), return null so callers can fallback to
+      // sending the encrypted token to server-side functions.
+      console.warn('Token decryption failed or RPC missing:', e?.message || e);
+      return null as any;
     }
-
-    return data;
   }
 
   /**
@@ -379,15 +473,65 @@ export class SupabaseService {
     }
     this.lastSyncTime[syncType] = now;
 
+    // Get user settings to retrieve notion token. getSettings attempts to
+    // decrypt tokens via RPC; if that RPC is missing in the database (common
+    // in local/dev environments) the decrypted token may be absent while the
+    // encrypted value remains in `notion_token`. We accept either the
+    // decrypted `notionToken` or the encrypted `notion_token` as a fallback
+    // and pass the encrypted value to the server-side Edge Function which
+    // can decrypt it using the server's key.
+    const { data: settings, error: settingsError } = await this.getSettings();
+    if (settingsError || (!settings?.notionToken && !settings?.notion_token)) {
+      return {
+        error: new Error('Notion token not found. Please connect to Notion first.'),
+        data: null,
+      };
+    }
+
+    // Map syncType to edge function action
+    let action: string;
+    let edgeSyncType: 'full' | 'incremental' = 'incremental';
+
+    switch (syncType) {
+      case 'sync-up':
+        action = 'sync_pages';
+        edgeSyncType = 'full';
+        break;
+      case 'sync-down':
+        action = 'sync_pages';
+        edgeSyncType = 'incremental';
+        break;
+      case 'test-connection':
+        action = 'validate_token';
+        break;
+      default:
+        action = 'sync_pages';
+    }
+
     const maxRetries = 3;
     let lastError: any = null;
     let success = false;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
+        // Prepare token payload: prefer decrypted token, otherwise send the
+        // encrypted token as `notion_token_encrypted` so the Edge Function
+        // can handle decryption server-side.
+        const tokenPayload: any = {};
+        if (settings.notionToken) {
+          tokenPayload.notion_token = settings.notionToken;
+        } else if (settings.notion_token) {
+          tokenPayload.notion_token_encrypted = settings.notion_token;
+        }
+
         const { data, error } = await this.client.functions.invoke('notion-sync-manager', {
           method: 'POST',
-          body: { syncType },
+          body: {
+            action,
+            user_id: this.currentUser.id,
+            sync_type: edgeSyncType,
+            ...tokenPayload,
+          },
         });
 
         if (error) {
@@ -444,8 +588,9 @@ export class SupabaseService {
     let errors = 0;
 
     while (this.syncQueue.length > 0) {
-      const item = this.syncQueue[0];
-      const result = await this.syncNotionData(item.type);
+  const item = this.syncQueue[0];
+  if (!item) break;
+  const result = await this.syncNotionData(item.type);
 
       if (!result.error) {
         this.syncQueue.shift();
@@ -523,30 +668,45 @@ export class SupabaseService {
   public async getDatabaseStatus(): Promise<{
     isConnected: boolean;
     latency: number;
-    region: string;
-    version: string;
+    region?: string;
+    version?: string;
   }> {
     try {
       const startTime = Date.now();
-      const { error } = await this.client.rpc('get_database_info');
+
+      // Try to get database info via RPC
+      const { data, error } = await this.client.rpc('get_database_info');
       const latency = Date.now() - startTime;
 
+      // If RPC exists and returns data, use it; otherwise just return connection status
+      if (!error && data) {
+        return {
+          isConnected: true,
+          latency,
+          region: data.region || undefined,
+          version: data.version || undefined,
+        };
+      }
+
+      // Fallback: just test connection with a simple query
+      const { error: testError } = await this.client.from('user_profiles').select('id').limit(1);
+
       return {
-        isConnected: !error,
+        isConnected: !testError,
         latency,
-        region: 'us-east-1', // Would get from actual config
-        version: '15.1', // Would get from database query
+        // Don't return static values - omit if not available
       };
     } catch (error) {
       return {
         isConnected: false,
         latency: 0,
-        region: 'unknown',
-        version: 'unknown',
       };
     }
   }
 }
 
 export const supabase = SupabaseService.getInstance().getClient();
+// Provide compatibility for CommonJS-style require() used in some tests/mocks.
+// Tests may import the module via require('../../src/services/storage/SupabaseService')
+// and expect either a named export or the default. Ensure both are present.
 export default SupabaseService;

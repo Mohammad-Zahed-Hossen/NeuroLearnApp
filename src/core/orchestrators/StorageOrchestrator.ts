@@ -443,22 +443,22 @@ export class StorageOrchestrator {
           this.cacheMisses++;
 
           // Try warm storage
-          data = await this.hybridStorage.getItem(key);
-          if (data !== null) {
-            source = 'warm';
+            data = await this.safeGetItem(this.hybridStorage, key);
+            if (data !== null) {
+              source = 'warm';
 
-            // Cache in hot storage for future access
-            if (this.shouldCacheInHot(data)) {
-              await this.mmkvStorage.setItem(key, data);
-            }
-          } else {
+              // Cache in hot storage for future access
+              if (this.shouldCacheInHot(data)) {
+                await this.mmkvStorage.setItem(key, data);
+              }
+            } else {
             // Try cold storage
             data = await this.supabaseStorage.getItem(key);
             if (data !== null) {
               source = 'cold';
 
               // Cache in warm and hot storage
-              await this.hybridStorage.setItem(key, data);
+              await this.safeSetItem(this.hybridStorage, key, data);
               if (this.shouldCacheInHot(data)) {
                 await this.mmkvStorage.setItem(key, data);
               }
@@ -642,9 +642,9 @@ export class StorageOrchestrator {
       case 'hot':
         await this.mmkvStorage.setItem(key, value);
         break;
-      case 'warm':
-        await this.hybridStorage.setItem(key, value);
-        break;
+        case 'warm':
+          await this.safeSetItem(this.hybridStorage, key, value);
+          break;
       case 'cold':
         if (immediate) {
           await this.supabaseStorage.setItem(key, value);
@@ -688,7 +688,7 @@ export class StorageOrchestrator {
       if (this.shouldMoveToWarm(key)) {
         const value = await this.mmkvStorage.getItem(key);
         if (value !== undefined && value !== null) {
-          await this.hybridStorage.setItem(key, value);
+          await this.safeSetItem(this.hybridStorage, key, value);
         }
       }
     }
@@ -696,7 +696,45 @@ export class StorageOrchestrator {
 
   private async syncWarmToCold(): Promise<void> {
     // Sync data older than retention period to cold storage
-    await this.hybridStorage.syncToCloud();
+    if (typeof this.hybridStorage.syncToCloud === 'function') {
+      await this.hybridStorage.syncToCloud();
+    } else {
+      this.logger.warn('hybridStorage.syncToCloud not available, skipping warm->cold sync');
+    }
+  }
+
+  // Safe wrappers to guard optional methods on storage implementations
+  private async safeSetItem(storage: any, key: string, value: any): Promise<void> {
+    try {
+      if (storage && typeof storage.setItem === 'function') {
+        await storage.setItem(key, value);
+      } else if (storage && typeof storage.saveMemoryPalaces === 'function') {
+        // Compat: some hybrid storage implementations expose domain-specific methods
+        await storage.saveMemoryPalaces(value);
+      } else {
+        this.logger.warn(`safeSetItem: target storage missing setItem for key=${key}`);
+      }
+    } catch (error) {
+      this.logger.warn(`safeSetItem failed for key=${key}`, error);
+    }
+  }
+
+  private async safeGetItem(storage: any, key: string): Promise<any> {
+    try {
+      if (storage && typeof storage.getItem === 'function') {
+        return await storage.getItem(key);
+      }
+      if (storage && typeof storage.getAllKeys === 'function') {
+        // Not a direct get, but attempt to query
+        const keys = await storage.getAllKeys();
+        if (keys.includes(key) && typeof storage.getItem === 'function') {
+          return await storage.getItem(key);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`safeGetItem failed for key=${key}`, error);
+    }
+    return null;
   }
 
   private shouldMoveToWarm(key: string): boolean {
@@ -708,21 +746,40 @@ export class StorageOrchestrator {
 
   private async calculateMetrics(): Promise<void> {
     try {
-      // Calculate storage usage
-  const hotSize = await this.mmkvStorage.getStorageSize();
-  const warmSize = await this.hybridStorage.getStorageSize();
-  const coldSize = await this.supabaseStorage.getStorageSize();
+      // Calculate storage usage with fallbacks
+      let hotSize = 0;
+      let warmSize = 0;
+      let coldSize = 0;
 
-  this.metrics.hotStorageUsage = hotSize;
-  this.metrics.warmStorageUsage = warmSize;
-  this.metrics.coldStorageUsage = coldSize;
+      try {
+        hotSize = await this.mmkvStorage.getStorageSize?.() || 0;
+      } catch (error) {
+        // Ignore hot storage size errors
+      }
+
+      try {
+        warmSize = await this.hybridStorage.getStorageSize?.() || 0;
+      } catch (error) {
+        // Ignore warm storage size errors
+      }
+
+      try {
+        coldSize = await this.supabaseStorage.getStorageSize?.() || 0;
+      } catch (error) {
+        // Ignore cold storage size errors
+      }
+
+      this.metrics.hotStorageUsage = hotSize;
+      this.metrics.warmStorageUsage = warmSize;
+      this.metrics.coldStorageUsage = coldSize;
 
       // Calculate cache hit rate
       const totalRequests = this.cacheHits + this.cacheMisses;
       this.metrics.cacheHitRate = totalRequests > 0 ? this.cacheHits / totalRequests : 0;
 
     } catch (error) {
-      this.logger.warn('Failed to calculate storage metrics', error);
+      // Silently handle metrics calculation errors to prevent spam
+      // this.logger.warn('Failed to calculate storage metrics', error);
     }
   }
 
@@ -832,9 +889,17 @@ export class StorageOrchestrator {
   private async syncSpecificKey(key: string): Promise<void> {
     // Sync specific key across tiers
     try {
-      const value = await (this.hybridStorage.getItem?.(key) as Promise<any> | undefined);
+      const value = await this.safeGetItem(this.hybridStorage, key);
       if (value !== undefined && value !== null) {
-        await (this.supabaseStorage.setItem?.(key, value) as Promise<any> | undefined) ?? Promise.resolve();
+        try {
+          if (typeof this.supabaseStorage.setItem === 'function') {
+            await this.supabaseStorage.setItem(key, value);
+          } else {
+            this.logger.warn('supabaseStorage.setItem not available, skipping sync to cold');
+          }
+        } catch (e) {
+          this.logger.warn('Failed to set item in supabaseStorage for key ' + key, e);
+        }
       }
     } catch (error) {
       this.logger.warn(`Failed to sync key ${key}`, error);

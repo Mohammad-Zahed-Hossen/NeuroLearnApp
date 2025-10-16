@@ -24,6 +24,7 @@ export interface Flashcard {
   fsrsDifficulty?: number;
   state?: number;
   lapses?: number;
+  isAiGenerated?: boolean;
 }
 
 export interface Task {
@@ -31,14 +32,14 @@ export interface Task {
   // Align with UI code expectations (content/isCompleted/priority numeric)
   title?: string;
   content: string;
-  description?: string;
+  description?: string | undefined;
   completed?: boolean;
   // UI code uses isCompleted frequently
   isCompleted: boolean;
   // Use numeric priority across screens (1..4 or similar)
   priority: number;
   // keep optional due object (string date) used by integrations
-  due?: { date: string; timezone?: string } | null;
+  due?: { date: string; timezone?: string } | null | undefined;
   dueDate?: Date;
   category?: string;
   tags?: string[];
@@ -96,6 +97,7 @@ export interface MemoryPalace {
   category?: string;
   masteredItems?: number;
   lastStudied?: Date;
+  isAiGenerated?: boolean;
 }
 
 export interface MemoryRoom {

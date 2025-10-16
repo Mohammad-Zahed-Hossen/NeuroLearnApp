@@ -7,7 +7,7 @@ import {
   Alert,
   StyleSheet,
   Dimensions,
-  Platform
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LineChart } from 'react-native-chart-kit';
@@ -17,6 +17,7 @@ import Reanimated, {
   withTiming,
   withSpring,
   withRepeat,
+  SharedValue,
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { format, differenceInHours } from 'date-fns';
@@ -27,6 +28,7 @@ import { supabase } from '../../services/storage/SupabaseService';
 import StorageService from '../../services/storage/StorageService';
 import CircadianIntelligenceService from '../../services/health/CircadianIntelligenceService';
 import { colors } from '../../theme/colors';
+import { perf } from '../../utils/perfMarks';
 
 interface SmartSleepTrackerProps {
   userId: string;
@@ -37,8 +39,9 @@ interface SmartSleepTrackerProps {
 const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   userId,
   theme,
-  onNavigate
+  onNavigate,
 }) => {
+  const mountMarkRef = React.useRef<string | null>(null);
   const [sleepLogs, setSleepLogs] = useState<any[]>([]);
   const [bedtime, setBedtime] = useState('');
   const [wakeTime, setWakeTime] = useState('');
@@ -51,7 +54,11 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
     sleepTarget: 8,
     crdiThresholds: { excellent: 80, good: 60 },
     qualityLabels: ['Poor', 'Fair', 'Good', 'Great', 'Excellent'],
-    crdiLabels: { excellent: 'Excellent', good: 'Good', needsWork: 'Needs Work' }
+    crdiLabels: {
+      excellent: 'Excellent',
+      good: 'Good',
+      needsWork: 'Needs Work',
+    },
   });
   const [loading, setLoading] = useState(false);
 
@@ -59,8 +66,6 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   const [circadianHealth, setCircadianHealth] = useState<number | null>(null);
   const [sleepPressure, setSleepPressure] = useState<any>(null);
   const [optimalWindow, setOptimalWindow] = useState<any>(null);
-
-
 
   const screenWidth = Dimensions.get('window').width;
   const circadianService = CircadianIntelligenceService.getInstance();
@@ -75,23 +80,33 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
     useSharedValue(1),
     useSharedValue(1),
     useSharedValue(1),
-    useSharedValue(1)
-  ];
+    useSharedValue(1),
+  ] as const;
   const cardEntranceAnimation = useSharedValue(0);
   const chartAnimation = useSharedValue(0);
 
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('SmartSleepTracker');
     loadSleepData();
     loadAdvancedMetrics();
     startAnimations();
   }, [userId]);
+
+  useEffect(() => {
+    if (mountMarkRef.current && (sleepLogs || optimalWindow)) {
+      try {
+        perf.measureReady('SmartSleepTracker', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [sleepLogs, optimalWindow]);
 
   const startAnimations = () => {
     // Continuous pulse for quick log button
     pulseAnimation.value = withRepeat(
       withTiming(1.05, { duration: 3000 }),
       -1,
-      true
+      true,
     );
 
     // Stagger card entrance
@@ -101,7 +116,9 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
   const loadSleepData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) {
         setSleepLogs([]);
         return;
@@ -120,7 +137,7 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
       const [crdi, pressure, window] = await Promise.all([
         circadianService.calculateCRDI(userId),
         circadianService.calculateSleepPressure(userId),
-        circadianService.predictOptimalSleepWindow(userId)
+        circadianService.predictOptimalSleepWindow(userId),
       ]);
 
       if (crdi !== null && crdi !== undefined) {
@@ -132,7 +149,9 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
       if (pressure) {
         setSleepPressure(pressure);
-        pressureAnimation.value = withSpring(pressure.currentPressure / 100, { damping: 12 });
+        pressureAnimation.value = withSpring(pressure.currentPressure / 100, {
+          damping: 12,
+        });
       } else {
         setSleepPressure(null);
       }
@@ -140,11 +159,16 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
       if (window) {
         setOptimalWindow(window);
         // Update dynamic configuration based on user's optimal window
-        setUserConfig(prev => ({
+        setUserConfig((prev) => ({
           ...prev,
           optimalBedtime: format(new Date(window.bedtime), 'HH:mm'),
           optimalWakeTime: format(new Date(window.wakeTime), 'HH:mm'),
-          sleepTarget: Math.round(differenceInHours(new Date(window.wakeTime), new Date(window.bedtime)))
+          sleepTarget: Math.round(
+            differenceInHours(
+              new Date(window.wakeTime),
+              new Date(window.bedtime),
+            ),
+          ),
         }));
       } else {
         setOptimalWindow(null);
@@ -165,7 +189,9 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
       const duration = calculateSleepDuration({ bedtime, wakeTime });
@@ -183,9 +209,12 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
         date: new Date().toISOString().split('T')[0],
       };
 
-  await storage.saveSleepEntries(user.id, [sleepEntry]);
+      await storage.saveSleepEntries(user.id, [sleepEntry]);
 
-      Alert.alert('Success', `Sleep logged successfully! Score: ${sleepScore}/100`);
+      Alert.alert(
+        'Success',
+        `Sleep logged successfully! Score: ${sleepScore}/100`,
+      );
       setBedtime('');
       setWakeTime('');
       setSleepQuality(3);
@@ -216,11 +245,21 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
     // Animate selected star and all previous stars
     for (let i = 0; i < rating; i++) {
-      starAnimations[i].value = withTiming(1.3, { duration: 150 });
+      // Guard against undefined animation entries
+      const anim = starAnimations && starAnimations[i];
+      if (anim) {
+        anim.value = withTiming(1.3, { duration: 150 });
+      }
     }
   };
 
-  const calculateSleepDuration = ({ bedtime, wakeTime }: { bedtime: string; wakeTime: string }): number => {
+  const calculateSleepDuration = ({
+    bedtime,
+    wakeTime,
+  }: {
+    bedtime: string;
+    wakeTime: string;
+  }): number => {
     const bed = new Date(`2024-01-01 ${bedtime}`);
     let wake = new Date(`2024-01-01 ${wakeTime}`);
 
@@ -228,7 +267,9 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
       wake = new Date(`2024-01-02 ${wakeTime}`);
     }
 
-    return differenceInHours(wake, bed) + (wake.getMinutes() - bed.getMinutes()) / 60;
+    return (
+      differenceInHours(wake, bed) + (wake.getMinutes() - bed.getMinutes()) / 60
+    );
   };
 
   const calculateSleepScore = (duration: number, quality: number): number => {
@@ -251,12 +292,14 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
     const last7Days = sleepLogs.slice(0, 7).reverse();
     return {
-      labels: last7Days.map(log => format(new Date(log.date), 'EEE')),
-      datasets: [{
-        data: last7Days.map(log => log.duration || 0),
-        color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
-        strokeWidth: 3
-      }]
+      labels: last7Days.map((log) => format(new Date(log.date), 'EEE')),
+      datasets: [
+        {
+          data: last7Days.map((log) => log.duration || 0),
+          color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
+          strokeWidth: 3,
+        },
+      ],
     };
   }, [sleepLogs]);
 
@@ -266,27 +309,25 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   }));
 
   const pressureStyle = useAnimatedStyle(() => ({
-    transform: [{
-      rotate: `${pressureAnimation.value * 180}deg`
-    }]
+    transform: [
+      {
+        rotate: `${pressureAnimation.value * 180}deg`,
+      },
+    ],
   }));
 
   const pulseStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulseAnimation.value }]
+    transform: [{ scale: pulseAnimation.value }],
   }));
 
   const cardEntranceStyle = useAnimatedStyle(() => ({
     opacity: cardEntranceAnimation.value,
-    transform: [
-      { translateY: (1 - cardEntranceAnimation.value) * 20 }
-    ]
+    transform: [{ translateY: (1 - cardEntranceAnimation.value) * 20 }],
   }));
 
   const chartEntranceStyle = useAnimatedStyle(() => ({
     opacity: chartAnimation.value,
-    transform: [
-      { scale: 0.95 + chartAnimation.value * 0.05 }
-    ]
+    transform: [{ scale: 0.95 + chartAnimation.value * 0.05 }],
   }));
 
   const getCRDIColor = (score: number) => {
@@ -318,23 +359,43 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
             <Text style={styles.metricLabel}>CRDI SCORE</Text>
 
             <View style={styles.circularProgress}>
-              <View style={[styles.circularProgressInner, {
-                borderColor: getCRDIColor(circadianHealth || 0)
-              }]}>
-                <Text style={[styles.metricValue, {
-                  color: getCRDIColor(circadianHealth || 0)
-                }]}>
+              <View
+                style={[
+                  styles.circularProgressInner,
+                  {
+                    borderColor: getCRDIColor(circadianHealth || 0),
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.metricValue,
+                    {
+                      color: getCRDIColor(circadianHealth || 0),
+                    },
+                  ]}
+                >
                   {circadianHealth || '--'}
                 </Text>
               </View>
             </View>
 
-            <View style={[styles.statusBadge, {
-              backgroundColor: getCRDIColor(circadianHealth || 0) + '20'
-            }]}>
-              <Text style={[styles.statusText, {
-                color: getCRDIColor(circadianHealth || 0)
-              }]}>
+            <View
+              style={[
+                styles.statusBadge,
+                {
+                  backgroundColor: getCRDIColor(circadianHealth || 0) + '20',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusText,
+                  {
+                    color: getCRDIColor(circadianHealth || 0),
+                  },
+                ]}
+              >
                 {getCRDILabel(circadianHealth || 0)}
               </Text>
             </View>
@@ -363,7 +424,11 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
             <View style={styles.alertnessContainer}>
               <Icon
-                name={sleepPressure?.alertnessScore > 70 ? 'lightning-bolt' : 'sleep'}
+                name={
+                  sleepPressure?.alertnessScore > 70
+                    ? 'lightning-bolt'
+                    : 'sleep'
+                }
                 size={14}
                 color="#F59E0B"
               />
@@ -411,9 +476,14 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
             <View style={styles.confidenceRow}>
               <View style={styles.confidenceBar}>
-                <View style={[styles.confidenceBarFill, {
-                  width: `${(optimalWindow.confidence || 0) * 100}%`
-                }]} />
+                <View
+                  style={[
+                    styles.confidenceBarFill,
+                    {
+                      width: `${(optimalWindow.confidence || 0) * 100}%`,
+                    },
+                  ]}
+                />
               </View>
               <Text style={styles.confidenceText}>
                 {Math.round((optimalWindow.confidence || 0) * 100)}% confidence
@@ -430,7 +500,13 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   );
 
   const renderSleepChart = () => {
-    if (!chartData || !chartData.datasets || !chartData.datasets[0] || !chartData.datasets[0].data) return null;
+    if (
+      !chartData ||
+      !chartData.datasets ||
+      !chartData.datasets[0] ||
+      !chartData.datasets[0].data
+    )
+      return null;
 
     return (
       <Reanimated.View style={chartEntranceStyle}>
@@ -453,11 +529,11 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
               labelColor: (opacity = 1) => `rgba(31, 41, 55, ${opacity})`,
               style: { borderRadius: 16 },
               propsForDots: {
-                r: "5",
-                strokeWidth: "2",
-                stroke: "#6366F1",
-                fill: "#FFFFFF"
-              }
+                r: '5',
+                strokeWidth: '2',
+                stroke: '#6366F1',
+                fill: '#FFFFFF',
+              },
             }}
             bezier
             style={styles.chart}
@@ -479,7 +555,11 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
             <View style={styles.statItem}>
               <Text style={styles.statLabel}>Avg Sleep</Text>
               <Text style={styles.statValue}>
-                {(chartData.datasets[0].data.reduce((a, b) => a + b, 0) / chartData.datasets[0].data.length).toFixed(1)}h
+                {(
+                  chartData.datasets[0].data.reduce((a, b) => a + b, 0) /
+                  chartData.datasets[0].data.length
+                ).toFixed(1)}
+                h
               </Text>
             </View>
             <View style={styles.statDivider} />
@@ -505,7 +585,9 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
           <Icon name="lightning-bolt" size={20} color="#F59E0B" />
           <Text style={styles.cardTitle}>Quick Sleep Log</Text>
         </View>
-        <Text style={styles.quickLogSubtitle}>Just woke up? Log your sleep instantly</Text>
+        <Text style={styles.quickLogSubtitle}>
+          Just woke up? Log your sleep instantly
+        </Text>
 
         <Reanimated.View style={pulseStyle}>
           <TouchableOpacity
@@ -535,10 +617,14 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
   );
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors[theme].background }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors[theme].background }]}
+    >
       {/* Enhanced Header with Gradient */}
       <LinearGradient
-        colors={theme === 'dark' ? ['#1F2937', '#111827'] : ['#EEF2FF', '#F5F3FF']}
+        colors={
+          theme === 'dark' ? ['#1F2937', '#111827'] : ['#EEF2FF', '#F5F3FF']
+        }
         style={styles.headerGradient}
       >
         <View style={styles.header}>
@@ -552,7 +638,12 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
             <Text style={[styles.headerTitle, { color: colors[theme].text }]}>
               Smart Sleep Tracker
             </Text>
-            <Text style={[styles.headerSubtitle, { color: colors[theme].textSecondary }]}>
+            <Text
+              style={[
+                styles.headerSubtitle,
+                { color: colors[theme].textSecondary },
+              ]}
+            >
               Track, analyze & optimize your sleep
             </Text>
           </View>
@@ -592,7 +683,8 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
           <View style={styles.timeInputWrapper}>
             <Text style={styles.inputLabel}>
-              <Icon name="white-balance-sunny" size={14} color="#6B7280" /> Wake Time
+              <Icon name="white-balance-sunny" size={14} color="#6B7280" /> Wake
+              Time
             </Text>
             <TouchableOpacity
               style={[styles.timeButton, wakeTime && styles.timeButtonFilled]}
@@ -603,7 +695,9 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
                 size={20}
                 color={wakeTime ? '#F59E0B' : '#9CA3AF'}
               />
-              <Text style={[styles.timeText, wakeTime && styles.timeTextFilled]}>
+              <Text
+                style={[styles.timeText, wakeTime && styles.timeTextFilled]}
+              >
                 {wakeTime || userConfig.optimalWakeTime}
               </Text>
             </TouchableOpacity>
@@ -618,7 +712,12 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
           <View style={styles.qualityButtons}>
             {[1, 2, 3, 4, 5].map((rating) => {
               const starAnim = useAnimatedStyle(() => ({
-                transform: [{ scale: starAnimations[rating - 1].value }]
+                // Use optional chaining and nullish coalescing to avoid "possibly undefined"
+                transform: [
+                  {
+                    scale: starAnimations?.[rating - 1]?.value ?? 1,
+                  },
+                ],
               }));
 
               return (
@@ -628,8 +727,10 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
                     style={[
                       styles.qualityButton,
                       {
-                        backgroundColor: sleepQuality >= rating ? '#F59E0B' : '#F3F4F6',
-                        borderColor: sleepQuality >= rating ? '#F59E0B' : '#E5E7EB',
+                        backgroundColor:
+                          sleepQuality >= rating ? '#F59E0B' : '#F3F4F6',
+                        borderColor:
+                          sleepQuality >= rating ? '#F59E0B' : '#E5E7EB',
                       },
                     ]}
                     activeOpacity={0.7}
@@ -687,13 +788,19 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
 
         {sleepLogs.map((log, index) => {
           const scoreColor =
-            log.sleep_score >= 80 ? '#10B981' :
-            log.sleep_score >= 60 ? '#F59E0B' : '#EF4444';
+            log.sleep_score >= 80
+              ? '#10B981'
+              : log.sleep_score >= 60
+              ? '#F59E0B'
+              : '#EF4444';
 
           return (
             <View key={index} style={styles.historyItem}>
               <LinearGradient
-                colors={['rgba(255, 255, 255, 0.5)', 'rgba(255, 255, 255, 0.2)']}
+                colors={[
+                  'rgba(255, 255, 255, 0.5)',
+                  'rgba(255, 255, 255, 0.2)',
+                ]}
                 style={styles.historyGradient}
               >
                 <View style={styles.historyRow}>
@@ -723,7 +830,12 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
                           />
                         ))}
                       </View>
-                      <View style={[styles.scoreBadge, { backgroundColor: scoreColor + '20' }]}>
+                      <View
+                        style={[
+                          styles.scoreBadge,
+                          { backgroundColor: scoreColor + '20' },
+                        ]}
+                      >
                         <Text style={[styles.scoreText, { color: scoreColor }]}>
                           {log.sleep_score || '--'}/100
                         </Text>
@@ -732,10 +844,17 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
                   </View>
 
                   <View style={styles.historyRight}>
-                    <View style={[styles.durationCircle, {
-                      borderColor: scoreColor
-                    }]}>
-                      <Text style={[styles.durationText, { color: scoreColor }]}>
+                    <View
+                      style={[
+                        styles.durationCircle,
+                        {
+                          borderColor: scoreColor,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.durationText, { color: scoreColor }]}
+                      >
                         {log.duration?.toFixed(1) || '--'}
                       </Text>
                       <Text style={styles.durationLabel}>hours</Text>
@@ -754,7 +873,8 @@ const SmartSleepTracker: React.FC<SmartSleepTrackerProps> = ({
             </View>
             <Text style={styles.emptyTitle}>No Sleep Data Yet</Text>
             <Text style={styles.emptyText}>
-              Start logging your sleep to unlock personalized insights and recommendations
+              Start logging your sleep to unlock personalized insights and
+              recommendations
             </Text>
             <TouchableOpacity style={styles.emptyButton}>
               <Text style={styles.emptyButtonText}>Log Your First Sleep</Text>

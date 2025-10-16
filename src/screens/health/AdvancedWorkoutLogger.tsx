@@ -8,7 +8,7 @@ import {
   Alert,
   StyleSheet,
   Dimensions,
-  Vibration
+  Vibration,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { BarChart, LineChart } from 'react-native-chart-kit';
@@ -16,7 +16,7 @@ import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  interpolate
+  interpolate,
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { format, differenceInDays } from 'date-fns';
@@ -24,6 +24,7 @@ import { format, differenceInDays } from 'date-fns';
 import { GlassCard } from '../../components/GlassComponents';
 import { supabase } from '../../services/storage/SupabaseService';
 import { colors } from '../../theme/colors';
+import { perf } from '../../utils/perfMarks';
 
 interface AdvancedWorkoutLoggerProps {
   userId: string;
@@ -63,7 +64,7 @@ interface WeeklyProgress {
 const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   userId,
   theme,
-  onNavigate
+  onNavigate,
 }) => {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [workoutType, setWorkoutType] = useState('');
@@ -71,10 +72,15 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   const [intensity, setIntensity] = useState(3);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const mountMarkRef = React.useRef<string | null>(null);
 
   // Advanced metrics
-  const [biometricData, setBiometricData] = useState<BiometricData | null>(null);
-  const [weeklyProgress, setWeeklyProgress] = useState<WeeklyProgress | null>(null);
+  const [biometricData, setBiometricData] = useState<BiometricData | null>(
+    null,
+  );
+  const [weeklyProgress, setWeeklyProgress] = useState<WeeklyProgress | null>(
+    null,
+  );
   const [streakData, setStreakData] = useState({ current: 0, longest: 0 });
   const [isRecording, setIsRecording] = useState(false);
 
@@ -89,7 +95,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       color: '#EF4444',
       category: 'cardio',
       targetZone: '85-95%',
-      calorieMultiplier: 1.4
+      calorieMultiplier: 1.4,
     },
     {
       id: 'strength',
@@ -98,7 +104,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       color: '#8B5CF6',
       category: 'anaerobic',
       targetZone: '70-85%',
-      calorieMultiplier: 1.0
+      calorieMultiplier: 1.0,
     },
     {
       id: 'cardio',
@@ -107,7 +113,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       color: '#10B981',
       category: 'aerobic',
       targetZone: '60-75%',
-      calorieMultiplier: 1.2
+      calorieMultiplier: 1.2,
     },
     {
       id: 'yoga',
@@ -116,7 +122,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       color: '#F59E0B',
       category: 'flexibility',
       targetZone: '40-60%',
-      calorieMultiplier: 0.6
+      calorieMultiplier: 0.6,
     },
     {
       id: 'pilates',
@@ -125,7 +131,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       color: '#EC4899',
       category: 'core',
       targetZone: '50-70%',
-      calorieMultiplier: 0.8
+      calorieMultiplier: 0.8,
     },
     {
       id: 'cycling',
@@ -134,8 +140,8 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       color: '#06B6D4',
       category: 'cardio',
       targetZone: '65-80%',
-      calorieMultiplier: 1.1
-    }
+      calorieMultiplier: 1.1,
+    },
   ];
 
   // Animations
@@ -144,11 +150,22 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   const pulseAnimation = useSharedValue(1);
 
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('AdvancedWorkoutLogger');
     loadWorkoutData();
     loadBiometricData();
     calculateProgress();
     startHeartRateAnimation();
   }, [userId]);
+
+  useEffect(() => {
+    // consider ready when workouts loaded (could be empty) and biometricData attempted
+    if (mountMarkRef.current) {
+      try {
+        perf.measureReady('AdvancedWorkoutLogger', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [workouts, biometricData]);
 
   const startHeartRateAnimation = () => {
     heartRateAnimation.value = withTiming(1, { duration: 600 });
@@ -156,7 +173,9 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
 
   const loadWorkoutData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
       const { data, error } = await supabase
@@ -193,15 +212,19 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   const calculateProgress = async () => {
     if (workouts.length === 0) return;
 
-    const last7Days = workouts.filter(w =>
-      differenceInDays(new Date(), new Date(w.date)) <= 7
+    const last7Days = workouts.filter(
+      (w) => differenceInDays(new Date(), new Date(w.date)) <= 7,
     );
 
     const progressData = {
       totalWorkouts: last7Days.length,
       totalDuration: last7Days.reduce((sum, w) => sum + w.duration, 0),
-      avgIntensity: last7Days.reduce((sum, w) => sum + w.intensity, 0) / last7Days.length,
-      caloriesBurned: last7Days.reduce((sum, w) => sum + (w.calories_burned || 0), 0)
+      avgIntensity:
+        last7Days.reduce((sum, w) => sum + w.intensity, 0) / last7Days.length,
+      caloriesBurned: last7Days.reduce(
+        (sum, w) => sum + (w.calories_burned || 0),
+        0,
+      ),
     };
 
     setWeeklyProgress(progressData);
@@ -214,14 +237,17 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
     let longestStreak = 0;
     let tempStreak = 1;
 
-    const sortedWorkouts = workoutData.sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
+    const sortedWorkouts = workoutData.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
     );
 
     // Calculate current streak
     const today = new Date();
     for (let i = 0; i < sortedWorkouts.length; i++) {
-      const workoutDate = new Date(sortedWorkouts[i].date);
+      const workoutDateStr = sortedWorkouts[i]?.date ?? '';
+      const workoutDate = workoutDateStr
+        ? new Date(workoutDateStr)
+        : new Date();
       const daysDiff = differenceInDays(today, workoutDate);
 
       if (i === 0 && daysDiff <= 1) {
@@ -235,8 +261,10 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
 
     // Calculate longest streak
     for (let i = 1; i < sortedWorkouts.length; i++) {
-      const current = new Date(sortedWorkouts[i].date);
-      const previous = new Date(sortedWorkouts[i-1].date);
+      const currentStr = sortedWorkouts[i]?.date ?? '';
+      const previousStr = sortedWorkouts[i - 1]?.date ?? '';
+      const current = currentStr ? new Date(currentStr) : new Date();
+      const previous = previousStr ? new Date(previousStr) : new Date();
       const daysDiff = differenceInDays(previous, current);
 
       if (daysDiff <= 1) {
@@ -251,13 +279,19 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
     setStreakData({ current: currentStreak, longest: longestStreak });
   };
 
-  const estimateCalories = (type: string, duration: number, intensity: number): number => {
-    const workoutType = workoutTypes.find(t => t.id === type);
+  const estimateCalories = (
+    type: string,
+    duration: number,
+    intensity: number,
+  ): number => {
+    const workoutType = workoutTypes.find((t) => t.id === type);
     const baseCalories = 300; // Base calories per hour for average person
     const multiplier = workoutType?.calorieMultiplier || 1;
     const intensityFactor = intensity / 3; // Scale 1-5 to 0.33-1.67
 
-    return Math.round((baseCalories * (duration / 60) * multiplier * intensityFactor));
+    return Math.round(
+      baseCalories * (duration / 60) * multiplier * intensityFactor,
+    );
   };
 
   const logWorkout = async () => {
@@ -268,15 +302,21 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
 
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
-      const calories = estimateCalories(workoutType, parseInt(duration), intensity);
+      const calories = estimateCalories(
+        workoutType,
+        parseInt(duration ?? '0'),
+        intensity,
+      );
 
       const workoutData = {
         user_id: user.id,
         workout_type: workoutType,
-        duration: parseInt(duration),
+        duration: parseInt(duration ?? '0'),
         intensity,
         calories_burned: calories,
         heart_rate_avg: biometricData?.heartRate,
@@ -294,7 +334,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
       Alert.alert(
         'Workout Logged! 💪',
         `Great job! You burned ~${calories} calories and maintained ${intensity}/5 intensity.`,
-        [{ text: 'Awesome!', style: 'default' }]
+        [{ text: 'Awesome!', style: 'default' }],
       );
 
       // Reset form
@@ -322,30 +362,31 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
 
     Alert.alert(
       '🏃‍♂️ Quick Workout Started!',
-      `Timer started for ${workoutTypes.find(t => t.id === type)?.name}. The app will track your session.`,
+      `Timer started for ${
+        workoutTypes.find((t) => t.id === type)?.name
+      }. The app will track your session.`,
       [
         { text: 'Stop & Log', onPress: () => setIsRecording(false) },
-        { text: 'Continue', style: 'default' }
-      ]
+        { text: 'Continue', style: 'default' },
+      ],
     );
   };
 
   // Animated styles
   const heartRateStyle = useAnimatedStyle(() => ({
     transform: [{ scale: heartRateAnimation.value }],
-    opacity: heartRateAnimation.value
+    opacity: heartRateAnimation.value,
   }));
 
   const recoveryStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolate(
-      recoveryAnimation.value,
-      [0, 1],
-      ['#EF4444', '#10B981'] as any
-    )
+    backgroundColor: interpolate(recoveryAnimation.value, [0, 1], [
+      '#EF4444',
+      '#10B981',
+    ] as any),
   }));
 
   const pulseStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulseAnimation.value }]
+    transform: [{ scale: pulseAnimation.value }],
   }));
 
   const getIntensityColor = (level: number): string => {
@@ -359,7 +400,7 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   };
 
   const getWorkoutTypeInfo = (id: string) => {
-    return workoutTypes.find(type => type.id === id);
+    return workoutTypes.find((type) => type.id === id);
   };
 
   const renderBiometricPanel = () => (
@@ -371,12 +412,16 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
           <Reanimated.View style={[styles.heartIcon, heartRateStyle]}>
             <Icon name="heart" size={24} color="#EF4444" />
           </Reanimated.View>
-          <Text style={styles.biometricValue}>{biometricData?.heartRate || '--'}</Text>
+          <Text style={styles.biometricValue}>
+            {biometricData?.heartRate || '--'}
+          </Text>
           <Text style={styles.biometricLabel}>BPM</Text>
         </View>
 
         <View style={styles.biometricItem}>
-          <Text style={styles.biometricValue}>{biometricData?.hrvScore || '--'}</Text>
+          <Text style={styles.biometricValue}>
+            {biometricData?.hrvScore || '--'}
+          </Text>
           <Text style={styles.biometricLabel}>HRV Score</Text>
         </View>
 
@@ -390,10 +435,17 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
         </View>
 
         <View style={styles.biometricItem}>
-          <Text style={[
-            styles.biometricValue,
-            { color: (biometricData?.stressLevel || 0) > 70 ? '#EF4444' : '#10B981' }
-          ]}>
+          <Text
+            style={[
+              styles.biometricValue,
+              {
+                color:
+                  (biometricData?.stressLevel || 0) > 70
+                    ? '#EF4444'
+                    : '#10B981',
+              },
+            ]}
+          >
             {biometricData?.stressLevel || '--'}%
           </Text>
           <Text style={styles.biometricLabel}>Stress</Text>
@@ -422,7 +474,10 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
         {workoutTypes.slice(0, 4).map((type) => (
           <Reanimated.View key={type.id} style={pulseStyle}>
             <TouchableOpacity
-              style={[styles.quickActionButton, { backgroundColor: type.color + '20' }]}
+              style={[
+                styles.quickActionButton,
+                { backgroundColor: type.color + '20' },
+              ]}
               onPress={() => startQuickWorkout(type.id)}
             >
               <Icon name={type.icon} size={24} color={type.color} />
@@ -448,25 +503,28 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
     if (!weeklyProgress || workouts.length === 0) return null;
 
     // Generate chart data from actual workout data
-    const last7Days = workouts.filter(w =>
-      differenceInDays(new Date(), new Date(w.date)) <= 7
+    const last7Days = workouts.filter(
+      (w) => differenceInDays(new Date(), new Date(w.date)) <= 7,
     );
 
     // Group workouts by day of week
     const dayData = [0, 0, 0, 0, 0, 0, 0]; // Mon to Sun
-    last7Days.forEach(workout => {
+    last7Days.forEach((workout) => {
       const dayOfWeek = new Date(workout.date).getDay(); // 0 = Sun, 1 = Mon, etc.
       const adjustedDay = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Convert to Mon=0, Sun=6
-      dayData[adjustedDay] += workout.duration;
+      dayData[adjustedDay] =
+        (dayData[adjustedDay] || 0) + (workout.duration || 0);
     });
 
     const chartData = {
       labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-      datasets: [{
-        data: dayData,
-        color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
-        strokeWidth: 3
-      }]
+      datasets: [
+        {
+          data: dayData,
+          color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
+          strokeWidth: 3,
+        },
+      ],
     };
 
     return (
@@ -496,11 +554,15 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
             <Text style={styles.statLabel}>Workouts</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>{weeklyProgress.totalDuration}min</Text>
+            <Text style={styles.statValue}>
+              {weeklyProgress.totalDuration}min
+            </Text>
             <Text style={styles.statLabel}>Total Time</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>{weeklyProgress.caloriesBurned}</Text>
+            <Text style={styles.statValue}>
+              {weeklyProgress.caloriesBurned}
+            </Text>
             <Text style={styles.statLabel}>Calories</Text>
           </View>
           <View style={styles.statItem}>
@@ -529,9 +591,10 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
             style={[
               styles.workoutTypeChip,
               {
-                backgroundColor: workoutType === type.id ? type.color : type.color + '20',
-                borderColor: type.color
-              }
+                backgroundColor:
+                  workoutType === type.id ? type.color : type.color + '20',
+                borderColor: type.color,
+              },
             ]}
           >
             <Icon
@@ -539,16 +602,25 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
               size={18}
               color={workoutType === type.id ? 'white' : type.color}
             />
-            <Text style={[
-              styles.workoutTypeChipText,
-              { color: workoutType === type.id ? 'white' : type.color }
-            ]}>
+            <Text
+              style={[
+                styles.workoutTypeChipText,
+                { color: workoutType === type.id ? 'white' : type.color },
+              ]}
+            >
               {type.name}
             </Text>
-            <Text style={[
-              styles.workoutTypeZone,
-              { color: workoutType === type.id ? 'rgba(255,255,255,0.8)' : type.color }
-            ]}>
+            <Text
+              style={[
+                styles.workoutTypeZone,
+                {
+                  color:
+                    workoutType === type.id
+                      ? 'rgba(255,255,255,0.8)'
+                      : type.color,
+                },
+              ]}
+            >
               {type.targetZone}
             </Text>
           </TouchableOpacity>
@@ -574,15 +646,21 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
             style={[
               styles.intensityButton,
               {
-                backgroundColor: intensity >= level ? getIntensityColor(level) : '#F3F4F6',
-                borderColor: getIntensityColor(level)
-              }
+                backgroundColor:
+                  intensity >= level ? getIntensityColor(level) : '#F3F4F6',
+                borderColor: getIntensityColor(level),
+              },
             ]}
           >
-            <Text style={[
-              styles.intensityText,
-              { color: intensity >= level ? 'white' : getIntensityColor(level) }
-            ]}>
+            <Text
+              style={[
+                styles.intensityText,
+                {
+                  color:
+                    intensity >= level ? 'white' : getIntensityColor(level),
+                },
+              ]}
+            >
               {level}
             </Text>
           </TouchableOpacity>
@@ -596,7 +674,8 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
         <View style={styles.estimationPanel}>
           <Text style={styles.estimationTitle}>💡 Estimation</Text>
           <Text style={styles.estimationText}>
-            Calories: ~{estimateCalories(workoutType, parseInt(duration) || 0, intensity)}
+            Calories: ~
+            {estimateCalories(workoutType, parseInt(duration) || 0, intensity)}
           </Text>
           <Text style={styles.estimationText}>
             Target Zone: {getWorkoutTypeInfo(workoutType)?.targetZone}
@@ -619,9 +698,10 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
         style={[
           styles.logButton,
           {
-            backgroundColor: (!workoutType || !duration || loading) ? '#9CA3AF' : '#6366F1',
-            opacity: (!workoutType || !duration || loading) ? 0.6 : 1
-          }
+            backgroundColor:
+              !workoutType || !duration || loading ? '#9CA3AF' : '#6366F1',
+            opacity: !workoutType || !duration || loading ? 0.6 : 1,
+          },
         ]}
         onPress={logWorkout}
         disabled={!workoutType || !duration || loading}
@@ -634,7 +714,9 @@ const AdvancedWorkoutLogger: React.FC<AdvancedWorkoutLoggerProps> = ({
   );
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors[theme].background }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors[theme].background }]}
+    >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => onNavigate?.('wellness')}>
           <Icon name="arrow-left" size={24} color={colors[theme].text} />

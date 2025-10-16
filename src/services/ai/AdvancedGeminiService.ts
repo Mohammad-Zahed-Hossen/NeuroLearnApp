@@ -154,44 +154,73 @@ export class AdvancedGeminiService {
         await this.initializeChatContext(userId);
       }
 
-      // Add user message to history
+      // Push user message into history
       this.chatHistory.push({ role: 'user', parts: [sanitizedMessage] });
 
-      // Strictly validate history objects before passing to SDK
+      // Trim history to last N meaningful turns to fit context window
+      const WINDOW_TURNS = 8;
       const validHistory = this.chatHistory
-        .filter(
-          (item) =>
-            item &&
-            typeof item === 'object' &&
-            'role' in item &&
-            'parts' in item &&
-            (item as any).role &&
-            Array.isArray((item as any).parts) &&
-            (item as any).parts.length > 0 &&
-            typeof (item as any).parts[0] === 'string'
-        )
-        .slice(-10); // keep last 10 for safety
+        .filter((item) => item && typeof item === 'object' && 'role' in item && 'parts' in item && Array.isArray(item.parts))
+        .slice(-WINDOW_TURNS);
 
-      // Try chat mode first
-      try {
-        const chat = this.model.startChat({ history: validHistory });
-        const result = await chat.sendMessage(sanitizedMessage);
-        const response = await result.response;
-        const text = response.text();
-        const sanitizedResponse = String(text || '').trim();
-        if (!sanitizedResponse) throw new Error('Empty response from AI');
+      // Helper to attempt a single call with the SDK (handles chat vs generateContent differences)
+      const attemptCall = async (useChatMode = true, extraPrompt?: string) => {
+        if (!this.model) throw new Error('Model not initialized');
+        if (useChatMode && typeof this.model.startChat === 'function') {
+          const chat = this.model.startChat({ history: validHistory });
+          const payload = extraPrompt ? `${sanitizedMessage}\n\n${extraPrompt}` : sanitizedMessage;
+          const result = await chat.sendMessage(payload);
+          const response = await result.response;
+          return String(response.text() || '').trim();
+        }
+        // generateContent fallback
+        const payload = extraPrompt ? `${sanitizedMessage}\n\n${extraPrompt}` : sanitizedMessage;
+        const gc = await this.model.generateContent(payload);
+        const response = await gc.response;
+        return String(response.text() || '').trim();
+      };
 
-        this.chatHistory.push({ role: 'model', parts: [sanitizedResponse] });
-        if (this.chatHistory.length > 20) this.chatHistory = this.chatHistory.slice(-16);
-        return sanitizedResponse;
-      } catch (e) {
-        // Fallback to single-shot generateContent if chat fails (avoids "in" operator errors)
-        const gc = await this.model.generateContent(sanitizedMessage);
-        const text = (await gc.response).text();
-        const sanitizedResponse = String(text || '').trim() || 'OK';
-        this.chatHistory.push({ role: 'model', parts: [sanitizedResponse] });
-        return sanitizedResponse;
+      // Retry loop with exponential backoff and a Chain-of-Thought fallback
+      const MAX_RETRIES = 3;
+      let attempt = 0;
+      let lastErr: any = null;
+      let responseText = '';
+
+      while (attempt < MAX_RETRIES) {
+        try {
+          // First attempt: chat mode if available
+          responseText = await attemptCall(true);
+          if (responseText && responseText.length > 20) {
+            break; // success
+          }
+
+          // If response too short, try a CoT-guided prompt to elicit reasoning
+          const cotPrompt = `Please explain your reasoning step-by-step before giving a final concise answer.`;
+          responseText = await attemptCall(false, cotPrompt);
+          if (responseText && responseText.length > 30) break;
+
+          // otherwise throw to trigger retry/backoff
+          throw new Error('Empty or insufficient AI response');
+        } catch (err) {
+          lastErr = err;
+          const backoffMs = Math.min(2000 * Math.pow(2, attempt), 8000);
+          await new Promise((r) => setTimeout(r, backoffMs));
+          attempt++;
+        }
       }
+
+      if (!responseText || responseText.length === 0) {
+        console.error('AI chat failed after retries:', lastErr);
+        // Return fallback
+        const fallback = "I'm having trouble processing that right now. Could you try rephrasing your question?";
+        this.chatHistory.push({ role: 'model', parts: [fallback] });
+        return fallback;
+      }
+
+      // Commit model response to history and trim history size
+      this.chatHistory.push({ role: 'model', parts: [responseText] });
+      if (this.chatHistory.length > 40) this.chatHistory = this.chatHistory.slice(-32);
+      return responseText;
     } catch (error) {
       console.error('Chat error:', error);
       return "I'm having trouble processing that right now. Could you try rephrasing your question?";
@@ -370,20 +399,26 @@ Keep insights concise, actionable, and encouraging. Use Bengali currency format 
       return []; // Need minimum data for forecasting
     }
 
-    const forecast = [];
+  const forecast: { month: string; predicted: number; confidence: number }[] = [];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
 
     // Simple trend calculation
-    const recent = historical.slice(-3);
-    const trend = recent.length >= 2 ? (recent[recent.length - 1] - recent[recent.length - 2]) : 0;
-    const lastValue = recent[recent.length - 1];
+      const recent = historical.slice(-3);
+      let trend = 0;
+      const rLast = recent.length > 0 ? recent[recent.length - 1] : 0;
+      const rPrev = recent.length > 1 ? recent[recent.length - 2] : 0;
+      if (recent.length >= 2 && typeof rLast === 'number' && typeof rPrev === 'number') {
+        trend = rLast - rPrev;
+      }
+      const lastValue = typeof rLast === 'number' ? rLast : 0;
 
     for (let i = 0; i < 3; i++) {
       const predicted = Math.max(0, lastValue + (trend * (i + 1)));
-      const confidence = Math.max(0.3, 0.9 - (i * 0.2)); // Decreasing confidence
+      const confidence = Math.max(0.3, 0.9 - i * 0.2); // Decreasing confidence (0.3..0.9)
+      const month = months[i]!;
 
       forecast.push({
-        month: months[i],
+        month,
         predicted: Math.round(predicted),
         confidence: Math.round(confidence * 100)
       });
@@ -449,7 +484,7 @@ Keep insights concise, actionable, and encouraging. Use Bengali currency format 
   }
 
   private generateFinancialAlerts(forecast: any[], currentData: any): string[] {
-    const alerts = [];
+  const alerts: string[] = [];
 
     // Check for concerning forecast trends
     if (forecast.length >= 2 && forecast.some(f => f.predicted > currentData.monthlyIncome * 0.9)) {

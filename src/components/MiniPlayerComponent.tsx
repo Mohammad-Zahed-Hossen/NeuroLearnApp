@@ -67,7 +67,7 @@ const SWIPE_THRESHOLD = 50;
 const ANIMATION_DURATION = 300;
 
 // Preset configurations
-const PRESET_OPTIONS = [
+const PRESET_OPTIONS: PresetOption[] = [
   { id: 'none', label: 'Off', icon: '⏹️', frequency: '0 Hz', color: '#666666' },
   {
     id: 'calm_readiness',
@@ -119,6 +119,16 @@ const PRESET_OPTIONS = [
     color: '#417505',
   },
 ];
+
+// Strongly-typed preset option shape so computed lookups are never `undefined` at the type level
+interface PresetOption {
+  id: string;
+  label: string;
+  icon: string;
+  frequency: string;
+  color: string;
+}
+
 
 type MiniPlayerState = 'minimized' | 'expanded' | 'hidden';
 
@@ -173,12 +183,12 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ theme, style }) => {
   }));
 
   // Current preset info
-  const currentPresetOption = useMemo(
-    () =>
-      PRESET_OPTIONS.find((p) => p.id === soundscape.currentPreset) ||
-      PRESET_OPTIONS[0],
-    [soundscape.currentPreset],
-  );
+  const currentPresetOption: PresetOption = useMemo(() => {
+    return (
+      PRESET_OPTIONS.find((p) => p.id === soundscape.currentPreset) ??
+      PRESET_OPTIONS[0]!
+    );
+  }, [soundscape.currentPreset]);
 
   // Animate state changes
   useEffect(() => {

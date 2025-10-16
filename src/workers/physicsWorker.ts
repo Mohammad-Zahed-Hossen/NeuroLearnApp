@@ -8,6 +8,7 @@
  * - Performance monitoring and adaptive quality
  */
 
+import * as d3 from 'd3-force';
 import {
   PhysicsWorkerMessage,
   PhysicsWorkerResponse,
@@ -31,10 +32,17 @@ let nodes: WorkerNode[] = [];
 let links: WorkerLink[] = [];
 let isInitialized = false;
 
+// D3 Simulation instance
+let simulation: d3.Simulation<WorkerNode, WorkerLink> | null = null;
+
 // Performance tracking
 let lastFrameTime = 0;
 let currentFPS = 60;
 let frameCount = 0;
+
+// Error handling
+let lastOperationTime = 0;
+const OPERATION_TIMEOUT = 10000; // 10 seconds
 
 // ==================== PHYSICS CALCULATIONS ====================
 
@@ -48,7 +56,7 @@ function calculateLinkForces(deltaTime: number): void {
     const sourceNode = nodes.find(n => n.id === link.source);
     const targetNode = nodes.find(n => n.id === link.target);
 
-    if (!sourceNode || !targetNode) return;
+  if (!sourceNode || !targetNode) return;
 
     const dx = targetNode.x - sourceNode.x;
     const dy = targetNode.y - sourceNode.y;
@@ -57,7 +65,12 @@ function calculateLinkForces(deltaTime: number): void {
     if (distance === 0) return;
 
     // Calculate link force
-    const linkForce = calculateLinkForceMagnitude(link, distance, config!, physicsState!);
+    const linkForce = calculateLinkForceMagnitude(
+      link,
+      distance,
+      config!,
+      physicsState!,
+    );
     const fx = (dx / distance) * linkForce * deltaTime;
     const fy = (dy / distance) * linkForce * deltaTime;
 
@@ -79,7 +92,14 @@ function calculateLinkForceMagnitude(
   state: WorkerPhysicsState
 ): number {
   const baseForce = link.adaptiveStrength * config.linkStrength.contextMultiplier;
-  const contextRelevance = link.contextRelevance[state.currentContext] || 0.5;
+  // Safely resolve context relevance in case the context key uses a different casing
+  const ctxKey = state && state.currentContext
+    ? String(state.currentContext).charAt(0).toLowerCase() + String(state.currentContext).slice(1)
+    : '';
+  const contextRelevance =
+    link.contextRelevance[ctxKey as keyof typeof link.contextRelevance] ??
+    link.contextRelevance[state.currentContext as keyof typeof link.contextRelevance] ??
+    0.5;
   const distanceModifier = (distance - link.distance) / link.distance;
 
   return baseForce * contextRelevance * distanceModifier;
@@ -95,6 +115,8 @@ function calculateRepulsionForces(deltaTime: number): void {
     for (let j = i + 1; j < nodes.length; j++) {
       const nodeA = nodes[i];
       const nodeB = nodes[j];
+      // Ensure nodes exist
+      if (!nodeA || !nodeB) continue;
 
       const dx = nodeB.x - nodeA.x;
       const dy = nodeB.y - nodeA.y;
@@ -150,7 +172,13 @@ function applyTargetNodeMagnetism(deltaTime: number): void {
   const distance = Math.sqrt(dx * dx + dy * dy);
 
   if (distance > 50) {
-    const magnetism = config.contextualBehavior[physicsState.currentContext]?.targetNodeMagnetism || 1.0;
+    // Normalize context key (worker config uses camelCase keys like 'deepFocus')
+    const ctxKey = physicsState.currentContext
+      ? String(physicsState.currentContext).charAt(0).toLowerCase() + String(physicsState.currentContext).slice(1)
+      : '';
+    const fallbackBehavior = Object.values(config.contextualBehavior)[0] as any;
+    const behavior = (config.contextualBehavior as any)[ctxKey] || fallbackBehavior;
+    const magnetism = behavior?.targetNodeMagnetism ?? 1.0;
     const force = magnetism * 0.1;
     targetNode.vx += (dx / distance) * force * deltaTime;
     targetNode.vy += (dy / distance) * force * deltaTime;
@@ -192,10 +220,16 @@ function applyContextBehaviors(deltaTime: number): void {
   const config = physicsState.activeConfig;
 
   nodes.forEach(node => {
+    if (!node) return;
+
+    // Safely read relevance with fallback
+    const relevance = (node.contextRelevance && node.contextRelevance[context]) || 0;
+
     // Update animation state based on context
     updateNodeAnimationState(node, config, context);
 
-    // Update visual properties
+    // Update visual properties (pass relevance via node for internal use)
+    // ensure node.contextRelevance[context] access within helpers uses fallback too
     updateNodeVisualProperties(node, config, context);
 
     // Update attention weight
@@ -203,6 +237,7 @@ function applyContextBehaviors(deltaTime: number): void {
   });
 
   links.forEach(link => {
+    if (!link) return;
     updateLinkVisualProperties(link, config, context);
   });
 }
@@ -211,10 +246,12 @@ function applyContextBehaviors(deltaTime: number): void {
  * Update node animation state
  */
 function updateNodeAnimationState(node: WorkerNode, config: any, context: string): void {
+  const relevance = (node.contextRelevance && node.contextRelevance[context]) || 0;
+
   if (node.isTargetNode) {
     node.animationState = 'highlighted';
     node.pulseIntensity = config.nodeAnimationIntensity * 1.5;
-  } else if (node.contextRelevance[context] > 0.7) {
+  } else if (relevance > 0.7) {
     node.animationState = context === 'CreativeFlow' ? 'sparking' : 'pulsing';
     node.pulseIntensity = config.nodeAnimationIntensity;
   } else {
@@ -227,7 +264,7 @@ function updateNodeAnimationState(node: WorkerNode, config: any, context: string
  * Update node visual properties
  */
 function updateNodeVisualProperties(node: WorkerNode, config: any, context: string): void {
-  const relevance = node.contextRelevance[context];
+  const relevance = (node.contextRelevance && node.contextRelevance[context]) || 0;
 
   // Determine visibility category
   let visibilityCategory: 'focused' | 'peripheral' | 'hidden';
@@ -276,10 +313,11 @@ function updateNodeAttentionWeight(node: WorkerNode, config: any): void {
  * Update link visual properties
  */
 function updateLinkVisualProperties(link: WorkerLink, config: any, context: string): void {
-  const relevance = link.contextRelevance[context];
+  const relevance = (link.contextRelevance && link.contextRelevance[context]) || 0;
 
-  const targetOpacity = relevance > config.linkVisibilityThreshold ?
-    relevance * config.connectionEmphasis : 0;
+  const targetOpacity = relevance > (config.linkVisibilityThreshold ?? 0)
+    ? relevance * (config.connectionEmphasis ?? 1)
+    : 0;
 
   link.adaptiveVisibility = lerp(link.adaptiveVisibility, targetOpacity, 0.1);
   link.flowDirection = getLinkFlowDirection(link, context, config);
@@ -310,6 +348,51 @@ function lerp(start: number, end: number, factor: number): number {
   return start + (end - start) * factor;
 }
 
+/**
+ * Initialize D3 force simulation
+ */
+function initializeD3Simulation(): void {
+  if (!config || !physicsState) return;
+
+  // Stop existing simulation if any
+  if (simulation) {
+    simulation.stop();
+  }
+
+  // Create new simulation with D3 forces
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links)
+      .id((d: any) => d.id)
+      .distance((d: any) => d.distance || 100)
+      .strength((d: any) => {
+        const contextRelevance = d.contextRelevance[physicsState!.currentContext] || 0.5;
+        const baseStrength = (config!.linkStrength.min + config!.linkStrength.max) / 2;
+        return baseStrength * contextRelevance;
+      })
+    )
+    .force('charge', d3.forceManyBody()
+      .strength((d: any) => {
+        const baseRepulsion = config!.repulsionForce.base;
+        const cognitiveLoadMultiplier = 1 + (physicsState!.cognitiveLoad * config!.repulsionForce.cognitiveLoadMultiplier);
+        const sizeMultiplier = Math.sqrt(d.size);
+        return -baseRepulsion * cognitiveLoadMultiplier * sizeMultiplier;
+      })
+      .distanceMax(200)
+    )
+    .force('center', d3.forceCenter(400, 300)) // Mock center
+    .force('collision', d3.forceCollide()
+      .radius((d: any) => d.size + 5)
+    );
+
+  // Configure simulation parameters
+  simulation
+    .alphaDecay(0.02) // Slower decay for smoother simulation
+    .velocityDecay(config.damping.base * config.damping.contextMultiplier);
+
+  // Disable automatic ticking since we control the simulation manually
+  simulation.stop();
+}
+
 // ==================== MESSAGE HANDLERS ====================
 
 /**
@@ -333,22 +416,35 @@ function handleInit(data: InitMessageData, messageId: string): void {
  * Handle graph update message
  */
 function handleUpdateGraph(data: UpdateGraphMessageData, messageId: string): void {
-  nodes = data.nodes.map(node => ({ ...node })); // Deep copy
-  links = data.links.map(link => ({ ...link }));
+  lastOperationTime = Date.now();
 
-  // Update physics state
-  if (physicsState) {
-    physicsState.nodeCount = nodes.length;
-    physicsState.linkCount = links.length;
+  try {
+    nodes = data.nodes.map(node => ({ ...node })); // Deep copy
+    links = data.links.map(link => ({ ...link }));
+
+    // Initialize D3 simulation with nodes and links
+    initializeD3Simulation();
+
+    // Update physics state
+    if (physicsState) {
+      physicsState.nodeCount = nodes.length;
+      physicsState.linkCount = links.length;
+    }
+
+    console.log(`🔬 Graph updated: ${nodes.length} nodes, ${links.length} links`);
+
+    postMessage({
+      type: 'graph_updated',
+      id: messageId,
+      data: { nodeCount: nodes.length, linkCount: links.length },
+    } as PhysicsWorkerResponse);
+  } catch (error) {
+    postMessage({
+      type: 'error',
+      id: messageId,
+      error: `Graph update failed: ${(error as Error).message}`,
+    } as PhysicsWorkerResponse);
   }
-
-  console.log(`🔬 Graph updated: ${nodes.length} nodes, ${links.length} links`);
-
-  postMessage({
-    type: 'graph_updated',
-    id: messageId,
-    data: { nodeCount: nodes.length, linkCount: links.length },
-  } as PhysicsWorkerResponse);
 }
 
 /**
@@ -373,42 +469,42 @@ function handleSimulateStep(data: SimulateStepMessageData, messageId: string): v
   lastFrameTime = currentTime;
   frameCount++;
 
-  // Run physics step
-  calculateLinkForces(deltaTime);
-  calculateRepulsionForces(deltaTime);
+  // Run D3 physics step for force calculations
+  if (simulation) {
+    simulation.tick();
+  }
+
+  // Apply custom behaviors
   applyTargetNodeMagnetism(deltaTime);
-  updatePositions(deltaTime);
   applyContextBehaviors(deltaTime);
 
-  // Emit position updates every few frames for performance
-  if (frameCount % 3 === 0) {
-    const positionsData: PositionsResponseData = {
-      nodes: nodes.map(node => ({
-        id: node.id,
-        x: node.x,
-        y: node.y,
-        size: node.adaptiveSize,
-        opacity: node.adaptiveOpacity,
-        glow: node.glowEffect,
-        animation: node.animationState,
-        pulseIntensity: node.pulseIntensity,
-      })),
-      links: links.map(link => ({
-        id: link.id,
-        opacity: link.adaptiveVisibility,
-        width: link.width,
-        flow: link.flowDirection,
-        animationSpeed: link.animationSpeed,
-      })),
-      timestamp: currentTime,
-    };
+  // Emit position updates every step for real-time updates
+  const positionsData: PositionsResponseData = {
+    nodes: nodes.map(node => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      size: node.adaptiveSize,
+      opacity: node.adaptiveOpacity,
+      glow: node.glowEffect,
+      animation: node.animationState,
+      pulseIntensity: node.pulseIntensity,
+    })),
+    links: links.map(link => ({
+      id: link.id,
+      opacity: link.adaptiveVisibility,
+      width: link.width,
+      flow: link.flowDirection,
+      animationSpeed: link.animationSpeed,
+    })),
+    timestamp: currentTime,
+  };
 
-    postMessage({
-      type: 'positions_updated',
-      id: messageId,
-      data: positionsData,
-    } as PhysicsWorkerResponse);
-  }
+  postMessage({
+    type: 'positions_updated',
+    id: messageId,
+    data: positionsData,
+  } as PhysicsWorkerResponse);
 
   postMessage({
     type: 'step_completed',

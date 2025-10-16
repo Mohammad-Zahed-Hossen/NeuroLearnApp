@@ -39,9 +39,9 @@ export class ErrorReporterService {
    * Log an error with structured metadata
    */
   public logError(
-    service: string, 
-    message: string, 
-    level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' = 'ERROR', 
+    service: string,
+    message: string,
+    level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' = 'ERROR',
     metadata?: any,
     error?: Error
   ): void {
@@ -52,8 +52,8 @@ export class ErrorReporterService {
       level,
       message,
       traceId: this.generateTraceId(),
-      metadata,
-      stackTrace: error?.stack,
+      ...(metadata && { metadata }),
+      ...(error?.stack && { stackTrace: error.stack }),
       userContext: {
         sessionId: this.sessionId,
         // Add more user context as needed
@@ -61,10 +61,10 @@ export class ErrorReporterService {
     };
 
     this.addLogToStorage(errorLog);
-    
+
     // Also log to console in development
     if (__DEV__) {
-      const logMethod = level === 'ERROR' ? console.error : 
+      const logMethod = level === 'ERROR' ? console.error :
                        level === 'WARN' ? console.warn : console.log;
       logMethod(`[${service}] ${message}`, metadata || '');
     }
@@ -74,7 +74,7 @@ export class ErrorReporterService {
    * Get recent logs with optional filtering
    */
   public getRecentLogs(
-    limit: number = 50, 
+    limit: number = 50,
     filter?: {
       service?: string;
       level?: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
@@ -82,7 +82,7 @@ export class ErrorReporterService {
     }
   ): DiagnosticLog[] {
     let logs = this.getLogsFromStorage();
-    
+
     // Apply filters
     if (filter) {
       logs = logs.filter(log => {
@@ -92,7 +92,7 @@ export class ErrorReporterService {
         return true;
       });
     }
-    
+
     return logs.slice(0, limit);
   }
 
@@ -101,26 +101,29 @@ export class ErrorReporterService {
    */
   public async generateAnonymizedReport(): Promise<string> {
     const logs = this.getLogsFromStorage();
-    
+
     // System information (anonymized)
-    const systemInfo = {
+  const oldest = logs.length > 0 ? logs[logs.length - 1] : undefined;
+  const newest = logs.length > 0 ? logs[0] : undefined;
+
+  const systemInfo = {
       timestamp: new Date().toISOString(),
       sessionId: this.anonymizeId(this.sessionId),
       appVersion: '1.0.0', // Get from app config
       platform: 'react-native',
       logCount: logs.length,
-      
+
       // Log statistics
       errorCount: logs.filter(log => log.level === 'ERROR').length,
       warningCount: logs.filter(log => log.level === 'WARN').length,
       infoCount: logs.filter(log => log.level === 'INFO').length,
-      
+
       // Service breakdown
       services: this.getServiceBreakdown(logs),
-      
+
       // Time range
-      oldestLog: logs.length > 0 ? logs[logs.length - 1].timestamp : null,
-      newestLog: logs.length > 0 ? logs[0].timestamp : null,
+      oldestLog: oldest ? oldest.timestamp : null,
+      newestLog: newest ? newest.timestamp : null,
     };
 
     // Anonymize logs
@@ -161,7 +164,7 @@ export class ErrorReporterService {
   } {
     const logs = this.getLogsFromStorage();
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    
+
     const serviceCounts = logs.reduce((acc, log) => {
       acc[log.service] = (acc[log.service] || 0) + 1;
       return acc;
@@ -178,7 +181,7 @@ export class ErrorReporterService {
       warningCount: logs.filter(log => log.level === 'WARN').length,
       infoCount: logs.filter(log => log.level === 'INFO').length,
       topServices,
-      lastHourErrors: logs.filter(log => 
+      lastHourErrors: logs.filter(log =>
         log.level === 'ERROR' && new Date(log.timestamp) > oneHourAgo
       ).length,
     };
@@ -188,12 +191,12 @@ export class ErrorReporterService {
   private addLogToStorage(log: DiagnosticLog): void {
     const logs = this.getLogsFromStorage();
     logs.unshift(log);
-    
+
     // Implement circular buffer - keep only latest logs
     if (logs.length > this.maxLogs) {
       logs.splice(this.maxLogs);
     }
-    
+
     try {
       this.storage.set('logs', JSON.stringify(logs));
     } catch (error) {
@@ -205,7 +208,7 @@ export class ErrorReporterService {
     try {
       const logsJson = this.storage.getString('logs');
       if (!logsJson) return [];
-      
+
       const logs = JSON.parse(logsJson);
       // Ensure timestamps are Date objects
       return logs.map((log: any) => ({
@@ -235,9 +238,12 @@ export class ErrorReporterService {
 
   private anonymizeId(id: string): string {
     // Keep the prefix, hash the rest
+    if (!id || typeof id !== 'string') return '***INVALID_ID***';
     const parts = id.split('_');
     if (parts.length > 1) {
-      return `${parts}_***${parts[parts.length - 1].slice(-4)}`;
+      const prefix = parts.slice(0, parts.length - 1).join('_');
+      const suffix = parts[parts.length - 1] || '';
+      return `${prefix}_***${suffix.slice(-4)}`;
     }
     return `***${id.slice(-4)}`;
   }
@@ -268,12 +274,12 @@ export class ErrorReporterService {
       'email', 'phone', 'ssn', 'credit_card', 'userid', 'user_id',
       'session', 'cookie', 'jwt', 'bearer'
     ];
-    
+
     const anonymized = { ...metadata };
 
     const anonymizeValue = (obj: any, key: string): any => {
       if (typeof obj[key] === 'string') {
-        return sensitiveKeys.some(sensitive => 
+        return sensitiveKeys.some(sensitive =>
           key.toLowerCase().includes(sensitive)
         ) ? '***REDACTED***' : obj[key];
       } else if (typeof obj[key] === 'object' && obj[key] !== null) {

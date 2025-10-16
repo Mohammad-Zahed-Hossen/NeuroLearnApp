@@ -10,6 +10,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { GlassCard } from '../../components/GlassComponents';
 import AIInsightsService from '../../services/ai/AIInsightsService';
 import { supabase } from '../../services/storage/SupabaseService';
+import { StorageService } from '../../services/storage/StorageService';
+import useAuraStore from '../../store/useAuraStore';
 
 interface AIAssistantScreenProps {
   onBack?: () => void;
@@ -19,6 +21,8 @@ const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) => {
   const [loading, setLoading] = useState(true);
   const [question, setQuestion] = useState('');
   const [insights, setInsights] = useState<string[]>([]);
+  const [quickQuestions, setQuickQuestions] = useState<string[]>([]);
+  const { currentAuraState } = useAuraStore();
 
   const aiService = AIInsightsService.getInstance();
 
@@ -37,19 +41,117 @@ const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) => {
         user.id,
       );
       setInsights(combinedInsights);
+
+      // Generate dynamic questions based on user data
+      const dynamicQuestions = await generateDynamicQuestions(user.id);
+      setQuickQuestions(dynamicQuestions);
     } catch (error) {
       console.error('Error loading insights:', error);
+      // Fallback to default questions
+      setQuickQuestions([
+        'How is my learning progress?',
+        'What should I focus on today?',
+        'How can I improve my retention?',
+        'What are my cognitive patterns?',
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const quickQuestions = [
-    'How is my spending this month?',
-    'What are my health trends?',
-    'Give me financial advice',
-    'How can I improve my sleep?',
-  ];
+  const generateDynamicQuestions = async (userId: string): Promise<string[]> => {
+    try {
+      const storage = StorageService.getInstance();
+      const questions: string[] = [];
+
+      // Get user data to generate contextual questions
+      const flashcards = await storage.getFlashcards();
+      const focusSessions = await storage.getFocusSessions();
+      const contextAnalytics = await storage.getContextAnalytics(7);
+
+      // Generate questions based on flashcard data
+      if (flashcards.length > 0) {
+        const dueCards = flashcards.filter(card =>
+          card.nextReview && new Date(card.nextReview) <= new Date()
+        );
+        if (dueCards.length > 0) {
+          questions.push(`I have ${dueCards.length} cards due - what's my review strategy?`);
+        }
+
+        const difficultCards = flashcards.filter(card => card.difficulty && card.difficulty > 0.7);
+        if (difficultCards.length > 0) {
+          questions.push(`How can I improve my ${difficultCards.length} challenging cards?`);
+        }
+      }
+
+      // Generate questions based on focus sessions
+      if (focusSessions.length > 0) {
+        const recentSessions = focusSessions.slice(-7);
+        const avgFocus = recentSessions.reduce((sum, s) => sum + s.selfReportFocus, 0) / recentSessions.length;
+        if (avgFocus < 3) {
+          questions.push('My focus has been low lately - what can help?');
+        }
+
+        const avgDistractions = recentSessions.reduce((sum, s) => sum + s.distractionCount, 0) / recentSessions.length;
+        if (avgDistractions > 3) {
+          questions.push('How can I reduce my distractions during study?');
+        }
+      }
+
+      // Generate questions based on current aura state
+      if (currentAuraState) {
+        switch (currentAuraState.context) {
+          case 'DeepFocus':
+            questions.push('I\'m in deep focus - what challenging topic should I tackle?');
+            break;
+          case 'CreativeFlow':
+            questions.push('I\'m feeling creative - how can I explore new connections?');
+            break;
+          case 'FragmentedAttention':
+            questions.push('My attention is fragmented - what quick wins can I achieve?');
+            break;
+          case 'CognitiveOverload':
+            questions.push('I\'m feeling overwhelmed - how should I recover?');
+            break;
+        }
+      }
+
+      // Generate questions based on context analytics
+      if (contextAnalytics && contextAnalytics.optimalTimePatterns.length > 0) {
+        const bestTime = contextAnalytics.optimalTimePatterns[0];
+        if (bestTime) {
+          questions.push(`My best learning time is ${bestTime.hour}:00 - how can I optimize it?`);
+        }
+      }
+
+      // Ensure we have at least 4 questions, add defaults if needed
+      const defaultQuestions = [
+        'What\'s my learning progress this week?',
+        'How can I improve my study efficiency?',
+        'What topics need more attention?',
+        'How is my cognitive performance trending?',
+      ];
+
+      while (questions.length < 4) {
+        const defaultQ = defaultQuestions[questions.length];
+        if (defaultQ && !questions.includes(defaultQ)) {
+          questions.push(defaultQ);
+        } else {
+          break;
+        }
+      }
+
+      return questions.slice(0, 4); // Return max 4 questions
+    } catch (error) {
+      console.warn('Failed to generate dynamic questions:', error);
+      return [
+        'How is my learning progress?',
+        'What should I focus on today?',
+        'How can I improve my retention?',
+        'What are my cognitive patterns?',
+      ];
+    }
+  };
 
   const handleQuickQuestion = (q: string) => {
     setQuestion(q);
@@ -134,26 +236,35 @@ const AIAssistantScreen: React.FC<AIAssistantScreenProps> = ({ onBack }) => {
           )}
         </GlassCard>
 
-        {/* Quick Questions */}
+        {/* Dynamic Quick Questions */}
         <GlassCard theme="light" style={{ marginBottom: 24 }}>
           <Text style={{ marginBottom: 16, fontSize: 18, fontWeight: '600' }}>
-            Quick Questions
+            Personalized Questions
           </Text>
           <View>
-            {quickQuestions.map((q, index) => (
-              <TouchableOpacity
-                key={index}
-                onPress={() => handleQuickQuestion(q)}
-                style={{
-                  padding: 12,
-                  backgroundColor: 'rgba(255,255,255,0.5)',
-                  borderRadius: 16,
-                  marginBottom: 8,
-                }}
-              >
-                <Text style={{ color: '#4B5563' }}>{q}</Text>
-              </TouchableOpacity>
-            ))}
+            {quickQuestions.length > 0 ? (
+              quickQuestions.map((q, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => handleQuickQuestion(q)}
+                  style={{
+                    padding: 12,
+                    backgroundColor: 'rgba(255,255,255,0.5)',
+                    borderRadius: 16,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text style={{ color: '#4B5563' }}>{q}</Text>
+                </TouchableOpacity>
+              ))
+            ) : (
+              <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                <Icon name="loading" size={24} color="#8B5CF6" />
+                <Text style={{ marginTop: 8, color: '#6B7280' }}>
+                  Generating personalized questions...
+                </Text>
+              </View>
+            )}
           </View>
         </GlassCard>
 

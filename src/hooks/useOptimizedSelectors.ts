@@ -1,44 +1,70 @@
 /**
  * Optimized Store Selectors - Prevents unnecessary re-renders
  * These are ADDITIONS to your existing store, not replacements
+ * Integrated with useAuraStore for optimized state management
  */
 
+import { useMemo } from 'react';
 import { useAuraStore } from '../store/useAuraStore';
-
 // Simple selectors that prevent re-renders
-export const useAuraContext = () => 
+export const useAuraContext = () =>
   useAuraStore(state => state.currentAuraState?.context || null);
 
-export const useCognitiveLoad = () => 
+export const useCognitiveLoad = () =>
   useAuraStore(state => state.currentAuraState?.cognitiveLoad || 0.5);
 
-export const useAuraConfidence = () => 
+export const useAuraConfidence = () =>
   useAuraStore(state => state.currentAuraState?.confidence || 0.5);
 
-export const useIsLoading = () => 
+export const useIsLoading = () =>
   useAuraStore(state => state.isLoading);
 
-export const useIsRefreshing = () => 
+export const useIsRefreshing = () =>
   useAuraStore(state => state.isRefreshing);
 
 // Actions only (never cause re-renders)
-export const useAuraActions = () => 
-  useAuraStore(state => ({
-    refreshAura: state.refreshAura,
-    recordPerformance: state.recordPerformance,
-    clearError: state.clearError,
-    updateAuraState: state.updateAuraState,
-    startSession: state.startSession,
-    endSession: state.endSession,
-  }));
+export const useAuraActions = () =>
+  useAuraStore(
+    (state) => ({
+      refreshAura: state.refreshAura,
+      recordPerformance: state.recordPerformance,
+      clearError: state.clearError,
+      updateAuraState: state.updateAuraState,
+      startSession: state.startSession,
+      endSession: state.endSession,
+    })
+  );
 
 // Performance-optimized selectors for neural canvas
-export const useNeuralCanvasData = () => 
-  useAuraStore(state => ({
-    cognitiveLoad: state.currentAuraState?.cognitiveLoad || 0.5,
-    context: state.currentAuraState?.context || null,
-    isRefreshing: state.isRefreshing,
-  }));
+export const useNeuralCanvasData = () =>
+  useMemo(() =>
+    useAuraStore((state) => ({
+      cognitiveLoad: state.currentAuraState?.cognitiveLoad || 0.5,
+      context: state.currentAuraState?.context || null,
+      isRefreshing: state.isRefreshing,
+    })), []
+  );
+
+// Additional optimized selectors for aura analytics and metrics
+export const useAuraAnalyticsOptimized = () =>
+  useMemo(() =>
+    useAuraStore((state) => ({
+      averageAccuracy: state.analytics.averageAccuracy,
+      averageCompletionRate: state.analytics.averageCompletionRate,
+      mostEffectiveContext: state.analytics.mostEffectiveContext,
+      performanceImprovement: state.analytics.performanceImprovement,
+    })), []
+  );
+
+export const useSessionMetricsOptimized = () =>
+  useMemo(() =>
+    useAuraStore((state) => ({
+      focusEfficiency: state.sessionMetrics.focusEfficiency,
+      currentStreak: state.sessionMetrics.currentStreak,
+      tasksCompleted: state.sessionMetrics.tasksCompleted,
+      duration: state.sessionMetrics.duration,
+    })), []
+  );
 
 // Dashboard-specific data - optimized with state management
 import { useState, useEffect } from 'react';
@@ -135,12 +161,14 @@ const calculateWeeklyProgress = (progress: any): number => {
 };
 
 // Focus screen data
-export const useFocusScreenData = () => 
-  useAuraStore(state => ({
-    cognitiveLoad: state.currentAuraState?.cognitiveLoad || 0.5,
-    focusEfficiency: state.sessionMetrics.focusEfficiency,
-    currentStreak: state.sessionMetrics.currentStreak,
-  }));
+export const useFocusScreenData = () =>
+  useMemo(() =>
+    useAuraStore((state) => ({
+      cognitiveLoad: state.currentAuraState?.cognitiveLoad || 0.5,
+      focusEfficiency: state.sessionMetrics.focusEfficiency,
+      currentStreak: state.sessionMetrics.currentStreak,
+    })), []
+  );
 
 export default {
   useAuraContext,
@@ -150,6 +178,8 @@ export default {
   useIsRefreshing,
   useAuraActions,
   useNeuralCanvasData,
+  useAuraAnalyticsOptimized,
+  useSessionMetricsOptimized,
   useDashboardData,
   useFocusScreenData,
 };

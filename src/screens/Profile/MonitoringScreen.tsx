@@ -1,10 +1,10 @@
 /**
  * MonitoringScreen.tsx - Complete Advanced Monitoring for NeuroLearn Orchestration Engine
- * 
+ *
  * The most sophisticated monitoring interface ever created for a learning app.
  * Combines real-time engine diagnostics, integration health monitoring, performance analytics,
  * and secure error sharing in one adaptive, intelligent dashboard.
- * 
+ *
  * Features:
  * - Real-time engine health monitoring with Service Ping System
  * - Integration status for Notion, Todoist, Supabase
@@ -17,7 +17,13 @@
  * - Zustand state management for reactive UI
  */
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from 'react';
 import {
   View,
   Text,
@@ -47,18 +53,25 @@ import * as Haptics from 'expo-haptics';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 // Core Engine
-import NeuroLearnEngine from '../../core/NeuroLearnEngine';
+import NeuroLearnEngine, {
+  getExistingNeuroLearnEngine,
+} from '../../core/NeuroLearnEngine';
+import EngineService from '../../services/EngineService';
 import { EventSystem, EVENT_TYPES } from '../../core/EventSystem';
 
 // Services
 import SupabaseService from '../../services/storage/SupabaseService';
 import TodoistService from '../../services/integrations/TodoistService';
 import NotionSyncService from '../../services/integrations/NotionSyncService';
-import {ErrorReporterService} from '../../services/monitoring/ErrorReporterService';
+import { ErrorReporterService } from '../../services/monitoring/ErrorReporterService';
 import PerformanceProfiler from '../../core/utils/PerformanceProfiler';
+import PerformanceMonitor from '../../utils/PerformanceMonitor';
+import MMKVStorageService from '../../services/storage/MMKVStorageService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Components
-import  {GlassCard}  from '../../components/GlassComponents';
+import { GlassCard } from '../../components/GlassComponents';
+import StorageMonitoringScreen from '../Monitoring/StorageMonitoringScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -97,14 +110,21 @@ interface DiagnosticLog {
   id: string;
   timestamp: Date;
   service: string;
-  level: 'ERROR' | 'WARN' | 'INFO';
+  level: 'ERROR' | 'WARN' | 'INFO' | 'DEBUG';
   message: string;
   traceId: string;
   metadata?: Record<string, any>;
 }
 
+interface StorageMetrics {
+  mmkvSize: number;
+  cacheSize: number;
+  totalSize: number;
+  lastCleanup: Date;
+}
+
 // Tab types
-type TabType = 'engine' | 'integrations' | 'performance' | 'logs';
+type TabType = 'engine' | 'integrations' | 'performance' | 'storage' | 'logs';
 
 // Status color mappings
 const STATUS_COLORS = {
@@ -122,17 +142,27 @@ export const MonitoringScreen: React.FC<{
   const [activeTab, setActiveTab] = useState<TabType>('engine');
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-  
+
   // Animation values
   const headerGlow = useSharedValue(1);
   const tabIndicator = useSharedValue(0);
-  
+  const backButtonScale = useSharedValue(1);
+  const autoRefreshScale = useSharedValue(1);
+  const refreshScale = useSharedValue(1);
+  const tabScale = useSharedValue(1);
+  const shareScale = useSharedValue(1);
+
   // Refs
   const autoRefreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const queryClient = useQueryClient();
-  
-  // Engine instance
-  const engine = NeuroLearnEngine.getInstance();
+
+  // Engine instance (use safe accessor to avoid throwing if not initialized yet)
+  let engine = getExistingNeuroLearnEngine();
+  if (!engine) {
+    // Try to get from EngineService which will initialize if needed elsewhere
+    const engineService = EngineService.getInstance();
+    engine = engineService.getEngine() as any;
+  }
 
   // React Query hooks for data fetching with aggressive caching
   const {
@@ -147,6 +177,7 @@ export const MonitoringScreen: React.FC<{
     staleTime: 15000, // Consider data stale after 15 seconds
     gcTime: 60000, // Keep in cache for 1 minute
     retry: 2,
+    refetchIntervalInBackground: true, // Enable background updates
   });
 
   const {
@@ -157,10 +188,11 @@ export const MonitoringScreen: React.FC<{
   } = useQuery<IntegrationStatus[], Error>({
     queryKey: ['integration-health'],
     queryFn: fetchIntegrationHealthStatus,
-    refetchInterval: 5 * 60 * 1000, // 5 minutes (Service Ping System)
+    refetchInterval: 2 * 60 * 1000, // Reduced to 2 minutes for better real-time feel
     staleTime: 60 * 1000, // 1 minute
     gcTime: 10 * 60 * 1000, // 10 minutes
     retry: 3,
+    refetchIntervalInBackground: true, // Enable background updates
   });
 
   const {
@@ -170,9 +202,10 @@ export const MonitoringScreen: React.FC<{
   } = useQuery<PerformanceMetrics, Error>({
     queryKey: ['performance-metrics'],
     queryFn: fetchPerformanceMetrics,
-    refetchInterval: 1000, // Real-time updates every second
-    staleTime: 500, // Very fresh data
-    gcTime: 30000, // 30 seconds cache
+    refetchInterval: 5000, // Reduced from 1s to 5s for better performance
+    staleTime: 2000, // Increased stale time
+    gcTime: 60000, // 1 minute cache
+    refetchIntervalInBackground: true, // Enable background updates
   });
 
   const {
@@ -185,19 +218,41 @@ export const MonitoringScreen: React.FC<{
     refetchInterval: 10000, // 10 seconds
     staleTime: 5000,
     gcTime: 60000,
+    refetchIntervalInBackground: true, // Enable background updates
+  });
+
+  const {
+    data: storageMetrics,
+    isLoading: storageLoading,
+    refetch: refetchStorage,
+  } = useQuery<StorageMetrics, Error>({
+    queryKey: ['storage-metrics'],
+    queryFn: fetchStorageMetrics,
+    refetchInterval: 60000, // 1 minute
+    staleTime: 30000,
+    gcTime: 300000, // 5 minutes
+    refetchIntervalInBackground: true, // Enable background updates
   });
 
   // Data fetching functions
   async function fetchEngineHealthStatus(): Promise<EngineHealthStatus> {
     try {
+      if (!engine) throw new Error('Engine not available');
+
       const status = engine.getStatus();
-      const caeResult = await engine.execute('system:calculate', { type: 'cae-quality-assurance' });
+      const caeResult = await engine.execute('system:calculate', {
+        type: 'cae-quality-assurance',
+      });
       const cacheStatus = await engine.execute('storage:get-cache-status');
       const workerStatus = await engine.execute('system:get-worker-status');
-      
+
       // Calculate overall status based on multiple factors
-      const overallStatus = determineOverallStatus(status, caeResult, workerStatus);
-      
+      const overallStatus = determineOverallStatus(
+        status,
+        caeResult,
+        workerStatus,
+      );
+
       return {
         overallStatus,
         caeQuality: caeResult?.data?.quality || 'unknown',
@@ -209,6 +264,7 @@ export const MonitoringScreen: React.FC<{
       };
     } catch (error) {
       console.error('Engine health fetch failed:', error);
+      // If engine isn't available, return degraded health instead of throwing
       return {
         overallStatus: '🔴',
         caeQuality: 'error',
@@ -223,14 +279,14 @@ export const MonitoringScreen: React.FC<{
 
   async function fetchIntegrationHealthStatus(): Promise<IntegrationStatus[]> {
     const results: IntegrationStatus[] = [];
-    
+
     // Supabase health check
     try {
       const startTime = Date.now();
       const supabaseService = SupabaseService.getInstance();
       await supabaseService.checkConnectionAndLatency();
       const latency = Date.now() - startTime;
-      
+
       results.push({
         service: 'Supabase',
         status: latency < 500 ? '🟢' : latency < 1000 ? '🟡' : '🔴',
@@ -258,7 +314,7 @@ export const MonitoringScreen: React.FC<{
       const todoistService = TodoistService.getInstance();
       await todoistService.checkConnectionAndLatency();
       const latency = Date.now() - startTime;
-      
+
       results.push({
         service: 'Todoist',
         status: latency < 1000 ? '🟢' : latency < 2000 ? '🟡' : '🔴',
@@ -286,7 +342,7 @@ export const MonitoringScreen: React.FC<{
       const notionService = NotionSyncService.getInstance();
       await notionService.checkConnectionAndLatency();
       const latency = Date.now() - startTime;
-      
+
       results.push({
         service: 'Notion',
         status: latency < 1000 ? '🟢' : latency < 2000 ? '🟡' : '🔴',
@@ -313,7 +369,7 @@ export const MonitoringScreen: React.FC<{
 
   async function fetchPerformanceMetrics(): Promise<PerformanceMetrics> {
     const profiler = PerformanceProfiler.getInstance();
-    
+
     return {
       fps: profiler.getFPS() || 60,
       jsThreadTime: profiler.getJSThreadTime() || 16,
@@ -330,9 +386,25 @@ export const MonitoringScreen: React.FC<{
     return errorReporter.getRecentLogs(50);
   }
 
+  async function fetchStorageMetrics(): Promise<StorageMetrics> {
+    const mmkvService = MMKVStorageService;
+
+    return {
+      mmkvSize: await mmkvService.getStorageSize(),
+      cacheSize: await mmkvService.getCacheSize(),
+      totalSize: await mmkvService.getTotalSize(),
+      lastCleanup: await mmkvService.getLastCleanupTime(),
+    };
+  }
+
   // Helper functions
-  function determineOverallStatus(status: any, caeResult: any, workerStatus: any): '🟢' | '🟡' | '🔴' {
-    if (!status.isInitialized || workerStatus?.data?.status === 'error') return '🔴';
+  function determineOverallStatus(
+    status: any,
+    caeResult: any,
+    workerStatus: any,
+  ): '🟢' | '🟡' | '🔴' {
+    if (!status.isInitialized || workerStatus?.data?.status === 'error')
+      return '🔴';
     if (status.activeOperations > 20 || !status.isOnline) return '🟡';
     return '🟢';
   }
@@ -340,7 +412,13 @@ export const MonitoringScreen: React.FC<{
   // Event handlers
   const handleTabChange = useCallback((tab: TabType) => {
     setActiveTab(tab);
-    const tabIndex = ['engine', 'integrations', 'performance', 'logs'].indexOf(tab);
+    const tabIndex = [
+      'engine',
+      'integrations',
+      'performance',
+      'storage',
+      'logs',
+    ].indexOf(tab);
     tabIndicator.value = withSpring(tabIndex);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
@@ -373,12 +451,12 @@ export const MonitoringScreen: React.FC<{
     try {
       const errorReporter = ErrorReporterService.getInstance();
       const anonymizedReport = await errorReporter.generateAnonymizedReport();
-      
+
       await Share.share({
         message: anonymizedReport,
         title: 'NeuroLearn Diagnostic Report',
       });
-      
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       Alert.alert('Error', 'Failed to generate diagnostic report');
@@ -412,77 +490,104 @@ export const MonitoringScreen: React.FC<{
     transform: [{ scale: headerGlow.value }],
   }));
 
+  // Back button animation style
+  const backButtonStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: backButtonScale.value }],
+  }));
+
+  // Auto refresh button animation style
+  const autoRefreshStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: autoRefreshScale.value }],
+  }));
+
+  // Refresh button animation style
+  const refreshStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: refreshScale.value }],
+  }));
+
+  // Tab animation style
+  const tabStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: tabScale.value }],
+  }));
+
+  // Share button animation style
+  const shareStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: shareScale.value }],
+  }));
+
   // Tab indicator style
   const tabIndicatorStyle = useAnimatedStyle(() => ({
     transform: [
       {
-        translateX: tabIndicator.value * (SCREEN_WIDTH / 4),
+        translateX: tabIndicator.value * (SCREEN_WIDTH / 5),
       },
     ],
   }));
 
-
   // Overall health status for header
 
   const overallHealthStatus = useMemo(() => {
-
     if (!engineHealth || !integrationHealth) return '🟡';
 
-
-
-    const hasRedStatus = [engineHealth.overallStatus, ...integrationHealth.map((i: IntegrationStatus) => i.status)]
-
-      .some(status => status === '🔴');
-
-
+    const hasRedStatus = [
+      engineHealth.overallStatus,
+      ...integrationHealth.map((i: IntegrationStatus) => i.status),
+    ].some((status) => status === '🔴');
 
     if (hasRedStatus) return '🔴';
 
-
-
-    const hasYellowStatus = [engineHealth.overallStatus, ...integrationHealth.map((i: IntegrationStatus) => i.status)]
-
-      .some(status => status === '🟡');
-
-
+    const hasYellowStatus = [
+      engineHealth.overallStatus,
+      ...integrationHealth.map((i: IntegrationStatus) => i.status),
+    ].some((status) => status === '🟡');
 
     return hasYellowStatus ? '🟡' : '🟢';
-
   }, [engineHealth, integrationHealth]);
-
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
-      
+
       {/* Header */}
       <Animated.View style={[styles.header, headerStyle]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        
+        <Animated.View style={[styles.backButton, backButtonStyle]}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backButtonText}>←</Text>
+          </TouchableOpacity>
+        </Animated.View>
+
         <View style={styles.headerContent}>
           <Text style={styles.screenTitle}>System Monitor</Text>
           <View style={styles.statusBadge}>
             <Text style={styles.statusIcon}>{overallHealthStatus}</Text>
             <Text style={styles.statusText}>
-              {overallHealthStatus === '🟢' ? 'Healthy' : 
-               overallHealthStatus === '🟡' ? 'Warning' : 'Critical'}
+              {overallHealthStatus === '🟢'
+                ? 'Healthy'
+                : overallHealthStatus === '🟡'
+                ? 'Warning'
+                : 'Critical'}
             </Text>
           </View>
         </View>
-        
+
         <View style={styles.headerActions}>
-          <TouchableOpacity 
-            onPress={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
-            style={[styles.autoRefreshButton, autoRefreshEnabled && styles.autoRefreshActive]}
-          >
-            <Text style={styles.autoRefreshText}>AUTO</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity onPress={handleForceRefresh} style={styles.refreshButton}>
-            <Text style={styles.refreshButtonText}>⟳</Text>
-          </TouchableOpacity>
+          <Animated.View style={[styles.autoRefreshButton, autoRefreshStyle]}>
+            <TouchableOpacity
+              onPress={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+              style={[
+                styles.autoRefreshTouchable,
+                autoRefreshEnabled && styles.autoRefreshActive,
+              ]}
+            >
+              <Text style={styles.autoRefreshText}>AUTO</Text>
+            </TouchableOpacity>
+          </Animated.View>
+
+          <Animated.View style={[styles.refreshButton, refreshStyle]}>
+            <TouchableOpacity onPress={handleForceRefresh}>
+              <Text style={styles.refreshButtonText}>⟳</Text>
+            </TouchableOpacity>
+          </Animated.View>
         </View>
       </Animated.View>
 
@@ -491,14 +596,27 @@ export const MonitoringScreen: React.FC<{
         <View style={styles.tabBackground}>
           <Animated.View style={[styles.tabIndicator, tabIndicatorStyle]} />
         </View>
-        
-        {(['engine', 'integrations', 'performance', 'logs'] as TabType[]).map((tab) => (
+
+        {(
+          [
+            'engine',
+            'integrations',
+            'performance',
+            'storage',
+            'logs',
+          ] as TabType[]
+        ).map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && styles.activeTab]}
             onPress={() => handleTabChange(tab)}
           >
-            <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === tab && styles.activeTabText,
+              ]}
+            >
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
             </Text>
           </TouchableOpacity>
@@ -520,7 +638,7 @@ export const MonitoringScreen: React.FC<{
       >
         {activeTab === 'engine' && (
           <EngineTab
-            engineHealth={engineHealth}
+            {...(engineHealth !== undefined ? { engineHealth } : {})}
             loading={engineLoading}
             error={engineError}
             theme={theme}
@@ -529,7 +647,7 @@ export const MonitoringScreen: React.FC<{
 
         {activeTab === 'integrations' && (
           <IntegrationsTab
-            integrationHealth={integrationHealth}
+            {...(integrationHealth !== undefined ? { integrationHealth } : {})}
             loading={integrationsLoading}
             error={integrationError}
             theme={theme}
@@ -538,15 +656,19 @@ export const MonitoringScreen: React.FC<{
 
         {activeTab === 'performance' && (
           <PerformanceTab
-            performanceMetrics={performanceMetrics}
+            {...(performanceMetrics !== undefined
+              ? { performanceMetrics }
+              : {})}
             loading={performanceLoading}
             theme={theme}
           />
         )}
 
+        {activeTab === 'storage' && <StorageMonitoringScreen theme={theme} />}
+
         {activeTab === 'logs' && (
           <LogsTab
-            diagnosticLogs={diagnosticLogs}
+            {...(diagnosticLogs !== undefined ? { diagnosticLogs } : {})}
             loading={logsLoading}
             onShareLogs={handleShareLogs}
             theme={theme}
@@ -594,26 +716,30 @@ const EngineTab: React.FC<{
             <Text style={styles.statusIcon}>{engineHealth.overallStatus}</Text>
           </View>
         </View>
-        
+
         <View style={styles.metricsGrid}>
           <View style={styles.metric}>
             <Text style={styles.metricLabel}>CAE Quality</Text>
             <Text style={styles.metricValue}>{engineHealth.caeQuality}</Text>
           </View>
-          
+
           <View style={styles.metric}>
             <Text style={styles.metricLabel}>Cache Keys</Text>
-            <Text style={styles.metricValue}>{engineHealth.activeCacheKeys}</Text>
+            <Text style={styles.metricValue}>
+              {engineHealth.activeCacheKeys}
+            </Text>
           </View>
-          
+
           <View style={styles.metric}>
             <Text style={styles.metricLabel}>Worker</Text>
             <Text style={styles.metricValue}>{engineHealth.workerStatus}</Text>
           </View>
-          
+
           <View style={styles.metric}>
             <Text style={styles.metricLabel}>Queue</Text>
-            <Text style={styles.metricValue}>{engineHealth.syncQueueLength}</Text>
+            <Text style={styles.metricValue}>
+              {engineHealth.syncQueueLength}
+            </Text>
           </View>
         </View>
       </GlassCard>
@@ -623,14 +749,18 @@ const EngineTab: React.FC<{
         <Text style={styles.cardTitle}>Cognitive Load</Text>
         <View style={styles.progressContainer}>
           <View style={styles.progressBar}>
-            <View 
+            <View
               style={[
                 styles.progressFill,
-                { 
+                {
                   width: `${engineHealth.cognitiveLoad * 100}%`,
-                  backgroundColor: engineHealth.cognitiveLoad > 0.8 ? '#EF4444' : 
-                                   engineHealth.cognitiveLoad > 0.6 ? '#F59E0B' : '#10B981'
-                }
+                  backgroundColor:
+                    engineHealth.cognitiveLoad > 0.8
+                      ? '#EF4444'
+                      : engineHealth.cognitiveLoad > 0.6
+                      ? '#F59E0B'
+                      : '#10B981',
+                },
               ]}
             />
           </View>
@@ -669,11 +799,17 @@ const IntegrationsTab: React.FC<{
   return (
     <View style={styles.tabContent}>
       {integrationHealth.map((integration, index) => (
-        <GlassCard key={integration.service} theme={theme} style={styles.integrationCard}>
+        <GlassCard
+          key={integration.service}
+          theme={theme}
+          style={styles.integrationCard}
+        >
           <View style={styles.integrationHeader}>
             <View>
               <Text style={styles.integrationName}>{integration.service}</Text>
-              <Text style={styles.integrationMessage}>{integration.message}</Text>
+              <Text style={styles.integrationMessage}>
+                {integration.message}
+              </Text>
             </View>
 
             <View style={styles.integrationStatus}>
@@ -685,10 +821,12 @@ const IntegrationsTab: React.FC<{
           <View style={styles.integrationDetails}>
             <View style={styles.detailItem}>
               <Text style={styles.detailLabel}>Token Valid</Text>
-              <Text style={[
-                styles.detailValue,
-                { color: integration.tokenValid ? '#10B981' : '#EF4444' }
-              ]}>
+              <Text
+                style={[
+                  styles.detailValue,
+                  { color: integration.tokenValid ? '#10B981' : '#EF4444' },
+                ]}
+              >
                 {integration.tokenValid ? 'Yes' : 'No'}
               </Text>
             </View>
@@ -696,10 +834,9 @@ const IntegrationsTab: React.FC<{
             <View style={styles.detailItem}>
               <Text style={styles.detailLabel}>Last Sync</Text>
               <Text style={styles.detailValue}>
-                {integration.lastSync ?
-                  new Date(integration.lastSync).toLocaleTimeString() :
-                  'Never'
-                }
+                {integration.lastSync
+                  ? new Date(integration.lastSync).toLocaleTimeString()
+                  : 'Never'}
               </Text>
             </View>
 
@@ -734,45 +871,293 @@ const PerformanceTab: React.FC<{
     <View style={styles.tabContent}>
       <GlassCard theme={theme} style={styles.performanceCard}>
         <Text style={styles.cardTitle}>Real-Time Metrics</Text>
-        
+
         <View style={styles.performanceGrid}>
           <View style={styles.performanceMetric}>
-            <Text style={styles.performanceValue}>{Math.round(performanceMetrics.fps)}</Text>
+            <Text style={styles.performanceValue}>
+              {Math.round(performanceMetrics.fps)}
+            </Text>
             <Text style={styles.performanceLabel}>FPS</Text>
-            <View style={[
-              styles.performanceIndicator,
-              { backgroundColor: performanceMetrics.fps > 55 ? '#10B981' : performanceMetrics.fps > 30 ? '#F59E0B' : '#EF4444' }
-            ]} />
+            <View
+              style={[
+                styles.performanceIndicator,
+                {
+                  backgroundColor:
+                    performanceMetrics.fps > 55
+                      ? '#10B981'
+                      : performanceMetrics.fps > 30
+                      ? '#F59E0B'
+                      : '#EF4444',
+                },
+              ]}
+            />
           </View>
-          
+
           <View style={styles.performanceMetric}>
-            <Text style={styles.performanceValue}>{Math.round(performanceMetrics.jsThreadTime)}</Text>
+            <Text style={styles.performanceValue}>
+              {Math.round(performanceMetrics.jsThreadTime)}
+            </Text>
             <Text style={styles.performanceLabel}>JS Thread (ms)</Text>
-            <View style={[
-              styles.performanceIndicator,
-              { backgroundColor: performanceMetrics.jsThreadTime < 16 ? '#10B981' : performanceMetrics.jsThreadTime < 33 ? '#F59E0B' : '#EF4444' }
-            ]} />
+            <View
+              style={[
+                styles.performanceIndicator,
+                {
+                  backgroundColor:
+                    performanceMetrics.jsThreadTime < 16
+                      ? '#10B981'
+                      : performanceMetrics.jsThreadTime < 33
+                      ? '#F59E0B'
+                      : '#EF4444',
+                },
+              ]}
+            />
           </View>
-          
+
           <View style={styles.performanceMetric}>
-            <Text style={styles.performanceValue}>{Math.round(performanceMetrics.memoryUsage)}</Text>
+            <Text style={styles.performanceValue}>
+              {Math.round(performanceMetrics.memoryUsage)}
+            </Text>
             <Text style={styles.performanceLabel}>Memory (MB)</Text>
-            <View style={[
-              styles.performanceIndicator,
-              { backgroundColor: performanceMetrics.memoryUsage < 100 ? '#10B981' : performanceMetrics.memoryUsage < 200 ? '#F59E0B' : '#EF4444' }
-            ]} />
+            <View
+              style={[
+                styles.performanceIndicator,
+                {
+                  backgroundColor:
+                    performanceMetrics.memoryUsage < 100
+                      ? '#10B981'
+                      : performanceMetrics.memoryUsage < 200
+                      ? '#F59E0B'
+                      : '#EF4444',
+                },
+              ]}
+            />
           </View>
-          
+
           <View style={styles.performanceMetric}>
-            <Text style={styles.performanceValue}>{Math.round(performanceMetrics.batteryLevel * 100)}</Text>
+            <Text style={styles.performanceValue}>
+              {Math.round(performanceMetrics.batteryLevel * 100)}
+            </Text>
             <Text style={styles.performanceLabel}>Battery %</Text>
-            <View style={[
-              styles.performanceIndicator,
-              { backgroundColor: performanceMetrics.batteryLevel > 0.2 ? '#10B981' : '#EF4444' }
-            ]} />
+            <View
+              style={[
+                styles.performanceIndicator,
+                {
+                  backgroundColor:
+                    performanceMetrics.batteryLevel > 0.2
+                      ? '#10B981'
+                      : '#EF4444',
+                },
+              ]}
+            />
           </View>
         </View>
       </GlassCard>
+
+      {/* Recent telemetry markers (morph start/end etc.) */}
+      <GlassCard theme={theme} style={styles.markersCard}>
+        <Text style={styles.cardTitle}>Recent Telemetry Markers</Text>
+        {/* Aggregated frame-drops summary */}
+        <FrameDropsSummary />
+        <MarkersList />
+        <DeadLettersPanel />
+      </GlassCard>
+    </View>
+  );
+};
+
+const FrameDropsSummary: React.FC = () => {
+  const [drops, setDrops] = React.useState<number>(0);
+  useEffect(() => {
+    const perf = PerformanceMonitor.getInstance();
+    const hist = perf.getMetricsHistory();
+    const totalDrops = hist.reduce(
+      (s, m) =>
+        s +
+        (m.lastMarker
+          ? m.lastMarker.payload?.metrics?.frameDrops || 0
+          : m.markers
+          ? m.markers.reduce(
+              (ss: any, mm: any) => ss + (mm.payload?.metrics?.frameDrops || 0),
+              0,
+            )
+          : 0),
+      0 as any,
+    );
+    setDrops(totalDrops);
+  }, []);
+  return (
+    <View style={{ marginVertical: 8 }}>
+      <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
+        Estimated frame-drops (recent window): {drops}
+      </Text>
+    </View>
+  );
+};
+
+const DeadLettersPanel: React.FC = () => {
+  const [deadLetters, setDeadLetters] = React.useState<any[]>([]);
+
+  const loadDeadLetters = async () => {
+    try {
+      const raw = await AsyncStorage.getItem('@neurolearn:dead_letters_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setDeadLetters(parsed);
+        else setDeadLetters([]);
+      } else {
+        setDeadLetters([]);
+      }
+    } catch (e) {
+      setDeadLetters([]);
+    }
+  };
+
+  useEffect(() => {
+    loadDeadLetters();
+  }, []);
+
+  const removeDead = async (id: string) => {
+    try {
+      const filtered = deadLetters.filter((d) => d.id !== id);
+      await AsyncStorage.setItem(
+        '@neurolearn:dead_letters_v1',
+        JSON.stringify(filtered),
+      );
+      setDeadLetters(filtered);
+    } catch (e) {}
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard?.writeText?.(text);
+      Alert.alert('Copied', 'Message content copied to clipboard');
+    } catch (e) {
+      try {
+        await AsyncStorage.setItem('@neurolearn:last_copied_dead_letter', text);
+        Alert.alert('Saved', 'Message content saved to a local store');
+      } catch {}
+    }
+  };
+
+  if (deadLetters.length === 0) return null;
+
+  return (
+    <View style={{ marginTop: 12 }}>
+      <Text style={{ color: '#FFFFFF', fontSize: 14, marginBottom: 8 }}>
+        Failed Outgoing Messages ({deadLetters.length})
+      </Text>
+      {deadLetters.slice(0, 10).map((d) => (
+        <View
+          key={d.id}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginBottom: 6,
+          }}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#9CA3AF', fontSize: 12 }} numberOfLines={2}>
+              {d.content}
+            </Text>
+            <Text style={{ color: '#6B7280', fontSize: 11 }}>
+              Attempts: {d.attempts || 0}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => copyToClipboard(d.content)}
+            style={{ marginLeft: 8 }}
+          >
+            <Text style={{ color: '#6366F1' }}>Copy</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => removeDead(d.id)}
+            style={{ marginLeft: 8 }}
+          >
+            <Text style={{ color: '#EF4444' }}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+    </View>
+  );
+};
+
+const MarkersList: React.FC = () => {
+  const [markers, setMarkers] = React.useState<any[]>([]);
+
+  useEffect(() => {
+    const perf = PerformanceMonitor.getInstance();
+
+    // initial load from history (most recent first)
+    try {
+      const history = perf.getMetricsHistory();
+      const extracted: any[] = [];
+      for (let i = history.length - 1; i >= 0 && extracted.length < 50; i--) {
+        const entry: any = history[i] as any;
+        if (entry.markers && Array.isArray(entry.markers)) {
+          for (
+            let j = entry.markers.length - 1;
+            j >= 0 && extracted.length < 50;
+            j--
+          ) {
+            extracted.push(entry.markers[j]);
+          }
+        }
+        if (entry.lastMarker) extracted.push(entry.lastMarker);
+      }
+      setMarkers(extracted.slice(0, 50));
+    } catch (e) {
+      setMarkers([]);
+    }
+
+    // subscribe for live markers
+    const unsubscribe = perf.addMarkerListener((m: any) => {
+      setMarkers((prev) => [m, ...prev].slice(0, 50));
+    });
+
+    return () => {
+      try {
+        unsubscribe();
+      } catch (e) {}
+    };
+  }, []);
+
+  if (markers.length === 0) {
+    return (
+      <Text style={{ color: '#9CA3AF', marginTop: 8 }}>No markers yet</Text>
+    );
+  }
+
+  return (
+    <View style={{ marginTop: 8 }}>
+      {markers.map((m, idx) => (
+        <View
+          key={idx}
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            paddingVertical: 6,
+            borderBottomWidth: 1,
+            borderBottomColor: 'rgba(255,255,255,0.03)',
+          }}
+        >
+          <View style={{ flexDirection: 'column' }}>
+            <Text style={{ color: '#FFFFFF', fontSize: 12 }}>
+              {m.event || m.name || 'marker'}
+            </Text>
+            {m.payload?.metrics && (
+              <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 2 }}>
+                FPS: {Math.round(m.payload.metrics.fps || 0)} • Drops:{' '}
+                {m.payload.metrics.frameDrops ?? 0} • CPU:{' '}
+                {Math.round((m.payload.metrics.cpuUsage || 0) * 100)}% • Bat:{' '}
+                {Math.round((m.payload.metrics.batteryLevel || 0) * 100)}%
+              </Text>
+            )}
+          </View>
+          <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
+            {new Date(m.timestamp || m.ts || Date.now()).toLocaleTimeString()}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 };
@@ -795,20 +1180,29 @@ const LogsTab: React.FC<{
   const renderLogItem = ({ item }: { item: DiagnosticLog }) => (
     <View style={styles.logItem}>
       <View style={styles.logHeader}>
-        <View style={[
-          styles.logLevelBadge,
-          { backgroundColor: item.level === 'ERROR' ? '#EF4444' : item.level === 'WARN' ? '#F59E0B' : '#6366F1' }
-        ]}>
+        <View
+          style={[
+            styles.logLevelBadge,
+            {
+              backgroundColor:
+                item.level === 'ERROR'
+                  ? '#EF4444'
+                  : item.level === 'WARN'
+                  ? '#F59E0B'
+                  : '#6366F1',
+            },
+          ]}
+        >
           <Text style={styles.logLevelText}>{item.level}</Text>
         </View>
         <Text style={styles.logTimestamp}>
           {new Date(item.timestamp).toLocaleTimeString()}
         </Text>
       </View>
-      
+
       <Text style={styles.logService}>{item.service}</Text>
       <Text style={styles.logMessage}>{item.message}</Text>
-      
+
       {item.metadata && (
         <Text style={styles.logTrace}>Trace: {item.traceId}</Text>
       )}
@@ -828,7 +1222,7 @@ const LogsTab: React.FC<{
           Persistent error feed (last 50 entries)
         </Text>
       </GlassCard>
-      
+
       {diagnosticLogs && diagnosticLogs.length > 0 ? (
         <FlatList
           data={diagnosticLogs}
@@ -868,6 +1262,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+
   backButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
@@ -911,6 +1306,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(99, 102, 241, 0.3)',
     borderColor: 'rgba(99, 102, 241, 0.5)',
   },
+  autoRefreshTouchable: {},
   autoRefreshText: {
     color: '#FFFFFF',
     fontSize: 10,
@@ -926,6 +1322,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.3)',
   },
+  refreshTouchable: {},
   refreshButtonText: {
     color: '#6366F1',
     fontSize: 18,
@@ -1109,6 +1506,10 @@ const styles = StyleSheet.create({
   performanceCard: {
     padding: 20,
   },
+  markersCard: {
+    padding: 16,
+    marginTop: 12,
+  },
   performanceGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1228,4 +1629,3 @@ const styles = StyleSheet.create({
 });
 
 export default MonitoringScreen;
-

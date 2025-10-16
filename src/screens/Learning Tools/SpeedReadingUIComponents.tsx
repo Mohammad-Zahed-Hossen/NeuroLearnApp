@@ -40,7 +40,7 @@ import {
 
 interface ErrorBoundaryState {
   hasError: boolean;
-  error?: Error;
+  error: Error | null;
 }
 
 interface ErrorBoundaryProps {
@@ -55,7 +55,7 @@ interface ErrorBoundaryProps {
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null };
   }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
@@ -67,13 +67,18 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   retry = (): void => {
-    this.setState({ hasError: false, error: undefined });
+    this.setState({ hasError: false, error: null });
   };
 
   render(): React.ReactNode {
     if (this.state.hasError) {
       const FallbackComponent = this.props.fallback || DefaultErrorFallback;
-      return <FallbackComponent error={this.state.error} retry={this.retry} />;
+      // Only pass error when it's non-null to avoid Error | undefined type mismatch
+      return this.state.error ? (
+        <FallbackComponent error={this.state.error} retry={this.retry} />
+      ) : (
+        <FallbackComponent retry={this.retry} />
+      );
     }
 
     return this.props.children;
@@ -492,8 +497,17 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
   const [isCompleted, setIsCompleted] = useState(false);
   const themeColors = colors[theme];
 
-  const currentQuestion = quiz.questions[currentQuestionIndex];
-  const isLastQuestion = currentQuestionIndex === quiz.questions.length - 1;
+  const questions = quiz.questions ?? [];
+  const currentQuestion: QuizQuestion = ((questions[currentQuestionIndex] ??
+    questions[0]) as QuizQuestion) ?? {
+    id: 'default',
+    question: 'No questions available',
+    options: ['No options'],
+    correctAnswer: 0,
+    difficulty: 1,
+    conceptTested: 'general',
+  };
+  const isLastQuestion = currentQuestionIndex === questions.length - 1;
 
   // Timer
   useEffect(() => {
@@ -542,10 +556,11 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
 
     // Calculate score
     const correctCount = answers.reduce((count, answer, index) => {
-      return count + (answer === quiz.questions[index].correctAnswer ? 1 : 0);
+      const q = questions[index];
+      return count + (q && answer === q.correctAnswer ? 1 : 0);
     }, 0);
 
-    const score = correctCount / quiz.questions.length;
+    const score = questions.length > 0 ? correctCount / questions.length : 0;
     onComplete(score, answers);
   };
 
@@ -556,7 +571,8 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
 
   if (isCompleted) {
     const correctCount = answers.reduce((count, answer, index) => {
-      return count + (answer === quiz.questions[index].correctAnswer ? 1 : 0);
+      const q = questions[index];
+      return count + (q && answer === q.correctAnswer ? 1 : 0);
     }, 0);
 
     return (
@@ -575,16 +591,18 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
 
           <View style={styles.scoreDisplay}>
             <Text style={[styles.scoreText, { color: themeColors.primary }]}>
-              {correctCount} / {quiz.questions.length}
+              {correctCount} / {questions.length}
             </Text>
             <Text style={[styles.scoreLabel, { color: themeColors.text }]}>
-              {Math.round((correctCount / quiz.questions.length) * 100)}%
-              Correct
+              {questions.length > 0
+                ? Math.round((correctCount / questions.length) * 100)
+                : 0}
+              % Correct
             </Text>
           </View>
 
           <ScrollView style={styles.resultsScroll}>
-            {quiz.questions.map((question, index) => {
+            {questions.map((question, index) => {
               const userAnswer = answers[index];
               const isCorrect = userAnswer === question.correctAnswer;
 
@@ -618,7 +636,7 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
                       <Text
                         style={[styles.answerText, { color: themeColors.text }]}
                       >
-                        {userAnswer >= 0
+                        {userAnswer !== undefined && userAnswer >= 0
                           ? question.options[userAnswer]
                           : 'No answer'}
                       </Text>
@@ -694,7 +712,7 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
 
           <View style={styles.quizProgress}>
             <Text style={[styles.progressLabel, { color: themeColors.text }]}>
-              Question {currentQuestionIndex + 1} of {quiz.questions.length}
+              Question {currentQuestionIndex + 1} of {questions.length}
             </Text>
             <Text style={[styles.timerText, { color: themeColors.accent }]}>
               ⏱️ {timeRemaining}s
@@ -704,11 +722,11 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
 
         <ScrollView style={styles.questionContainer}>
           <Text style={[styles.questionText, { color: themeColors.text }]}>
-            {currentQuestion.question}
+            {currentQuestion?.question ?? 'Question'}
           </Text>
 
           <View style={styles.optionsContainer}>
-            {currentQuestion.options.map((option, index) => {
+            {(currentQuestion.options || []).map((option, index) => {
               const isSelected = answers[currentQuestionIndex] === index;
 
               return (
@@ -749,8 +767,8 @@ export const ComprehensionQuizComponent: React.FC<ComprehensionQuizProps> = ({
                 { color: themeColors.textSecondary },
               ]}
             >
-              Difficulty: {'★'.repeat(currentQuestion.difficulty)}
-              {'☆'.repeat(5 - currentQuestion.difficulty)}
+              Difficulty: {'★'.repeat(currentQuestion.difficulty || 3)}
+              {'☆'.repeat(5 - (currentQuestion.difficulty || 3))}
             </Text>
           </View>
         </ScrollView>

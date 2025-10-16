@@ -77,7 +77,7 @@ export interface SourceLink {
 export interface ComprehensionQuiz {
   id: string;
   sessionId: string;
-  questions: QuizQuestion[];
+  questions?: QuizQuestion[];
   timeLimit?: number;
   created: Date;
 }
@@ -151,7 +151,7 @@ export class SpeedReadingService extends EventEmitter {
 
   // Session state
   private activeSession: ReadingSession | null = null;
-  private rsvpTimer: NodeJS.Timeout | null = null;
+  private rsvpTimer: number | NodeJS.Timeout | null = null;
   private currentWordIndex = 0;
   private sessionStartTime: Date | null = null;
   private pauseTime: Date | null = null;
@@ -267,13 +267,14 @@ export class SpeedReadingService extends EventEmitter {
    */
   private tokenizeText(text: string): string[] {
     // Split on whitespace but keep hyphenated words together
-    const words = text.split(/\s+/).filter(word => word.length > 0);
+  const words = text.split(/\s+/).filter((word): word is string => typeof word === 'string' && word.length > 0);
 
     // Post-process to handle special cases
     const processedWords: string[] = [];
 
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
+      if (!word || typeof word !== 'string') continue;
 
       // Handle contractions properly
       if (word.includes("'") && !word.endsWith("'s")) {
@@ -328,6 +329,7 @@ export class SpeedReadingService extends EventEmitter {
     const pauses: number[] = [];
 
     words.forEach((word, index) => {
+      if (!word) return;
       // Major punctuation requires longer pause
       if (/[.!?]$/.test(word)) {
         pauses.push(index);
@@ -351,6 +353,7 @@ export class SpeedReadingService extends EventEmitter {
     const difficultIndices: number[] = [];
 
     words.forEach((word, index) => {
+      if (!word) return;
       const cleanWord = word.replace(/[^\w]/g, '').toLowerCase();
 
       // Long words
@@ -384,7 +387,10 @@ export class SpeedReadingService extends EventEmitter {
     const concepts: string[] = [];
     const conceptWords = new Set<string>();
 
-    words.forEach(word => {
+    words.filter(word => word != null).forEach((word: string) => {
+      // Guard against empty words
+      if (word.trim().length === 0) return;
+
       const cleanWord = word.replace(/[^\w]/g, '').toLowerCase();
 
       // Skip very short words
@@ -1180,6 +1186,14 @@ export class SimpleSpeedReadingService {
 }
 
 // Export singleton instance
+export interface TextPreset {
+  id: string;
+  title: string;
+  content: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  wordCount: number;
+}
+
 export const speedReadingService = SpeedReadingService.getInstance();
 export const simpleSpeedReadingService = SimpleSpeedReadingService.getInstance();
 export default SpeedReadingService;

@@ -6,20 +6,18 @@
  * predictive analytics storage.
  */
 
-import HybridStorageService from './HybridStorageService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  Flashcard,
-  Task,
-  StudySession,
-  MemoryPalace,
-  ProgressData,
-  Settings,
-} from '../../types';
+import { HybridStorageService } from './HybridStorageService';
+import { SupabaseStorageService } from './SupabaseStorageService';
+import SupabaseService from './SupabaseService';
+import { PerformanceProfiler } from '../../core/utils/PerformanceProfiler';
+import { EventSystem } from '../../core/EventSystem';
+import { base64Encode, base64Decode } from '../../utils/base64';
 import { LogicStructure } from '../learning/MindMapGeneratorService';
 import { FSRSCard, FSRSReviewLog } from '../learning/SpacedRepetitionService';
 import { ReadingSession, SourceLink } from '../learning/SpeedReadingService';
 import { ContextSnapshot, TimeIntelligence, LocationContext, DigitalBodyLanguage } from '../ai/ContextSensorService';
+import { Flashcard, Settings, StudySession, ProgressData, Task, MemoryPalace } from '../../types';
 
 // ==================== CAE 2.0: Context Storage Interfaces ====================
 
@@ -164,6 +162,58 @@ export interface CognitiveLog {
   samples: CognitiveSample[];
   processedMetrics: ProcessedMetrics[];
   sessionStats: SessionStats;
+}
+
+/**
+ * User profile data for profile screen
+ */
+export interface UserProfile {
+  id: string;
+  name: string;
+  description: string;
+  avatar?: string; // URL or base64 data
+  email?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ==================== REQUEST CACHING INTERFACES ====================
+
+/**
+ * Cache entry with TTL and compression support
+ */
+export interface CacheEntry<T = any> {
+  key: string;
+  data: T;
+  timestamp: number; // Unix timestamp in milliseconds
+  ttl: number; // Time to live in milliseconds
+  compressed: boolean;
+  size: number; // Size in bytes
+  accessCount: number;
+  lastAccessed: number;
+  metadata: Record<string, any>;
+}
+
+/**
+ * Cache configuration
+ */
+export interface CacheConfig {
+  maxSize: number; // Maximum cache size in bytes
+  defaultTTL: number; // Default TTL in milliseconds
+  compressionThreshold: number; // Minimum size for compression in bytes
+  cleanupInterval: number; // Cleanup interval in milliseconds
+}
+
+/**
+ * Cache statistics
+ */
+export interface CacheStats {
+  totalEntries: number;
+  totalSize: number;
+  hitRate: number;
+  missRate: number;
+  compressionRatio: number;
+  lastCleanup: number;
 }
 
 // ==================== Existing Interfaces ====================
@@ -317,6 +367,24 @@ export interface SynapseData {
 export class StorageService {
   private static instance: StorageService;
   private hybridService: HybridStorageService | null = null;
+  // Request deduplication cache: key -> Promise
+  private requestCache: Map<string, Promise<any>> = new Map();
+
+  // ==================== REQUEST CACHING PROPERTIES ====================
+  private cache: Map<string, CacheEntry> = new Map();
+  private cacheConfig: CacheConfig = {
+    maxSize: 50 * 1024 * 1024, // 50MB default
+    defaultTTL: 5 * 60 * 1000, // 5 minutes
+    compressionThreshold: 1024, // 1KB
+    cleanupInterval: 10 * 60 * 1000, // 10 minutes
+  };
+  private cacheStats = {
+    totalHits: 0,
+    totalMisses: 0,
+    totalSize: 0,
+    lastCleanup: Date.now(),
+  };
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   public static getInstance(): StorageService {
     if (!StorageService.instance) {
@@ -327,6 +395,7 @@ export class StorageService {
 
   private constructor() {
     // Lazy initialization to avoid circular dependency
+    this.initializeCache();
   }
 
   private getHybridService(): HybridStorageService {
@@ -334,6 +403,319 @@ export class StorageService {
       this.hybridService = HybridStorageService.getInstance();
     }
     return this.hybridService;
+  }
+
+  // ==================== REQUEST CACHING METHODS ====================
+
+  /**
+   * Initialize the cache system
+   */
+  private initializeCache(): void {
+    // Load cached data from persistent storage
+    this.loadCacheFromStorage();
+
+    // Set up periodic cleanup
+    this.scheduleCleanup();
+  }
+
+  /**
+   * Load cache data from persistent storage
+   */
+  private async loadCacheFromStorage(): Promise<void> {
+    try {
+      const cachedData = await AsyncStorage.getItem('neurolearn_cache');
+      if (cachedData) {
+        const parsed = JSON.parse(cachedData);
+        if (parsed.entries && Array.isArray(parsed.entries)) {
+          parsed.entries.forEach((entry: CacheEntry) => {
+            // Only load non-expired entries
+            if (Date.now() < entry.timestamp + entry.ttl) {
+              this.cache.set(entry.key, entry);
+              this.cacheStats.totalSize += entry.size;
+            }
+          });
+        }
+        if (parsed.stats) {
+          this.cacheStats = { ...this.cacheStats, ...parsed.stats };
+        }
+      }
+    } catch (error) {
+      // Silently fail if cache loading fails
+      console.warn('Failed to load cache from storage:', error);
+    }
+  }
+
+  /**
+   * Save cache data to persistent storage
+   */
+  private async saveCacheToStorage(): Promise<void> {
+    try {
+      const entries = Array.from(this.cache.values());
+      const data = {
+        entries,
+        stats: this.cacheStats,
+        timestamp: Date.now(),
+      };
+      await AsyncStorage.setItem('neurolearn_cache', JSON.stringify(data));
+    } catch (error) {
+      console.warn('Failed to save cache to storage:', error);
+    }
+  }
+
+  /**
+   * Schedule periodic cache cleanup
+   */
+  private scheduleCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+    }
+    this.cleanupTimer = setInterval(() => {
+      this.performCacheCleanup();
+    }, this.cacheConfig.cleanupInterval);
+  }
+
+  /**
+   * Compress data using base64 encoding for large responses
+   */
+  private compressData(data: any): { compressed: string; originalSize: number } {
+    const jsonString = JSON.stringify(data);
+    const originalSize = jsonString.length;
+    const compressed = base64Encode(jsonString); // Simple base64 compression
+    return { compressed, originalSize };
+  }
+
+  /**
+   * Decompress data from base64
+   */
+  private decompressData(compressed: string): any {
+    try {
+      const jsonString = base64Decode(compressed);
+      return JSON.parse(jsonString);
+    } catch (error) {
+      throw new Error('Failed to decompress cache data');
+    }
+  }
+
+  /**
+   * Calculate size of data in bytes
+   */
+  private calculateSize(data: any): number {
+    return JSON.stringify(data).length;
+  }
+
+  /**
+   * Get cache entry with TTL check
+   */
+  private getCacheEntry<T>(key: string): CacheEntry<T> | null {
+    const entry = this.cache.get(key) as CacheEntry<T> | undefined;
+    if (!entry) {
+      this.cacheStats.totalMisses++;
+      return null;
+    }
+
+    // Check if entry has expired
+    if (Date.now() > entry.timestamp + entry.ttl) {
+      this.cache.delete(key);
+      this.cacheStats.totalSize -= entry.size;
+      this.cacheStats.totalMisses++;
+      return null;
+    }
+
+    // Update access statistics
+    entry.accessCount++;
+    entry.lastAccessed = Date.now();
+    this.cacheStats.totalHits++;
+
+    return entry;
+  }
+
+  /**
+   * Set cache entry with size management
+   */
+  private setCacheEntry<T>(key: string, data: T, ttl?: number, metadata?: Record<string, any>): void {
+    const size = this.calculateSize(data);
+    const shouldCompress = size > this.cacheConfig.compressionThreshold;
+
+    let processedData: any = data;
+    let compressed = false;
+
+    if (shouldCompress) {
+      try {
+        const compression = this.compressData(data);
+        processedData = compression.compressed;
+        compressed = true;
+      } catch (error) {
+        // Fallback to uncompressed if compression fails
+        console.warn('Cache compression failed, using uncompressed data');
+      }
+    }
+
+    const entry: CacheEntry<T> = {
+      key,
+      data: processedData,
+      timestamp: Date.now(),
+      ttl: ttl || this.cacheConfig.defaultTTL,
+      compressed,
+      size,
+      accessCount: 0,
+      lastAccessed: Date.now(),
+      metadata: metadata || {},
+    };
+
+    // Remove existing entry if present
+    const existing = this.cache.get(key);
+    if (existing) {
+      this.cacheStats.totalSize -= existing.size;
+    }
+
+    // Check if we need to evict entries to make room
+    if (this.cacheStats.totalSize + size > this.cacheConfig.maxSize) {
+      this.evictCacheEntries(size);
+    }
+
+    this.cache.set(key, entry);
+    this.cacheStats.totalSize += size;
+  }
+
+  /**
+   * Evict cache entries using LRU policy
+   */
+  private evictCacheEntries(requiredSpace: number): void {
+    const entries = Array.from(this.cache.entries());
+
+    // Sort by last accessed time (oldest first)
+    entries.sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
+
+    let freedSpace = 0;
+    for (const [key, entry] of entries) {
+      if (freedSpace >= requiredSpace) break;
+
+      this.cache.delete(key);
+      this.cacheStats.totalSize -= entry.size;
+      freedSpace += entry.size;
+    }
+  }
+
+  /**
+   * Perform cache cleanup (remove expired entries)
+   */
+  private performCacheCleanup(): void {
+    const now = Date.now();
+    let cleanedCount = 0;
+
+    for (const [key, entry] of this.cache.entries()) {
+      if (now > entry.timestamp + entry.ttl) {
+        this.cache.delete(key);
+        this.cacheStats.totalSize -= entry.size;
+        cleanedCount++;
+      }
+    }
+
+    this.cacheStats.lastCleanup = now;
+
+    // Save updated cache to storage
+    if (cleanedCount > 0) {
+      this.saveCacheToStorage();
+    }
+  }
+
+  /**
+   * Cache API response with TTL
+   */
+  async cacheApiResponse<T>(key: string, data: T, ttl?: number, metadata?: Record<string, any>): Promise<void> {
+    this.setCacheEntry(key, data, ttl, metadata);
+    // Persist cache changes
+    await this.saveCacheToStorage();
+  }
+
+  /**
+   * Get cached API response
+   */
+  async getCachedApiResponse<T>(key: string): Promise<T | null> {
+    const entry = this.getCacheEntry<T>(key);
+    if (!entry) return null;
+
+    try {
+      let data = entry.data;
+      if (entry.compressed) {
+        data = this.decompressData(entry.data as string);
+      }
+      return data;
+    } catch (error) {
+      // Remove corrupted entry
+      this.cache.delete(key);
+      this.cacheStats.totalSize -= entry.size;
+      return null;
+    }
+  }
+
+  /**
+   * Invalidate cache entry
+   */
+  async invalidateCacheEntry(key: string): Promise<void> {
+    const entry = this.cache.get(key);
+    if (entry) {
+      this.cache.delete(key);
+      this.cacheStats.totalSize -= entry.size;
+      await this.saveCacheToStorage();
+    }
+  }
+
+  /**
+   * Clear all cache entries
+   */
+  async clearCache(): Promise<void> {
+    this.cache.clear();
+    this.cacheStats.totalSize = 0;
+    this.cacheStats.totalHits = 0;
+    this.cacheStats.totalMisses = 0;
+    await AsyncStorage.removeItem('neurolearn_cache');
+  }
+
+  /**
+   * Get cache statistics
+   */
+  getCacheStats(): CacheStats {
+    const totalRequests = this.cacheStats.totalHits + this.cacheStats.totalMisses;
+    const hitRate = totalRequests > 0 ? this.cacheStats.totalHits / totalRequests : 0;
+    const missRate = totalRequests > 0 ? this.cacheStats.totalMisses / totalRequests : 0;
+
+    // Calculate compression ratio
+    let compressedSize = 0;
+    let originalSize = 0;
+    for (const entry of this.cache.values()) {
+      if (entry.compressed) {
+        compressedSize += JSON.stringify(entry.data).length;
+        originalSize += entry.size;
+      }
+    }
+    const compressionRatio = originalSize > 0 ? compressedSize / originalSize : 1;
+
+    return {
+      totalEntries: this.cache.size,
+      totalSize: this.cacheStats.totalSize,
+      hitRate,
+      missRate,
+      compressionRatio,
+      lastCleanup: this.cacheStats.lastCleanup,
+    };
+  }
+
+  /**
+   * Update cache configuration
+   */
+  updateCacheConfig(config: Partial<CacheConfig>): void {
+    this.cacheConfig = { ...this.cacheConfig, ...config };
+
+    // Reschedule cleanup if interval changed
+    if (config.cleanupInterval) {
+      this.scheduleCleanup();
+    }
+
+    // Trigger cleanup if max size reduced
+    if (config.maxSize && config.maxSize < this.cacheStats.totalSize) {
+      this.performCacheCleanup();
+    }
   }
 
   // ==================== CAE 2.0: CONTEXT STORAGE METHODS ====================
@@ -457,10 +839,10 @@ export class StorageService {
       totalSnapshots: snapshots.length,
       averageOptimality,
       optimalTimePatterns: Array.from(timePatterns.entries()).map(([key, data]) => {
-        const [hourStr, dayOfWeek] = key.split('_');
+        const [hourStr, dayOfWeekStr] = key.split('_');
         return {
-          hour: parseInt(hourStr),
-          dayOfWeek: parseInt(dayOfWeek),
+          hour: parseInt(hourStr || '0'),
+          dayOfWeek: parseInt(dayOfWeekStr || '0'),
           frequency: data.count,
           averageOptimality: data.optimality / data.count,
         };
@@ -499,10 +881,42 @@ export class StorageService {
   // rely on ad-hoc AsyncStorage keys can use the StorageService facade
   // instead of reaching into HybridStorageService directly.
   async getItem(key: string): Promise<any> {
-    return this.getHybridService().getItem(key);
+    // Check cache first for API responses
+    const cached = await this.getCachedApiResponse(key);
+    if (cached !== null) {
+      return cached;
+    }
+
+    // Request deduplication for read operations
+    const cacheKey = `getItem:${key}`;
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getItem(key);
+    this.requestCache.set(cacheKey, promise);
+
+    // Cache the result if it's an API response
+    promise.then(result => {
+      if (result !== null && result !== undefined) {
+        // Cache API responses with default TTL
+        this.cacheApiResponse(key, result);
+      }
+    });
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
   }
 
   async setItem(key: string, value: any): Promise<void> {
+    // Update cache if this is a cached API response
+    if (value !== null && value !== undefined) {
+      await this.cacheApiResponse(key, value);
+    }
     return this.getHybridService().setItem(key, value);
   }
 
@@ -667,7 +1081,21 @@ export class StorageService {
   }
 
   async getSettings(): Promise<Settings> {
-    return this.getHybridService().getSettings();
+    // Request deduplication for read operations
+    const cacheKey = 'getSettings';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getSettings();
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
   }
 
   // ==================== FLASHCARDS ====================
@@ -676,7 +1104,26 @@ export class StorageService {
   }
 
   async getFlashcards(): Promise<(Flashcard | Flashcard)[]> {
-    return this.getHybridService().getFlashcards() as Promise<(Flashcard | Flashcard)[]>;
+    // Request deduplication for read operations
+    const cacheKey = 'getFlashcards';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getFlashcards() as Promise<(Flashcard | Flashcard)[]>;
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
+  }
+
+  // Batch operation for multiple flashcards
+  async batchSaveFlashcards(flashcards: (Flashcard | Flashcard)[]): Promise<void> {
+    return this.getHybridService().saveFlashcards(flashcards);
   }
 
   // ==================== LOGIC NODES ====================
@@ -685,7 +1132,26 @@ export class StorageService {
   }
 
   async getLogicNodes(): Promise<LogicNode[]> {
-    return this.getHybridService().getLogicNodes();
+    // Request deduplication for read operations
+    const cacheKey = 'getLogicNodes';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getLogicNodes();
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
+  }
+
+  // Batch operation for multiple logic nodes
+  async batchSaveLogicNodes(nodes: LogicNode[]): Promise<void> {
+    return this.getHybridService().saveLogicNodes(nodes);
   }
 
   async addLogicNode(nodeData: Partial<LogicNode>): Promise<LogicNode | null> {
@@ -701,8 +1167,31 @@ export class StorageService {
     return this.getHybridService().saveFocusSession(session);
   }
 
+  async recordFocusSession(sessionData: any): Promise<void> {
+    return this.getHybridService().recordFocusSession?.(sessionData);
+  }
+
   async getFocusSessions(): Promise<FocusSession[]> {
-    return this.getHybridService().getFocusSessions();
+    // Request deduplication for read operations
+    const cacheKey = 'getFocusSessions';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getFocusSessions();
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
+  }
+
+  // Batch operation for multiple focus sessions
+  async batchSaveFocusSessions(sessions: FocusSession[]): Promise<void> {
+    return this.getHybridService().saveFocusSessions(sessions);
   }
 
   async getSleepEntries(userId: string, days: number = 30): Promise<any[]> {
@@ -778,7 +1267,69 @@ export class StorageService {
   }
 
   async getReadingSessions(): Promise<ReadingSession[]> {
-    return this.getHybridService().getReadingSessions();
+    // Request deduplication for read operations
+    const cacheKey = 'getReadingSessions';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getReadingSessions();
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
+  }
+
+  // Batch operation for multiple reading sessions
+  async batchSaveReadingSessions(sessions: ReadingSession[]): Promise<void> {
+    return this.getHybridService().saveReadingSessions(sessions);
+  }
+
+  // ==================== READING PERFORMANCE ====================
+  async recordReadingPerformance(performanceData: {
+    textId: string;
+    wpm: number;
+    comprehensionScore: number;
+    timeSpent: number;
+    timestamp: Date;
+    source: string;
+  }): Promise<void> {
+    try {
+      const key = 'reading_performance_data';
+      const existing = await this.getItem(key) || [];
+      existing.push({
+        ...performanceData,
+        recordedAt: new Date().toISOString(),
+      });
+      return this.setItem(key, existing);
+    } catch (error) {
+      console.error('Error recording reading performance:', error);
+    }
+  }
+
+  async getReadingPerformance(): Promise<Array<{
+    textId: string;
+    wpm: number;
+    comprehensionScore: number;
+    timeSpent: number;
+    timestamp: Date;
+    source: string;
+    recordedAt: string;
+  }>> {
+    try {
+      const data = await this.getItem('reading_performance_data') || [];
+      return data.map((item: any) => ({
+        ...item,
+        timestamp: new Date(item.timestamp),
+      }));
+    } catch (error) {
+      console.error('Error getting reading performance:', error);
+      return [];
+    }
   }
 
   async saveSourceLinks(links: SourceLink[]): Promise<void> {
@@ -786,7 +1337,21 @@ export class StorageService {
   }
 
   async getSourceLinks(): Promise<SourceLink[]> {
-    return this.getHybridService().getSourceLinks();
+    // Request deduplication for read operations
+    const cacheKey = 'getSourceLinks';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getSourceLinks();
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
   }
 
   // ==================== SOUND SETTINGS ====================
@@ -803,7 +1368,21 @@ export class StorageService {
   }
 
   async getNeuralLogs(): Promise<NeuralLogEntry[]> {
-    return this.getHybridService().getNeuralLogs();
+    // Request deduplication for read operations
+    const cacheKey = 'getNeuralLogs';
+    if (this.requestCache.has(cacheKey)) {
+      return this.requestCache.get(cacheKey);
+    }
+
+    const promise = this.getHybridService().getNeuralLogs();
+    this.requestCache.set(cacheKey, promise);
+
+    // Clean up cache after promise resolves
+    promise.finally(() => {
+      this.requestCache.delete(cacheKey);
+    });
+
+    return promise;
   }
 
   // ==================== LEGACY COMPATIBILITY STUBS ====================
@@ -831,8 +1410,12 @@ export class StorageService {
     };
   }
   async saveProgressData(progress: ProgressData): Promise<void> {}
-  async getTasks(): Promise<Task[]> {
-    return this.getHybridService().getTasks?.() || [];
+  async getTasks(limit?: number, offset?: number): Promise<Task[]> {
+    const allTasks = await this.getHybridService().getTasks?.() || [];
+    if (limit !== undefined && offset !== undefined) {
+      return allTasks.slice(offset, offset + limit);
+    }
+    return allTasks;
   }
 
   async saveTasks(tasks: Task[]): Promise<void> {
@@ -865,6 +1448,13 @@ export class StorageService {
       optimalLearningWindows: await this.getOptimalLearningWindows(),
       knownLocations: await this.getKnownLocations(),
 
+      // Cache data
+      cache: {
+        entries: Array.from(this.cache.values()),
+        stats: this.cacheStats,
+        config: this.cacheConfig,
+      },
+
       exportDate: new Date().toISOString(),
       version: '2.2.0',
       caeVersion: '2.0',
@@ -881,11 +1471,180 @@ export class StorageService {
     };
   }
 
+  // ==================== BACKGROUND SYNC CAPABILITIES ====================
+
+  /**
+   * Trigger background sync manually
+   */
+  async triggerBackgroundSync(): Promise<{ synced: number; failed: number }> {
+    return this.getHybridService().backgroundSync();
+  }
+
+  /**
+   * Get current sync status
+   */
+  async getSyncStatus(): Promise<{ isOnline: boolean; queueSize: number; lastSyncAt?: number }> {
+    const info = await this.getHybridService().getStorageInfo();
+    return {
+      isOnline: info.isOnline,
+      queueSize: info.queueSize,
+      // Note: lastSyncAt would need to be tracked separately in hybrid service
+    };
+  }
+
+  /**
+   * Perform storage cleanup
+   */
+  /**
+   * Perform storage cleanup and disk space management
+   */
+  async performStorageCleanup(): Promise<{ hotCleaned: number; warmCleaned: number; freedSpace: number }> {
+    // Call hybrid cleanup
+    const result = await this.getHybridService().performStorageCleanup();
+    // Estimate freed space (mock, replace with actual disk space API if available)
+    const freedSpace = 1024 * 1024; // 1MB for example
+    // Optionally notify user if space is low
+    if (freedSpace < 5 * 1024 * 1024) {
+      // TODO: Integrate with UI notification system
+      console.warn('Device storage is low. Please clear cache or old data.');
+    }
+    return { ...result, freedSpace };
+  }
+  /**
+   * Estimate available disk space (mock implementation)
+   */
+  async getAvailableDiskSpace(): Promise<number> {
+    // TODO: Use platform-specific API for real disk space
+    return 10 * 1024 * 1024; // 10MB for example
+  }
+  /**
+   * Check disk space before write
+   */
+  async ensureDiskSpace(required: number): Promise<boolean> {
+    const available = await this.getAvailableDiskSpace();
+    if (available < required) {
+      // Optionally notify user
+      console.warn('Insufficient disk space for operation.');
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Reset sound optimal profiles (proxy to hybrid service)
    */
   async resetOptimalProfiles(): Promise<void> {
     return this.getHybridService().resetOptimalProfiles?.();
+  }
+
+  // ==================== USER PREFERENCES METHODS ====================
+
+  /**
+   * Get user preferences for various services
+   */
+  async getUserPreferences(): Promise<any> {
+    return this.getItem('user_preferences') || {};
+  }
+
+  /**
+   * Save user preferences for various services
+   */
+  async saveUserPreferences(preferences: any): Promise<void> {
+    return this.setItem('user_preferences', preferences);
+  }
+
+  // ==================== USER PROFILE METHODS ====================
+
+  /**
+   * Get user profile data
+   */
+  async getUserProfile(userId?: string): Promise<UserProfile | null> {
+    try {
+      const currentUser = await SupabaseService.getInstance().getCurrentUser();
+      const targetUserId = userId || currentUser?.id;
+
+      if (!targetUserId) {
+        return null;
+      }
+
+      // Try to get from Supabase first
+      const { data: supabaseProfile, error } = await SupabaseService.getInstance().getClient()
+        .from('user_profiles')
+        .select('id, name, description, avatar, email, created_at, updated_at')
+        .eq('id', targetUserId)
+        .single();
+
+      if (!error && supabaseProfile) {
+        return {
+          id: supabaseProfile.id,
+          name: supabaseProfile.name || 'NeuroLearn User',
+          description: supabaseProfile.description || 'Learning enthusiast',
+          avatar: supabaseProfile.avatar,
+          email: supabaseProfile.email,
+          createdAt: supabaseProfile.created_at,
+          updatedAt: supabaseProfile.updated_at,
+        };
+      }
+
+      // Fallback to local storage
+      const localProfile = await this.getItem(`user_profile_${targetUserId}`);
+      if (localProfile) {
+        return localProfile;
+      }
+
+      // Return default profile
+      return {
+        id: targetUserId,
+        name: 'NeuroLearn User',
+        description: 'Learning enthusiast',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error getting user profile:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Save user profile data
+   */
+  async saveUserProfile(profile: Partial<UserProfile>): Promise<void> {
+    try {
+      const currentUser = await SupabaseService.getInstance().getCurrentUser();
+      if (!currentUser?.id) {
+        throw new Error('No authenticated user');
+      }
+
+      const now = new Date().toISOString();
+      const profileData = {
+        id: currentUser.id,
+        name: profile.name,
+        description: profile.description,
+        avatar: profile.avatar,
+        email: profile.email,
+        updated_at: now,
+      };
+
+      // Save to Supabase
+      const { error } = await SupabaseService.getInstance().getClient()
+        .from('user_profiles')
+        .upsert(profileData);
+
+      if (error) {
+        console.warn('Failed to save profile to Supabase, falling back to local storage:', error);
+        // Fallback to local storage
+        await this.setItem(`user_profile_${currentUser.id}`, {
+          ...profile,
+          id: currentUser.id,
+          createdAt: profile.createdAt || now,
+          updatedAt: now,
+        });
+      }
+    } catch (error) {
+      console.error('Error saving user profile:', error);
+      throw error;
+    }
   }
 
   // Health-related methods for AdvancedSleepService and HabitFormationService
@@ -928,6 +1687,95 @@ export class StorageService {
   async getRewardHistory(userId: string, days: number): Promise<any[]> {
     // Return mock data for now - implement actual storage later
     return [];
+  }
+
+  /**
+   * Get usage analytics data for personalization
+   */
+  async getUsageAnalytics(): Promise<{
+    flashcardsUsage: number;
+    focusTimerUsage: number;
+    logicTrainingUsage: number;
+    audioUsage: number;
+    visualUsage: number;
+    averagePerformance: number;
+  }> {
+    try {
+      // Get focus sessions for timer usage
+      const focusSessions = await this.getFocusSessions();
+      const focusTimerUsage = focusSessions.length;
+
+      // Get flashcards for usage count
+      const flashcards = await this.getFlashcards();
+      const flashcardsUsage = flashcards.length;
+
+      // Get logic nodes for training usage
+      const logicNodes = await this.getLogicNodes();
+      const logicTrainingUsage = logicNodes.length;
+
+      // Calculate average performance from focus sessions
+      const averagePerformance = focusSessions.length > 0
+        ? focusSessions.reduce((sum, session) => sum + session.selfReportFocus, 0) / focusSessions.length / 5
+        : 0.5;
+
+      // Get sound settings to determine audio vs visual preference
+      const soundSettings = await this.getSoundSettings();
+      const audioUsage = soundSettings ? 1 : 0; // Simple heuristic
+      const visualUsage = soundSettings ? 0 : 1; // Opposite of audio
+
+      return {
+        flashcardsUsage,
+        focusTimerUsage,
+        logicTrainingUsage,
+        audioUsage,
+        visualUsage,
+        averagePerformance,
+      };
+    } catch (error) {
+      console.error('Error getting usage analytics:', error);
+      // Return default values
+      return {
+        flashcardsUsage: 0,
+        focusTimerUsage: 0,
+        logicTrainingUsage: 0,
+        audioUsage: 0,
+        visualUsage: 1,
+        averagePerformance: 0.5,
+      };
+    }
+  }
+
+  /**
+   * Record palace usage for analytics
+   */
+  async recordPalaceUsage(usageData: {
+    palaceId: string;
+    studyMode: string;
+    timestamp: Date;
+    sessionDuration: number;
+  }): Promise<void> {
+    try {
+      const key = 'palace_usage_data';
+      const existing = await this.getItem(key) || [];
+      existing.push(usageData);
+      return this.setItem(key, existing);
+    } catch (error) {
+      console.error('Error recording palace usage:', error);
+    }
+  }
+
+  /**
+   * Record logic performance data
+   */
+  async recordLogicPerformance(performanceData: any): Promise<void> {
+    // Store in local storage for now - could be extended to sync with backend
+    const key = 'logic_performance_data';
+    const existing = await this.getItem(key) || [];
+    existing.push({
+      ...performanceData,
+      recordedAt: new Date().toISOString(),
+    });
+    return this.setItem(key, existing);
   }
 }
 

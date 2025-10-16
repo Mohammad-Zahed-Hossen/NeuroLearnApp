@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { NeuroLearnEngine } from '../../core/NeuroLearnEngine';
+import { getExistingNeuroLearnEngine } from '../../core/NeuroLearnEngine';
+import EngineService from '../../services/EngineService';
 import { ErrorReporterService } from '../../services/monitoring/ErrorReporterService';
 
 export interface EngineHealthData {
@@ -18,13 +19,20 @@ export interface EngineHealthData {
 }
 
 export const useEngineMonitor = () => {
-  const engine = NeuroLearnEngine.getInstance();
+  let engine = getExistingNeuroLearnEngine();
+  if (!engine) {
+    const engineService = EngineService.getInstance();
+    engine = engineService.getEngine() as any;
+  }
   const errorReporter = ErrorReporterService.getInstance();
 
   return useQuery<EngineHealthData, Error>({
     queryKey: ['engine-health'],
     queryFn: async (): Promise<EngineHealthData> => {
       try {
+        // Validate engine availability
+        if (!engine) throw new Error('Engine not available');
+
         // Get engine status
         const engineStatus = engine.getStatus();
 

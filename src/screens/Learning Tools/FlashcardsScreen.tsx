@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
 import StorageService from '../../services/storage/StorageService';
 import { SpacedRepetitionService } from '../../services/learning/SpacedRepetitionService';
+import { DynamicFlashcardsService } from '../../services/learning/DynamicFlashcardsService';
 import { Flashcard, StudySession } from '../../types';
 
 // Add this helper function after imports
@@ -57,6 +58,8 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [dueCards, setDueCards] = useState<Flashcard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataSource, setDataSource] = useState<'static' | 'dynamic' | 'hybrid'>('hybrid');
+  const [dynamicCards, setDynamicCards] = useState<Flashcard[]>([]);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null);
@@ -85,21 +88,31 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
   const themeColors = colors[theme];
   const storage = StorageService.getInstance();
   const srs = SpacedRepetitionService.getInstance();
+  const dynamicService = DynamicFlashcardsService.getInstance();
 
-  useEffect(() => {
-    loadFlashcards();
-  }, []);
-
-  const loadFlashcards = async () => {
+  const loadFlashcards = useCallback(async () => {
     try {
       setLoading(true);
       const cards = await storage.getFlashcards();
       const sessions = await storage.getStudySessions();
 
-      setFlashcards(cards);
+      let allCards = cards;
+      
+      // Load dynamic cards if enabled
+      if (dataSource === 'dynamic' || dataSource === 'hybrid') {
+        const generated = await dynamicService.generatePersonalizedCards();
+        setDynamicCards(generated);
+        if (dataSource === 'dynamic') {
+          allCards = generated;
+        } else {
+          allCards = [...cards, ...generated];
+        }
+      }
+
+      setFlashcards(allCards);
 
       // Calculate due cards and cognitive load
-      const due = srs.getDueCards(cards);
+      const due = srs.getDueCards(allCards);
       setDueCards(due);
 
       const cognitiveLoad = srs.calculateCognitiveLoad(sessions.slice(-10));
@@ -109,9 +122,13 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [storage, srs, dynamicService, dataSource]);
 
-  const createFlashcard = async () => {
+  useEffect(() => {
+    loadFlashcards();
+  }, [loadFlashcards]);
+
+  const createFlashcard = useCallback(async () => {
     if (!formData.front.trim() || !formData.back.trim()) {
       Alert.alert('Error', 'Please fill in both front and back of the card');
       return;
@@ -145,9 +162,9 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       console.error('Error creating flashcard:', error);
       Alert.alert('Error', 'Failed to create flashcard');
     }
-  };
+  }, [formData, flashcards, storage, srs]);
 
-  const updateFlashcard = async () => {
+  const updateFlashcard = useCallback(async () => {
     if (!editingCard || !formData.front.trim() || !formData.back.trim()) {
       Alert.alert('Error', 'Please fill in both front and back of the card');
       return;
@@ -180,9 +197,9 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       console.error('Error updating flashcard:', error);
       Alert.alert('Error', 'Failed to update flashcard');
     }
-  };
+  }, [editingCard, formData, flashcards, storage, srs]);
 
-  const deleteFlashcard = async (cardId: string) => {
+  const deleteFlashcard = useCallback(async (cardId: string) => {
     Alert.alert(
       'Delete Card',
       'Are you sure you want to delete this flashcard?',
@@ -210,10 +227,23 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
         },
       ],
     );
-  };
+  }, [flashcards, storage, srs]);
 
-  const startStudySession = () => {
-    if (dueCards.length === 0) {
+  // Memoize expensive calculations
+  const memoizedDueCards = useMemo(() => {
+    return srs.getDueCards(flashcards);
+  }, [flashcards, srs]);
+
+  const memoizedAtRiskCards = useMemo(() => {
+    return srs.getAtRiskCards(flashcards);
+  }, [flashcards, srs]);
+
+  const memoizedOptimalSessionSize = useMemo(() => {
+    return srs.getOptimalSessionSize(studyState.cognitiveLoad, memoizedDueCards.length);
+  }, [srs, studyState.cognitiveLoad, memoizedDueCards.length]);
+
+  const startStudySession = useCallback(() => {
+    if (memoizedDueCards.length === 0) {
       Alert.alert(
         'No Cards Due',
         'All cards are up to date! Come back later for reviews.',
@@ -221,12 +251,8 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       return;
     }
 
-    // Calculate optimal session size based on cognitive load
-    const optimalSize = srs.getOptimalSessionSize(
-      studyState.cognitiveLoad,
-      dueCards.length,
-    );
-    const sessionCards = dueCards.slice(0, optimalSize);
+    // Use memoized optimal session size
+    const sessionCards = memoizedDueCards.slice(0, memoizedOptimalSessionSize);
 
     setStudyState({
       active: true,
@@ -237,9 +263,9 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       cardsStudied: 0,
       cognitiveLoad: studyState.cognitiveLoad,
     });
-  };
+  }, [memoizedDueCards, memoizedOptimalSessionSize, studyState.cognitiveLoad]);
 
-  const showAnswer = () => {
+  const showAnswer = useCallback(() => {
     Animated.sequence([
       Animated.timing(fadeAnim, {
         toValue: 0.3,
@@ -254,9 +280,9 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
     ]).start();
 
     setStudyState((prev) => ({ ...prev, showAnswer: true }));
-  };
+  }, [fadeAnim]);
 
-  const rateCard = async (rating: 1 | 2 | 3 | 4 | 5) => {
+  const rateCard = useCallback(async (rating: 1 | 2 | 3 | 4 | 5) => {
     if (
       !studyState.active ||
       studyState.currentIndex >= studyState.cards.length
@@ -264,6 +290,16 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       return;
 
     const currentCard = studyState.cards[studyState.currentIndex];
+    if (!currentCard) {
+      // Defensive: if current card is missing, end session
+      setStudyState((prev) => ({
+        ...prev,
+        active: false,
+        cards: [],
+        currentIndex: 0,
+      }));
+      return null;
+    }
 
     // Convert numeric rating to difficulty string
     const difficultyMap: {
@@ -276,10 +312,16 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       5: 'perfect',
     };
 
-    const difficulty = difficultyMap[rating];
+    const difficulty = difficultyMap[rating]!;
 
     // Update card using spaced repetition algorithm
-    const nextReviewDate = srs.scheduleNextReview(difficulty, currentCard);
+    let nextReviewDate: any;
+    try {
+      nextReviewDate = srs.scheduleNextReview(difficulty, currentCard);
+    } catch (e) {
+      // Fallback to now if SRS fails
+      nextReviewDate = new Date();
+    }
 
     // Ensure nextReviewDate is a proper Date object
     const safeNextReviewDate =
@@ -332,7 +374,7 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       console.error('Error updating card:', error);
       Alert.alert('Error', 'Failed to update card');
     }
-  };
+  }, [studyState, flashcards, storage, srs, fadeAnim]);
 
   const finishStudySession = async () => {
     const sessionDuration =
@@ -441,8 +483,8 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
   }
 
   // Study Session View
-  if (studyState.active && studyState.cards.length > 0) {
-    const currentCard = studyState.cards[studyState.currentIndex];
+  if (studyState.active && studyState.cards.length > 0 && studyState.currentIndex < studyState.cards.length) {
+    const currentCard = studyState.cards[studyState.currentIndex]!;
     const progress =
       ((studyState.currentIndex + 1) / studyState.cards.length) * 100;
 
@@ -633,6 +675,61 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
         style={styles.content}
         contentContainerStyle={styles.container}
       >
+        {/* Data Source Toggle */}
+        <GlassCard theme={theme} style={styles.dataSourceCard}>
+          <Text style={[styles.dataSourceTitle, { color: themeColors.text }]}>
+            🎯 Card Source
+          </Text>
+          <View style={styles.dataSourceButtons}>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'static' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('static')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'static' ? '#FFFFFF' : themeColors.text }]}>
+                Manual
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'hybrid' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('hybrid')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'hybrid' ? '#FFFFFF' : themeColors.text }]}>
+                Hybrid
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dataSourceButton,
+                dataSource === 'dynamic' && { backgroundColor: themeColors.primary },
+                { borderColor: themeColors.border }
+              ]}
+              onPress={() => setDataSource('dynamic')}
+            >
+              <Text style={[styles.dataSourceButtonText, { color: dataSource === 'dynamic' ? '#FFFFFF' : themeColors.text }]}>
+                AI-Generated
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.dataSourceDescription, { color: themeColors.textSecondary }]}>
+            {dataSource === 'static' && 'Using only manually created flashcards'}
+            {dataSource === 'hybrid' && 'Combining manual cards with AI-generated content'}
+            {dataSource === 'dynamic' && 'Using AI-generated flashcards based on your learning patterns'}
+          </Text>
+          {dynamicCards.length > 0 && (
+            <Text style={[styles.dynamicCardsCount, { color: themeColors.success }]}>
+              {dynamicCards.length} AI cards available
+            </Text>
+          )}
+        </GlassCard>
+
         {/* Study Status */}
         <GlassCard theme={theme} style={styles.statusCard}>
           <View style={styles.statusRow}>
@@ -640,7 +737,7 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
               <Text
                 style={[styles.statusValue, { color: themeColors.primary }]}
               >
-                {dueCards.length}
+                {memoizedDueCards.length}
               </Text>
               <Text style={[styles.statusLabel, { color: themeColors.text }]}>
                 Due Cards
@@ -678,12 +775,9 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
             </View>
           </View>
 
-          {dueCards.length > 0 && (
+          {memoizedDueCards.length > 0 && (
             <Button
-              title={`Start Session (${srs.getOptimalSessionSize(
-                studyState.cognitiveLoad,
-                dueCards.length,
-              )} cards)`}
+              title={`Start Session (${memoizedOptimalSessionSize} cards)`}
               onPress={startStudySession}
               variant="primary"
               size="large"
@@ -694,7 +788,7 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
         </GlassCard>
 
         {/* At Risk Cards */}
-        {srs.getAtRiskCards(flashcards).length > 0 && (
+        {memoizedAtRiskCards.length > 0 && (
           <GlassCard theme={theme} style={styles.warningCard}>
             <Text style={[styles.warningTitle, { color: themeColors.warning }]}>
               ⚠️ Cards At Risk
@@ -702,7 +796,7 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
             <Text
               style={[styles.warningText, { color: themeColors.textSecondary }]}
             >
-              {srs.getAtRiskCards(flashcards).length} cards are predicted to be
+              {memoizedAtRiskCards.length} cards are predicted to be
               forgotten soon.The FSRS algorithm recommends reviewing them early.
             </Text>
           </GlassCard>
@@ -726,7 +820,8 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
           ) : (
             flashcards.map((card) => {
               const isDue = srs.isCardDue(card);
-              const isAtRisk = srs.getAtRiskCards([card]).length > 0;
+              const isAtRisk = memoizedAtRiskCards.some(atRiskCard => atRiskCard.id === card.id);
+              const isAiGenerated = card.isAiGenerated || dynamicCards.some(dc => dc.id === card.id);
 
               return (
                 <GlassCard
@@ -742,18 +837,29 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
                       borderColor: themeColors.warning,
                       borderWidth: 1,
                     },
+                    isAiGenerated && {
+                      borderColor: themeColors.success,
+                      borderWidth: 1,
+                    },
                   ]}
                 >
                   <View style={styles.cardItemHeader}>
                     <View style={styles.cardItemInfo}>
-                      <Text
-                        style={[
-                          styles.cardItemCategory,
-                          { color: themeColors.primary },
-                        ]}
-                      >
-                        {(card.category ?? 'general').toUpperCase()}
-                      </Text>
+                      <View style={styles.cardItemCategoryContainer}>
+                        <Text
+                          style={[
+                            styles.cardItemCategory,
+                            { color: themeColors.primary },
+                          ]}
+                        >
+                          {(card.category ?? 'general').toUpperCase()}
+                        </Text>
+                        {isAiGenerated && (
+                          <Text style={[styles.cardTag, { backgroundColor: themeColors.success }]}>
+                            AI
+                          </Text>
+                        )}
+                      </View>
                       <Text
                         style={[
                           styles.cardItemFront,
@@ -849,12 +955,13 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
       </ScrollView>
 
       {/* Create Card Modal */}
-      <Modal
-        visible={createModalVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setCreateModalVisible(false)}
-      >
+      {createModalVisible && (
+        <Modal
+          visible={createModalVisible}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setCreateModalVisible(false)}
+        >
         <View style={styles.modalOverlay}>
           <GlassCard theme={theme} style={styles.modalContent}>
             <Text style={[styles.modalTitle, { color: themeColors.text }]}>
@@ -957,15 +1064,17 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
             </View>
           </GlassCard>
         </View>
-      </Modal>
+        </Modal>
+      )}
 
       {/* Edit Card Modal */}
-      <Modal
-        visible={editModalVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setEditModalVisible(false)}
-      >
+      {editModalVisible && (
+        <Modal
+          visible={editModalVisible}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setEditModalVisible(false)}
+        >
         <View style={styles.modalOverlay}>
           <GlassCard theme={theme} style={styles.modalContent}>
             <Text style={[styles.modalTitle, { color: themeColors.text }]}>
@@ -1069,7 +1178,8 @@ export const FlashcardsScreen: React.FC<FlashcardsScreenProps> = ({
             </View>
           </GlassCard>
         </View>
-      </Modal>
+        </Modal>
+      )}
 
       <HamburgerMenu
         visible={menuVisible}
@@ -1323,6 +1433,54 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs / 2,
     borderRadius: borderRadius.sm,
     backgroundColor: 'rgba(245, 158, 11, 0.2)',
+  },
+
+  // Data Source Toggle
+  dataSourceCard: {
+    marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  dataSourceTitle: {
+    ...typography.h4,
+    marginBottom: spacing.md,
+  },
+  dataSourceButtons: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+  },
+  dataSourceButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    marginHorizontal: spacing.xs,
+  },
+  dataSourceButtonText: {
+    ...typography.bodySmall,
+    fontWeight: '600',
+  },
+  dataSourceDescription: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  dynamicCardsCount: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  cardItemCategoryContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  cardTag: {
+    ...typography.caption,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 
   // Modal Styles

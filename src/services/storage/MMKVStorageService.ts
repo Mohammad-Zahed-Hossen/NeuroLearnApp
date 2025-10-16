@@ -92,9 +92,12 @@ class MMKVStorageService {
   }
 
   public async setItem(key: string, value: string): Promise<void> {
+    // Ensure we always pass a string to storage backends. Accepts string or serializable value.
+    const toStore = typeof value === 'string' ? value : JSON.stringify(value);
+
     if (this.mmkv && this.isAvailable()) {
       try {
-        this.mmkv.set(key, value);
+        this.mmkv.set(key, toStore);
         return;
       } catch (e: any) {
         // If MMKV reports disk full, mark unhealthy to avoid repeated noisy failures
@@ -107,7 +110,21 @@ class MMKVStorageService {
       }
     }
 
-    await AsyncStorage.setItem(key, value);
+    // AsyncStorage write: wrap to ensure we don't let disk-full or other errors bubble up
+    try {
+      await AsyncStorage.setItem(key, toStore);
+    } catch (e: any) {
+      const msg = String(e?.message || e || '').toLowerCase();
+      console.warn('AsyncStorage.setItem failed in MMKVStorageService.setItem:', e);
+      if (msg.includes('sqlite_full') || msg.includes('database or disk is full') || msg.includes('enospc')) {
+        // mark MMKV as unhealthy (so higher layers can back off) and swallow the error
+        try { this.markUnhealthy(); } catch (_) {}
+        // Attempt a best-effort eviction to free space
+        try { await this.evictLeastRecentlyUsed(1024 * 1024); } catch (_) {}
+      }
+      // Swallow the error - higher-level services treat cache writes as best-effort
+      return;
+    }
   }
 
   // Compatibility: canonical API expected by StorageOrchestrator
@@ -132,6 +149,21 @@ class MMKVStorageService {
     }
   }
 
+  public async getCacheSize(): Promise<number> {
+    // For MMKV hot cache, cache size is the same as storage size
+    return this.getStorageSize();
+  }
+
+  public async getTotalSize(): Promise<number> {
+    // Total size includes storage and any overhead
+    return this.getStorageSize();
+  }
+
+  public async getLastCleanupTime(): Promise<Date> {
+    // MMKV doesn't track cleanup time; return a default date
+    return new Date(0); // Epoch time as placeholder
+  }
+
   // Provide a query API to satisfy orchestrator calls; returns empty by default
   public async query(_collection: string, _filters?: any): Promise<any[]> {
     return [];
@@ -145,6 +177,80 @@ class MMKVStorageService {
   public async optimizeStorage(): Promise<void> {
     // No-op: placeholder for future compaction
     return Promise.resolve();
+  }
+
+  /**
+   * Evict least-recent keys up to maxBytes to free space.
+   * This is a best-effort operation and may be a no-op on some platforms.
+   */
+  public async evictLeastRecentlyUsed(maxBytes: number = 1024 * 1024): Promise<number> {
+    try {
+      // Prefer reading hot-index if present to avoid scanning unrelated keys
+      const indexKey = '@neurolearn/hot_index';
+      let keys: string[] = [];
+      try {
+        const idxRaw = await this.getItem(indexKey);
+        if (idxRaw) {
+          const parsed = JSON.parse(idxRaw);
+          if (Array.isArray(parsed)) keys = parsed;
+        }
+      } catch (e) {
+        // fallback to getAllKeys
+        keys = await this.getAllKeys();
+      }
+
+      // Build key->ts pairs by reading each item metadata (best-effort)
+      const pairs: Array<{ key: string; ts: number; size: number }> = [];
+      for (const k of keys) {
+        try {
+          const v = await this.getItem(k);
+          if (!v) continue;
+          let ts = Date.now();
+          try {
+            const parsed = JSON.parse(v);
+            ts = parsed?.timestamp || parsed?.created_at || parsed?.createdAt || ts;
+          } catch (e) {
+            // if not JSON, keep now
+          }
+          pairs.push({ key: k, ts, size: v.length * 2 });
+        } catch (e) {
+          // ignore per-key errors
+        }
+      }
+
+      // Sort by timestamp ascending (oldest first)
+      pairs.sort((a,b) => a.ts - b.ts);
+
+      let freed = 0;
+      for (const p of pairs) {
+        try {
+          // removeItem is defensive; swallow any errors to continue eviction
+          try { await this.removeItem(p.key); } catch (_) {}
+          freed += p.size || 0;
+          if (freed >= maxBytes) break;
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      return freed;
+    } catch (e) {
+      console.warn('MMKV evict failed:', e);
+      return 0;
+    }
+  }
+
+  /**
+   * Heuristic: detect low-device storage. Placeholder — platform APIs recommended.
+   */
+  public async isSpaceLow(thresholdBytes: number = 5 * 1024 * 1024): Promise<boolean> {
+    try {
+      // Best-effort: estimate our cache size and compare against threshold
+      const size = await this.getStorageSize();
+      return size > thresholdBytes;
+    } catch (e) {
+      return false;
+    }
   }
 
   public async saveSessionProgress(_data: any): Promise<void> {
@@ -167,8 +273,13 @@ class MMKVStorageService {
       }
     }
 
-    const v = await AsyncStorage.getItem(key);
-    return v;
+    try {
+      const v = await AsyncStorage.getItem(key);
+      return v;
+    } catch (e) {
+      console.warn('AsyncStorage.getItem failed in MMKVStorageService.getItem:', e);
+      return null;
+    }
   }
 
   public async removeItem(key: string): Promise<void> {
@@ -181,7 +292,12 @@ class MMKVStorageService {
       }
     }
 
-    await AsyncStorage.removeItem(key);
+    try {
+      await AsyncStorage.removeItem(key);
+    } catch (e) {
+      console.warn('AsyncStorage.removeItem failed in MMKVStorageService.removeItem:', e);
+      // swallow - best-effort
+    }
   }
 
   /**

@@ -36,8 +36,10 @@ import { FloatingActionButton } from './src/components/shared/FloatingActionButt
 import { QuickActionBottomSheet } from './src/components/navigation/QuickActionBottomSheet';
 import FloatingChatBubble from './src/components/ai/FloatingChatBubble';
 import FloatingElementsOrchestrator from './src/components/shared/FloatingElementsOrchestrator';
+import { usePerformanceMetrics } from './src/hooks/usePerformanceMetrics';
 import { MicroTaskCard } from './src/components/shared/MicroTaskCard';
 import FloatingCommandCenter from './src/components/shared/FloatingCommandCenter';
+import { EngineStatusIndicator } from './src/components/shared/EngineStatusIndicator';
 
 // Contexts
 import { FocusProvider } from './src/contexts/FocusContext';
@@ -47,6 +49,7 @@ import { CognitiveProvider } from './src/contexts/CognitiveProvider';
 // Services
 import SupabaseService from './src/services/storage/SupabaseService';
 import { neuralIntegrationService } from './src/services/learning/NeuralIntegrationService';
+import EngineService from './src/services/EngineService';
 
 // Cognitive Aura Engine Integration
 import {
@@ -74,22 +77,65 @@ import { MonitoringScreen } from './src/screens/Profile/MonitoringScreen';
 
 import { ThemeType, colors } from './src/theme/colors';
 
+// Import Logger to configure log level
+import { Logger, LogLevel } from './src/core/utils/Logger';
+// DI
+import createDefaultContainer from './src/core/di/bootstrap';
+import TOKENS from './src/core/di/tokens';
+import ContainerContext from './src/core/di/ContainerContext';
+
+// Create app-level container (singleton for app lifetime)
+const appContainer = createDefaultContainer();
+// Register important service singletons into the container. We register
+// instances (useValue) because many existing services expose getInstance()
+// singletons; the DI container will then provide a stable access point
+// without changing existing service code.
+try {
+  // SupabaseService and EngineService are singletons via getInstance()
+  const supabaseSvc = SupabaseService.getInstance();
+  appContainer.register(TOKENS.StorageService, { useValue: supabaseSvc });
+} catch (e) {
+  // Non-fatal: registration may be skipped in some test environments
+  // where the service isn't available at module-eval time.
+  // eslint-disable-next-line no-console
+  console.debug('SupabaseService not registered in DI container:', e);
+}
+
+try {
+  const engineSvc = EngineService.getInstance();
+  appContainer.register(TOKENS.EngineService, { useValue: engineSvc });
+} catch (e) {
+  console.debug('EngineService not registered in DI container:', e);
+}
+
+try {
+  appContainer.register(TOKENS.NeuralIntegrationService, {
+    useValue: neuralIntegrationService,
+  });
+} catch (e) {
+  console.debug('NeuralIntegrationService not registered in DI container:', e);
+}
+
 type AppState = 'loading' | 'auth' | 'app';
 type NavigationMode = 'hamburger' | 'modern' | 'hybrid';
 
 // Create a client for React Query
 const queryClient = new QueryClient({
+  // Cast to any because @tanstack/react-query types vary across versions; preserve runtime defaults
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5 minutes
-      gcTime: 1000 * 60 * 10, // 10 minutes
+      cacheTime: 1000 * 60 * 10, // 10 minutes
       retry: 2,
       refetchOnWindowFocus: false,
     },
-  },
+  } as any,
 });
 
 export default function App() {
+  // Configure logger to hide DEBUG messages
+  Logger.configure({ level: LogLevel.INFO });
+
   const [theme, setTheme] = useState<ThemeType>('dark');
   const [appState, setAppState] = useState<AppState>('loading');
   const [navigationMode, setNavigationMode] =
@@ -101,26 +147,37 @@ export default function App() {
   const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
   const [quickActionVisible, setQuickActionVisible] = useState(false);
 
-  const currentScreen = navigationStack[navigationStack.length - 1];
+  const currentScreen =
+    navigationStack[navigationStack.length - 1] ?? 'dashboard';
   const supabaseService = SupabaseService.getInstance();
+  const engineService = EngineService.getInstance();
 
   const [user, setUser] = React.useState<any>(null);
   // Ensure hooks run in stable order: call aura hook at top-level of component
   const auraState = useCurrentAuraState();
   const [microTaskDismissed, setMicroTaskDismissed] = useState(false);
+  const { trackScreenLoad } = usePerformanceMetrics();
 
-  const handleNavigate = (screen: string, params?: any) => {
+  // track screen load performance
+  useEffect(() => {
+    const perf = trackScreenLoad(currentScreen);
+    return () => {
+      perf.end();
+    };
+  }, [currentScreen, trackScreenLoad]);
+
+  const handleNavigate = useCallback((screen: string, params?: any) => {
     console.log(
       'handleNavigate called with screen:',
-      screen,
+      typeof screen === 'string' ? screen.replace(/[\r\n\t]/g, '') : '[invalid]',
       'params:',
-      params,
+      params ? '[object]' : 'none',
     ); // Debug log
     setNavigationStack((prev) => [...prev, screen]);
     setMenuVisible(false);
     setCommandPaletteVisible(false);
     setQuickActionVisible(false);
-  };
+  }, []);
 
   useEffect(() => {
     initializeApp();
@@ -146,28 +203,13 @@ export default function App() {
   useEffect(() => {
     return () => {
       neuralIntegrationService.dispose();
+      // Cleanup engine on unmount
+      engineService.shutdown().catch(console.error);
     };
   }, []);
 
-  // Handle deep links for OAuth callbacks
-  useEffect(() => {
-    const handleDeepLink = (event: { url: string }) => {
-      const { url } = event;
-      if (url.includes('notion/callback')) {
-        handleNotionCallback(url);
-      }
-    };
-
-    // Listen for deep links
-    const subscription = Linking.addEventListener('url', handleDeepLink);
-
-    // Handle initial URL if app was opened from link
-    Linking.getInitialURL().then((url) => {
-      if (url) handleDeepLink({ url });
-    });
-
-    return () => subscription?.remove();
-  }, []);
+  // OAuth deep links are handled by OAuthCallbackHandler to avoid duplication
+  // No need for additional deep link handling in App.tsx
 
   const initializeApp = async () => {
     try {
@@ -190,6 +232,18 @@ export default function App() {
         // Don't block app startup if aura fails
       }
 
+      // Initialize NeuroLearn Orchestration Engine
+      try {
+        await engineService.initialize(currentUser.id);
+        console.log('✅ NeuroLearn Orchestration Engine initialized');
+      } catch (engineError) {
+        console.warn(
+          'Engine initialization failed, continuing with individual services:',
+          engineError,
+        );
+        // Don't block app startup if engine fails
+      }
+
       // Initialize warm-tier database if available. Use dynamic import so
       // tests and environments without WatermelonDB/MMKV won't fail at
       // module-evaluation time.
@@ -201,7 +255,9 @@ export default function App() {
         // TypeScript error; casting to `any` and checking at runtime
         // ensures we only call a function.
         // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
-        const mod = (await import('./src/database/initDatabase.js')) as any;
+        // Metro resolves local TS modules without .js extension; silence TS node resolution warning
+        // @ts-ignore
+        const mod = (await import('./src/database/initDatabase')) as any;
         const initDatabaseFn = mod.default ?? mod.initDatabase ?? mod;
         // initDatabase() will attempt to initialize a real WatermelonDB
         // instance if native modules and schema are present, otherwise it
@@ -266,37 +322,7 @@ export default function App() {
     }
   };
 
-  // Handle Notion OAuth callback
-  const handleNotionCallback = useCallback(async (url: string) => {
-    try {
-      console.log('🔗 Handling Notion OAuth callback:', url);
-
-      // Extract the authorization code from the URL
-      const urlObj = new URL(url);
-      const code = urlObj.searchParams.get('code');
-      const error = urlObj.searchParams.get('error');
-
-      if (error) {
-        console.error('❌ Notion OAuth error:', error);
-        Alert.alert('Connection Failed', `Notion authorization failed: ${error}`);
-        return;
-      }
-
-      if (!code) {
-        console.error('❌ No authorization code received');
-        Alert.alert('Connection Failed', 'No authorization code received from Notion');
-        return;
-      }
-
-      // Navigate to Notion dashboard to complete the connection
-      handleNavigate('notion-dashboard', { oauthCode: code });
-
-      console.log('✅ Notion OAuth callback handled successfully');
-    } catch (error) {
-      console.error('❌ Failed to handle Notion callback:', error);
-      Alert.alert('Connection Failed', 'Failed to process Notion authorization');
-    }
-  }, [handleNavigate]);
+  // OAuth callbacks are now handled by OAuthCallbackHandler to avoid duplication
 
   // Handle micro-task completion from Cognitive Aura Engine
   const handleMicroTaskComplete = useCallback(
@@ -306,7 +332,7 @@ export default function App() {
 
         // Import the CAE service dynamically to avoid circular dependencies
         const { cognitiveAuraService } = await import(
-          './src/services/ai/CognitiveAuraService.js'
+          './src/services/ai/CognitiveAuraService'
         );
         const CAE = cognitiveAuraService;
 
@@ -381,11 +407,15 @@ export default function App() {
       case 'learn':
         return <LearnHubScreen theme={theme} onNavigate={handleNavigate} />;
       case 'integrations':
-        return <IntegrationHubScreen theme={theme} onNavigate={handleNavigate} />;
+        return (
+          <IntegrationHubScreen theme={theme} onNavigate={handleNavigate} />
+        );
       case 'profile':
         return <ProfileHubScreen theme={theme} onNavigate={handleNavigate} />;
       case 'finance':
-        return <FinanceDashboardScreen onNavigate={handleNavigate} />;
+        return (
+          <FinanceDashboardScreen onNavigate={handleNavigate} theme={theme} />
+        );
       case 'wellness':
         return (
           <WellnessDashboardScreen theme={theme} onNavigate={handleNavigate} />
@@ -451,11 +481,32 @@ export default function App() {
       case 'user-profile':
         return <ProfileScreen onNavigate={handleNavigate} />;
       case 'synapse-builder':
-        return <SynapseBuilderScreen theme={theme} navigation={{ goBack: () => setNavigationStack((prev) => prev.slice(0, -1)) }} />;
+        return (
+          <SynapseBuilderScreen
+            theme={theme}
+            navigation={{
+              goBack: () => setNavigationStack((prev) => prev.slice(0, -1)),
+            }}
+          />
+        );
       case 'holistic-analytics':
-        return <HolisticAnalyticsScreen navigation={{ goBack: () => setNavigationStack((prev) => prev.slice(0, -1)) }} theme={theme} />;
+        return (
+          <HolisticAnalyticsScreen
+            navigation={{
+              goBack: () => setNavigationStack((prev) => prev.slice(0, -1)),
+            }}
+            theme={theme}
+          />
+        );
       case 'monitoring':
-        return <MonitoringScreen theme={theme} navigation={{ goBack: () => setNavigationStack((prev) => prev.slice(0, -1)) }} />;
+        return (
+          <MonitoringScreen
+            theme={theme}
+            navigation={{
+              goBack: () => setNavigationStack((prev) => prev.slice(0, -1)),
+            }}
+          />
+        );
       case 'patients':
         return (
           <PatientsScreen
@@ -469,12 +520,9 @@ export default function App() {
 
   const renderCurrentScreen = () => currentScreenComponent;
 
-
-
   // Core learning screens that should hide the tab bar for immersive experience
 
   const coreLearningScreens = [
-
     'flashcards',
 
     'speed-reading',
@@ -504,15 +552,11 @@ export default function App() {
     'monitoring',
 
     'patients',
-
   ];
-
-
 
   // Finance and health screens that should hide the tab bar
 
   const financeAndHealthScreens = [
-
     'add-transaction',
 
     'budget-manager',
@@ -526,59 +570,23 @@ export default function App() {
     'smart-sleep-tracker',
 
     'advanced-workout-logger',
-
   ];
-
-
 
   // Integration screens that should hide the tab bar for immersive experience
 
-  const integrationScreens = [
-
-    'notion-dashboard',
-
-  ];
-
-
+  const integrationScreens = ['notion-dashboard'];
 
   const shouldHideTabBar = useMemo(
-
     () =>
-
       coreLearningScreens.includes(currentScreen) ||
-
       financeAndHealthScreens.includes(currentScreen) ||
-
       integrationScreens.includes(currentScreen),
 
-    [currentScreen]
-
+    [currentScreen],
   );
 
-  if (appState === 'loading') {
-    return (
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    );
-  }
-
-  if (appState === 'auth') {
-    return (
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <AuthScreen theme={theme} onAuthenticated={handleAuthenticated} />
-          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    );
-
-  }
-
-
-
+  // Render navigation is used by the orchestratorElement below. Define it
+  // before orchestratorElement so it is available when the memo runs.
   const renderNavigation = () => {
     switch (navigationMode) {
       case 'hamburger':
@@ -629,8 +637,6 @@ export default function App() {
         );
 
       case 'hybrid':
-        // Hybrid mode: Modern navigation with hamburger menu button
-        // Hide tab bar on core learning screens for immersive experience
         return (
           <>
             {!shouldHideTabBar && (
@@ -666,6 +672,91 @@ export default function App() {
     }
   };
 
+  // Build the app's orchestrator tree as a memoized element at the top-level
+  // so the hook order remains stable across renders (avoid calling hooks
+  // conditionally inside JSX). This element is used inside the main return
+  // but must be created unconditionally so React's hooks order doesn't change
+  // between 'loading'|'auth' and 'app' states.
+  const orchestratorElement = useMemo(
+    () => (
+      <FloatingElementsOrchestrator
+        cognitiveLoad="low"
+        currentScreen={currentScreen}
+        onNavigate={handleNavigate}
+      >
+        {renderNavigation()}
+
+        {quickActionVisible && (
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10000,
+            }}
+          >
+            <QuickActionBottomSheet
+              theme={theme}
+              currentScreen={currentScreen}
+              visible={quickActionVisible}
+              onAction={handleQuickAction}
+              onClose={() => setQuickActionVisible(false)}
+            />
+          </View>
+        )}
+
+        <FloatingActionButton
+          theme={theme}
+          onPress={() => setQuickActionVisible(true)}
+          currentScreen={currentScreen}
+        />
+
+        {user && <FloatingChatBubble theme={theme} userId={user.id} />}
+
+        <CommandPalette
+          theme={theme}
+          visible={commandPaletteVisible}
+          onClose={() => setCommandPaletteVisible(false)}
+          onNavigate={handleNavigate}
+        />
+
+        <EngineStatusIndicator theme={theme} />
+      </FloatingElementsOrchestrator>
+    ),
+    [
+      currentScreen,
+      handleNavigate,
+      quickActionVisible,
+      user?.id,
+      commandPaletteVisible,
+      theme,
+      handleQuickAction,
+    ],
+  );
+
+  if (appState === 'loading') {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
+  if (appState === 'auth') {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <AuthScreen theme={theme} onAuthenticated={handleAuthenticated} />
+          <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
@@ -682,51 +773,11 @@ export default function App() {
             <FocusProvider>
               <SoundscapeProvider>
                 <CognitiveProvider>
-                  <FloatingElementsOrchestrator
-                    cognitiveLoad="low"
-                    currentScreen={currentScreen}
-                    onNavigate={handleNavigate}
-                  >
-                    {renderNavigation()}
-
-                    {quickActionVisible && (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          zIndex: 10000,
-                        }}
-                      >
-                        <QuickActionBottomSheet
-                          theme={theme}
-                          currentScreen={currentScreen}
-                          visible={quickActionVisible}
-                          onAction={handleQuickAction}
-                          onClose={() => setQuickActionVisible(false)}
-                        />
-                      </View>
-                    )}
-
-                    <FloatingActionButton
-                      theme={theme}
-                      onPress={() => setQuickActionVisible(true)}
-                      currentScreen={currentScreen}
-                    />
-
-                    {user && (
-                      <FloatingChatBubble theme={theme} userId={user.id} />
-                    )}
-
-                    <CommandPalette
-                      theme={theme}
-                      visible={commandPaletteVisible}
-                      onClose={() => setCommandPaletteVisible(false)}
-                      onNavigate={handleNavigate}
-                    />
-                  </FloatingElementsOrchestrator>
+                  {/* Provide DI container so components can opt-in to resolve services */}
+                  <ContainerContext.Provider value={appContainer}>
+                    {/** Render the precomputed orchestrator element */}
+                    {orchestratorElement}
+                  </ContainerContext.Provider>
                 </CognitiveProvider>
               </SoundscapeProvider>
             </FocusProvider>

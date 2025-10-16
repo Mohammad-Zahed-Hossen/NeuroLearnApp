@@ -524,8 +524,8 @@ export class NeuralPhysicsEngine extends EventEmitter {
     this.contextTransitionProgress = 0;
     this.transitionStartTime = Date.now();
 
-    const fromConfig = this.config.contextualBehavior[fromContext];
-    const toConfig = this.config.contextualBehavior[toContext];
+  const fromConfig = this.getContextBehavior(fromContext);
+  const toConfig = this.getContextBehavior(toContext);
 
     // Create smooth transition animation
     const transitionAnimation = () => {
@@ -536,7 +536,7 @@ export class NeuralPhysicsEngine extends EventEmitter {
       const easeProgress = 1 - Math.pow(1 - progress, 3);
 
       // Interpolate physics parameters
-      this.physicsState.activeConfig = this.interpolatePhysicsConfig(fromConfig, toConfig, easeProgress);
+  this.physicsState.activeConfig = this.interpolatePhysicsConfig(fromConfig, toConfig, easeProgress);
 
       // Update all nodes and links with new configuration
       this.updateNodesForTransition(easeProgress);
@@ -547,8 +547,8 @@ export class NeuralPhysicsEngine extends EventEmitter {
       if (progress < 1) {
         requestAnimationFrame(transitionAnimation);
       } else {
-        // Transition complete
-        this.physicsState.activeConfig = toConfig;
+  // Transition complete
+  this.physicsState.activeConfig = toConfig;
         this.contextTransitionProgress = 0;
         this.physicsState.adaptationCount++;
 
@@ -588,6 +588,33 @@ export class NeuralPhysicsEngine extends EventEmitter {
       difficultyAdjustment: this.lerp(fromConfig.difficultyAdjustment, toConfig.difficultyAdjustment, progress),
       attentionGuidance: this.lerp(fromConfig.attentionGuidance, toConfig.attentionGuidance, progress),
       cognitiveLoadReduction: this.lerp(fromConfig.cognitiveLoadReduction, toConfig.cognitiveLoadReduction, progress),
+    };
+  }
+
+  /**
+   * Safely resolve a PhysicsContextBehavior for a given context key with sensible defaults.
+   */
+  private getContextBehavior(context: AuraContext): PhysicsContextBehavior {
+    const behavior = this.config.contextualBehavior[context];
+    if (behavior) return behavior;
+
+    // Default fallback behavior - conservative values
+    return {
+      targetNodeMagnetism: 1.0,
+      nodeVisibility: { focused: 1.0, peripheral: 0.5, hidden: 0.1 },
+      nodeAnimationIntensity: 0.5,
+      linkVisibilityThreshold: 0.5,
+      linkAnimationStyle: 'static',
+      connectionEmphasis: 1.0,
+      clusteringTendency: 0.5,
+      spatialDistribution: 'balanced',
+      layoutStability: 0.8,
+      interactionSensitivity: 1.0,
+      hoverEffectIntensity: 1.0,
+      selectionFeedback: 1.0,
+      difficultyAdjustment: 0.5,
+      attentionGuidance: 1.0,
+      cognitiveLoadReduction: 0.2,
     };
   }
 
@@ -732,7 +759,7 @@ export class NeuralPhysicsEngine extends EventEmitter {
         });
 
         // Apply subtle pre-adjustments
-        this.applyAnticipationAdjustment(currentConfig, anticipatedConfig, adjustmentStrength);
+  this.applyAnticipationAdjustment(this.getContextBehavior(this.physicsState.currentContext), this.getContextBehavior(change.context), adjustmentStrength);
       }
     }
   }
@@ -780,26 +807,35 @@ export class NeuralPhysicsEngine extends EventEmitter {
     this.nodes.clear();
     this.links.clear();
 
-    // Create  nodes
+    // Create nodes with deterministic fallbacks
     nodeData.forEach(nodeData => {
+      const id = String(nodeData.id || '');
+      // Use deterministic centered positions with light spread based on id
+      const unitX = this.deterministicUnitValue(id, 'x');
+      const unitY = this.deterministicUnitValue(id, 'y');
+      const centerX = 400; // screen center heuristic
+      const centerY = 300;
+      const spreadX = 0.3 * 800; // reduced spread
+      const spreadY = 0.3 * 600;
+
       const node: Node = {
         id: nodeData.id,
         label: nodeData.label,
-        x: Math.random() * 800,
-        y: Math.random() * 600,
+        x: centerX + (unitX - 0.5) * spreadX,
+        y: centerY + (unitY - 0.5) * spreadY,
         vx: 0,
         vy: 0,
         size: this.calculateInitialNodeSize(nodeData),
 
         // CAE 2.0 enhancements
-        cognitiveLoad: nodeData.cognitiveLoad || Math.random(),
-        masteryLevel: nodeData.masteryLevel || Math.random(),
+        cognitiveLoad: this.resolveNodeNumeric(nodeData, 'cognitiveLoad', id, 0.5),
+        masteryLevel: this.resolveNodeNumeric(nodeData, 'masteryLevel', id, 0.5),
         priority: nodeData.priority || 0,
         contextRelevance: {
-          DeepFocus: Math.random(),
-          CreativeFlow: Math.random(),
-          FragmentedAttention: Math.random(),
-          CognitiveOverload: Math.random(),
+          DeepFocus: this.resolveNodeNumeric(nodeData, 'contextDeepFocus', id, 0.5),
+          CreativeFlow: this.resolveNodeNumeric(nodeData, 'contextCreativeFlow', id, 0.5),
+          FragmentedAttention: this.resolveNodeNumeric(nodeData, 'contextFragmentedAttention', id, 0.5),
+          CognitiveOverload: this.resolveNodeNumeric(nodeData, 'contextCognitiveOverload', id, 0.5),
         },
 
         // Visual enhancements
@@ -825,10 +861,11 @@ export class NeuralPhysicsEngine extends EventEmitter {
       this.nodes.set(nodeData.id, node);
     });
 
-    // Create  links
+    // Create links with deterministic fallbacks
     linkData.forEach(linkData => {
+      const lid = `${linkData.source}-${linkData.target}`;
       const link: Link = {
-        id: `${linkData.source}-${linkData.target}`,
+        id: lid,
         source: linkData.source,
         target: linkData.target,
         strength: linkData.strength || 0.5,
@@ -837,12 +874,12 @@ export class NeuralPhysicsEngine extends EventEmitter {
         // CAE 2.0 enhancements
         type: linkData.type || 'similarity',
         contextRelevance: {
-          DeepFocus: Math.random(),
-          CreativeFlow: Math.random(),
-          FragmentedAttention: Math.random(),
-          CognitiveOverload: Math.random(),
+          DeepFocus: this.deterministicUnitValue(lid, 'df'),
+          CreativeFlow: this.deterministicUnitValue(lid, 'cf'),
+          FragmentedAttention: this.deterministicUnitValue(lid, 'fa'),
+          CognitiveOverload: this.deterministicUnitValue(lid, 'co'),
         },
-        cognitiveDistance: linkData.cognitiveDistance || Math.random(),
+        cognitiveDistance: linkData.cognitiveDistance ?? this.deterministicUnitValue(lid, 'cd'),
 
         // Visual enhancements
         opacity: 0.6,
@@ -993,6 +1030,9 @@ export class NeuralPhysicsEngine extends EventEmitter {
         const nodeA = nodeArray[i];
         const nodeB = nodeArray[j];
 
+        // Guard against possible undefined elements when using indexed access
+        if (!nodeA || !nodeB) continue;
+
         const dx = nodeB.x - nodeA.x;
         const dy = nodeB.y - nodeA.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
@@ -1022,7 +1062,11 @@ export class NeuralPhysicsEngine extends EventEmitter {
    */
   private calculateLinkForce(link: Link, distance: number, config: PhysicsContextBehavior): number {
     const baseForce = link.adaptiveStrength * this.config.linkStrength.contextMultiplier;
-    const contextRelevance = link.contextRelevance[this.physicsState.currentContext] || 0.5;
+    // Normalize context key and safely read relevance
+    const ctxKey = this.physicsState.currentContext
+      ? String(this.physicsState.currentContext).charAt(0).toLowerCase() + String(this.physicsState.currentContext).slice(1)
+      : '';
+    const contextRelevance = link.contextRelevance[ctxKey as keyof typeof link.contextRelevance] ?? link.contextRelevance[this.physicsState.currentContext] ?? 0.5;
     const distanceModifier = (distance - link.distance) / link.distance;
 
     return baseForce * contextRelevance * distanceModifier;
@@ -1038,7 +1082,7 @@ export class NeuralPhysicsEngine extends EventEmitter {
     config: PhysicsContextBehavior
   ): number {
     const baseRepulsion = this.config.repulsionForce.base;
-    const cognitiveLoadMultiplier = 1 + (this.physicsState.cognitiveLoad * this.config.repulsionForce.cognitiveLoadMultiplier);
+    const cognitiveLoadMultiplier = 1 + (this.physicsState.cognitiveLoad * this.config.repulsionForce.cognitiveLoadMultiplier || 0);
     const sizeMultiplier = Math.sqrt(nodeA.adaptiveSize * nodeB.adaptiveSize);
 
     return (baseRepulsion * cognitiveLoadMultiplier * sizeMultiplier) / (distance * distance);
@@ -1124,7 +1168,7 @@ export class NeuralPhysicsEngine extends EventEmitter {
     if (node.isTargetNode) {
       node.animationState = 'highlighted';
       node.pulseIntensity = config.nodeAnimationIntensity * 1.5;
-    } else if (node.contextRelevance[context] > 0.7) {
+    } else if ((node.contextRelevance[context] ?? 0) > 0.7) {
       node.animationState = context === 'CreativeFlow' ? 'sparking' : 'pulsing';
       node.pulseIntensity = config.nodeAnimationIntensity;
     } else {
@@ -1374,6 +1418,40 @@ export class NeuralPhysicsEngine extends EventEmitter {
     const masteryLevel = nodeData.masteryLevel || 0.5;
 
     return baseSize * (0.7 + cognitiveLoad * 0.3 - masteryLevel * 0.2);
+  }
+
+  // Deterministic helpers to avoid non-deterministic Math.random() fallbacks
+  private get devRandom(): boolean {
+    try {
+      return (process && process.env && process.env.NODE_ENV) !== 'production';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  private deterministicUnitValue(id: string, salt = ''): number {
+    let h = 2166136261 >>> 0;
+    const s = id + '|' + salt;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return (h % 1000000) / 1000000;
+  }
+
+  private resolveNodeNumeric(nodeData: any, key: string, id: string, defaultVal = 0.5): number {
+    const meta = nodeData[key];
+    if (typeof meta === 'number') return meta;
+
+    // Placeholder for storage/cache lookup (if needed later).
+
+    if (this.devRandom) {
+      return Math.random();
+    }
+
+    const unit = this.deterministicUnitValue(id, key);
+    // Blend unit into defaultVal to keep scale similar
+    return defaultVal * (1 - unit) + unit * 0.5;
   }
 
   private updateNodesForContext(): void {

@@ -307,8 +307,8 @@ export class SupabaseAdapter {
       const subscription: RealtimeSubscription = {
         channel: subscriptionId,
         table,
-        filter,
-        callback: callback || this.defaultRealtimeCallback
+        ...(typeof filter === 'string' && filter.length > 0 ? { filter } : {}),
+        callback: callback || this.defaultRealtimeCallback,
       };
 
       await this.supabaseStorage.subscribeToChanges(
@@ -646,7 +646,7 @@ export class SupabaseAdapter {
     if (!match) return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // Default 30 days
 
     const [, amount, unit] = match;
-    const num = parseInt(amount);
+  const num = parseInt(String(amount ?? '0'));
 
     switch (unit) {
       case 'h': return new Date(now.getTime() - num * 60 * 60 * 1000);

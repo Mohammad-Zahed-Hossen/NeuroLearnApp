@@ -332,7 +332,8 @@ export class WellnessOrchestrator {
   public getStatus(): 'active' | 'idle' | 'error' | 'disabled' {
     if (!this.isInitialized) return 'disabled';
     if (this.isPaused) return 'idle';
-    if (this.metrics.stressLevel > 0.9 || this.metrics.sleepQuality < 0.3) return 'error';
+    // Only consider high stress as an error; low sleep quality (0) is just no data, not an error
+    if (this.metrics.stressLevel > 0.9) return 'error';
     return 'active';
   }
 
@@ -631,10 +632,13 @@ export class WellnessOrchestrator {
 
   private async collectHealthSnapshot(): Promise<void> {
     try {
+      const hr = await this.biometricService.getHeartRate();
+      const hrv = await this.biometricService.getHRV();
+
       const snapshot: HealthSnapshot = {
         timestamp: new Date(),
-        heartRate: await this.biometricService.getHeartRate(),
-        hrv: await this.biometricService.getHRV(),
+        ...(hr != null ? { heartRate: hr } : {}),
+        ...(hrv != null ? { hrv } : {}),
         stressLevel: this.metrics.stressLevel,
         cognitiveLoad: await this.getCognitiveLoad(),
         mood: this.metrics.moodScore,
@@ -673,7 +677,7 @@ export class WellnessOrchestrator {
   }
 
   private async analyzeHealthAnomalies(snapshot: HealthSnapshot): Promise<void> {
-    const anomalies = [];
+  const anomalies: any[] = [];
 
     // Check for high stress
     if (snapshot.stressLevel > this.config.stressThreshold) {
@@ -808,8 +812,8 @@ export class WellnessOrchestrator {
     const hrv = await this.biometricService.getHRV();
     return {
       timestamp: new Date(),
-      heartRate: hr == null ? undefined : hr,
-      hrv: hrv == null ? undefined : hrv,
+      ...(hr == null ? {} : { heartRate: hr }),
+      ...(hrv == null ? {} : { hrv }),
       stressLevel: this.metrics.stressLevel,
       cognitiveLoad: await this.getCognitiveLoad(),
       mood: this.metrics.moodScore,

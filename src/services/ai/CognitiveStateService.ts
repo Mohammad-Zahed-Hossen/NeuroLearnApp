@@ -195,7 +195,7 @@ export class CognitiveStateService {
 
   // Detect creative flow state indicators
   private hasCreativeFlowIndicators(features: any): boolean {
-    const indicators = [];
+  const indicators: string[] = [];
 
     // Moderate attention with low cognitive load
     if (features.attention > 0.6 && features.attention < 0.85 && features.cognitiveLoad < 0.5) {

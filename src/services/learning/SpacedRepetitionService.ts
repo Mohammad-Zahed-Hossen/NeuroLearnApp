@@ -282,24 +282,28 @@ export class SpacedRepetitionService {
    * Initialize difficulty for new cards based on first rating
    */
   private initDifficulty(rating: Rating): number {
-    const w = this.fsrsParams.w;
-    return Math.max(1, Math.min(10, w[4] - Math.exp(w[5] * (rating - 1)) + 1));
+    const w = this.fsrsParams.w || [];
+    const w4 = typeof w[4] === 'number' ? w[4] : 1;
+    const w5 = typeof w[5] === 'number' ? w[5] : 0;
+    return Math.max(1, Math.min(10, w4 - Math.exp(w5 * (rating - 1)) + 1));
   }
 
   /**
    * Initialize stability for new cards based on first rating
    */
   private initStability(rating: Rating): number {
-    const w = this.fsrsParams.w;
-    return Math.max(0.1, w[rating - 1]);
+    const w = this.fsrsParams.w || [];
+    const val = w[rating - 1] ?? 1;
+    return Math.max(0.1, val);
   }
 
   /**
    * Calculate next difficulty based on current difficulty and rating
    */
   private nextDifficulty(currentDifficulty: number, rating: Rating): number {
-    const w = this.fsrsParams.w;
-    const delta = -w[6] * (rating - 3);
+    const w = this.fsrsParams.w || [];
+    const w6 = typeof w[6] === 'number' ? w[6] : 0;
+    const delta = -w6 * (rating - 3);
     const nextDifficulty = currentDifficulty + delta;
 
     return Math.max(1, Math.min(10, nextDifficulty));
@@ -315,18 +319,23 @@ export class SpacedRepetitionService {
     elapsed_days: number,
     isNewGraduation: boolean,
   ): number {
-    const w = this.fsrsParams.w;
-    const difficulty = card.difficulty;
-    const stability = card.stability;
+    const w = this.fsrsParams.w || [];
+    const difficulty = typeof card.difficulty === 'number' ? card.difficulty : 5;
+    const stability = typeof card.stability === 'number' ? card.stability : 1;
 
     if (isNewGraduation) {
       // For cards graduating from learning to review
+      const w7 = typeof w[7] === 'number' ? w[7] : 1;
+      const w8 = typeof w[8] === 'number' ? w[8] : 1;
+      const w9 = typeof w[9] === 'number' ? w[9] : 1;
+      const w10 = typeof w[10] === 'number' ? w[10] : 0;
+      const reps = typeof card.reps === 'number' ? card.reps : 0;
       return Math.max(
         0.1,
-        w[7] *
-          Math.pow(difficulty, -w[8]) *
-          (Math.pow(card.scheduled_days + 1, w[9]) - 1) *
-          Math.exp(w[10] * (1 - card.reps)),
+        w7 *
+          Math.pow(difficulty, -w8) *
+          (Math.pow((card.scheduled_days || 0) + 1, w9) - 1) *
+          Math.exp(w10 * (1 - reps)),
       );
     } else {
       // For cards already in review
@@ -337,20 +346,28 @@ export class SpacedRepetitionService {
 
       let newStability: number;
 
+      const w11 = typeof w[11] === 'number' ? w[11] : 1;
+      const w12 = typeof w[12] === 'number' ? w[12] : 1;
+      const w13 = typeof w[13] === 'number' ? w[13] : 1;
+      const w14 = typeof w[14] === 'number' ? w[14] : 0;
+      const w15 = typeof w[15] === 'number' ? w[15] : 0;
+      const w16 = typeof w[16] === 'number' ? w[16] : 0;
+      const w17 = typeof w[17] === 'number' ? w[17] : 0;
+      const w18 = typeof w[18] === 'number' ? w[18] : 1;
+
       if (rating === Rating.Again) {
         newStability =
-          w[11] *
-          Math.pow(difficulty, -w[12]) *
-          (Math.pow(stability + 1, w[13]) - 1) *
-          Math.exp(w[14] * (1 - retrievability));
+          w11 *
+          Math.pow(difficulty, -w12) *
+          (Math.pow(stability + 1, w13) - 1) *
+          Math.exp(w14 * (1 - retrievability));
       } else {
+        const factor = rating - 3 + w16 * (rating === Rating.Easy ? 1 : 0);
+        const powBase = Math.max(-100, retrievability - w17);
         newStability =
           stability *
           Math.exp(
-            w[15] *
-              (rating - 3 + w[16] * (rating === Rating.Easy ? 1 : 0)) *
-              Math.pow(retrievability - w[17], w[18]) *
-              (1 + Math.exp(w[17] - retrievability)),
+            w15 * factor * Math.pow(powBase, w18) * (1 + Math.exp(w17 - retrievability)),
           );
       }
 
@@ -494,10 +511,9 @@ export class SpacedRepetitionService {
     const difficultCards = cards.filter((card) => card.difficulty > 7);
     const difficultCardTypes = [
       ...new Set(
-        difficultCards.map((card) => {
-          // Extract card type from ID or content (implementation specific)
-          return card.id.split('_')[0];
-        }),
+        difficultCards
+          .map((card) => card.id?.split('_')?.[0])
+          .filter((type): type is string => type !== undefined),
       ),
     ];
 

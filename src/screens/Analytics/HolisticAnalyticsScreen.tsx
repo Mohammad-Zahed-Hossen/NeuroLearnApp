@@ -51,6 +51,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 // Use react-native-chart-kit instead of victory-native for better stability
 import { PieChart, LineChart } from 'react-native-chart-kit';
+import { FlashList } from '@shopify/flash-list';
 
 // Services
 import {
@@ -61,6 +62,24 @@ import { CognitiveAuraService } from '../../services/ai/CognitiveAuraService';
 import { ChromotherapyService } from '../../services/health/ChromotherapyService';
 import { GlassCard } from '../../components/GlassComponents';
 import SupabaseService from '../../services/storage/SupabaseService';
+import { perf } from '../../utils/perfMarks';
+import { useOptimizedQuery } from '../../hooks/useOptimizedQuery';
+
+type CorrelationItem = {
+  id: string;
+  x: string;
+  y: string;
+  z: number;
+  fill: string;
+  strength: number;
+};
+
+type TransformedAnalyticsReport = HolisticAnalyticsReport & {
+  _correlations?: CorrelationItem[];
+  _learningChartData?: any;
+  _focusChartData?: any[];
+  aiInsights?: any;
+};
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -204,11 +223,8 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
   theme,
   userId,
 }) => {
+  const mountMarkRef = useRef<string | null>(null);
   // State management
-  const [analyticsReport, setAnalyticsReport] =
-    useState<HolisticAnalyticsReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [cognitiveState, setCognitiveState] = useState<
@@ -218,10 +234,10 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
   const [viewMode, setViewMode] = useState<
     'overview' | 'detailed' | 'correlations' | 'predictions'
   >('overview');
+  const [forceUpdate, setForceUpdate] = useState(0);
 
   // Animation values
   const scoreAnimations = useSharedValue<Record<string, number>>({});
-  const chartAnimations = useSharedValue<Record<string, number>>({});
   const glowPulse = useSharedValue(1);
   const loadingProgress = useSharedValue(0);
   const modalScale = useSharedValue(0);
@@ -233,11 +249,155 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
   ).current;
   const cognitiveAura = useRef(CognitiveAuraService.getInstance()).current;
 
+  const getCorrelationColor = useCallback(
+    (value: number): string => {
+      if (value > 0.7) return adaptiveColors.correlation.strong_positive;
+      if (value > 0.4) return adaptiveColors.correlation.moderate_positive;
+      if (value > 0.1) return adaptiveColors.correlation.weak_positive;
+      if (value > -0.1) return adaptiveColors.correlation.neutral;
+      if (value > -0.4) return adaptiveColors.correlation.weak_negative;
+      if (value > -0.7) return adaptiveColors.correlation.moderate_negative;
+      return adaptiveColors.correlation.strong_negative;
+    },
+    [adaptiveColors],
+  );
+
+  // Use optimized query for analytics data with aggressive caching and batched data transformation
+  const {
+    data: analyticsReport,
+    isLoading: loading,
+    isFetching,
+    refetch,
+  } = useOptimizedQuery<TransformedAnalyticsReport | null>({
+    queryKey: ['holistic-analytics', resolvedUserIdRef.current, forceUpdate],
+    queryFn: async () => {
+      const uid =
+        resolvedUserIdRef.current ||
+        (await (async () => {
+          try {
+            const supa = SupabaseService.getInstance();
+            const u = await supa.getCurrentUser();
+            return u?.id ?? null;
+          } catch (e) {
+            return null;
+          }
+        })());
+
+      if (!uid) {
+        throw new Error('No authenticated user found');
+      }
+
+      return await analyticsService.generateHolisticReport(uid, !!forceUpdate);
+    },
+    enabled: !!resolvedUserIdRef.current,
+    staleTime: 15 * 60 * 1000, // Increased to 15 minutes for aggressive caching
+    gcTime: 30 * 60 * 1000, // Increased to 30 minutes
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false, // Disable to prevent unnecessary refetches
+    refetchInterval: 30 * 60 * 1000, // Background refetch every 30 minutes (reduced frequency)
+    refetchIntervalInBackground: true,
+    networkMode: 'offlineFirst', // Serve cached data first
+    select: useMemo(
+      () => (data: HolisticAnalyticsReport | null) => {
+        // Batched data transformation for optimal performance
+        if (!data) return null;
+
+        // Batch 1: Correlation matrix processing
+        const correlations = Object.entries(data.correlationMatrix || {});
+        const processedCorrelations = correlations
+          .map(([key, value]) => ({
+            id: key,
+            x: key.split('Vs')[0],
+            y: key.split('Vs')[1] || 'Performance',
+            z: value,
+            fill: getCorrelationColor(value),
+            strength: Math.abs(value),
+          }))
+          .sort((a, b) => b.strength - a.strength);
+
+        // Batch 2: Learning analytics processing
+        const masteryLevels = Object.entries(
+          data.learningAnalytics?.masteryDistribution || {},
+        );
+        const masteryData = masteryLevels.map(([level, count]) => ({
+          name: level.charAt(0).toUpperCase() + level.slice(1),
+          population: count,
+          color:
+            [
+              adaptiveColors.needs_improvement.color,
+              adaptiveColors.moderate.color,
+              adaptiveColors.good.color,
+              adaptiveColors.excellent.color,
+            ][
+              ['beginner', 'intermediate', 'advanced', 'expert'].indexOf(level)
+            ] || adaptiveColors.needs_improvement.color,
+          legendFontColor: '#FFFFFF',
+          legendFontSize: 12,
+        }));
+
+        const retentionData = (
+          (data.learningAnalytics?.retentionRateChart as any[]) || []
+        ).map((item) => ({
+          date: item.date,
+          rate: item.rate,
+        }));
+
+        // Batch 3: Focus analytics processing
+        const focusTrendData = (
+          (data.focusAnalytics?.cognitiveLoadTrend as any[]) || []
+        ).map((item) => ({
+          date: item.date,
+          load: item.load,
+        }));
+
+        // Batch 4: AI insights processing (limit recommendations for performance)
+        const limitedRecommendations = (
+          data.aiInsights?.improvementRecommendations || []
+        ).slice(0, 5);
+
+        return {
+          ...data,
+          _correlations: processedCorrelations,
+          _learningChartData: {
+            mastery: masteryData,
+            retention: retentionData,
+          },
+          _focusChartData: focusTrendData,
+          aiInsights: data.aiInsights
+            ? {
+                ...data.aiInsights,
+                improvementRecommendations: limitedRecommendations,
+              }
+            : undefined,
+        } as TransformedAnalyticsReport;
+      },
+      [adaptiveColors, getCorrelationColor],
+    ),
+  });
+
+  // Local typed alias for safer property access in JSX render helpers
+  const report = analyticsReport as TransformedAnalyticsReport | null;
+
+  // Animate scores when analytics report updates
+  useEffect(() => {
+    if (
+      analyticsReport &&
+      typeof analyticsReport === 'object' &&
+      'overallScores' in analyticsReport &&
+      analyticsReport.overallScores &&
+      Object.keys(analyticsReport.overallScores).length > 0
+    ) {
+      animateScores(analyticsReport.overallScores as Record<string, number>);
+    }
+  }, [analyticsReport]);
+
   // Module-scope child components (ScoreCard, GlowTitle, LoadingBar, ModalAnimatedContainer)
   // are used instead to keep hook order stable. See module top for definitions.
 
   // Initialize screen
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('HolisticAnalyticsScreen');
+
     (async () => {
       if (!resolvedUserIdRef.current) {
         try {
@@ -251,10 +411,20 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
         }
       }
 
-      await initializeAnalytics();
       startGlowAnimation();
     })();
   }, []);
+
+  useEffect(() => {
+    if (!loading && mountMarkRef.current) {
+      try {
+        perf.measureReady('HolisticAnalyticsScreen', mountMarkRef.current);
+      } catch (e) {
+        // no-op - perf helper is guarded
+      }
+      mountMarkRef.current = null;
+    }
+  }, [loading]);
 
   // Monitor cognitive state changes
   useEffect(() => {
@@ -299,62 +469,6 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
     return () => clearInterval(interval);
   }, [cognitiveState]);
 
-  const initializeAnalytics = async () => {
-    try {
-      setLoading(true);
-      loadingProgress.value = withTiming(0.3, { duration: 1000 });
-
-      // Generate comprehensive analytics report
-      // Resolve current user id; if not available, abort and surface to user
-      const uid =
-        resolvedUserIdRef.current ||
-        (await (async () => {
-          try {
-            const supa = SupabaseService.getInstance();
-            const u = await supa.getCurrentUser();
-            return u?.id ?? null;
-          } catch (e) {
-            return null;
-          }
-        })());
-
-      if (!uid) {
-        console.warn(
-          'No authenticated user found - cannot generate analytics report',
-        );
-        Alert.alert(
-          'Not signed in',
-          'Please sign in to view personalized analytics.',
-        );
-        setLoading(false);
-        return;
-      }
-
-      const report = await analyticsService.generateHolisticReport(uid, false);
-
-      loadingProgress.value = withTiming(0.7, { duration: 1000 });
-
-      setAnalyticsReport(report);
-
-      // Animate score displays
-      animateScores(report.overallScores);
-
-      loadingProgress.value = withTiming(1, { duration: 500 });
-
-      setTimeout(() => setLoading(false), 500);
-
-      // Haptic feedback for completion
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch (error) {
-      console.error('Error initializing analytics:', error);
-      setLoading(false);
-      Alert.alert(
-        'Analytics Error',
-        'Failed to load analytics data. Please try refreshing.',
-      );
-    }
-  };
-
   const adaptUIToCognitiveState = async (state: typeof cognitiveState) => {
     const adaptiveColorScheme = { ...ANALYTICS_COLORS };
 
@@ -393,7 +507,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
     );
   };
 
-  const animateScores = (scores: HolisticAnalyticsReport['overallScores']) => {
+  const animateScores = (scores: Record<string, number>) => {
     const animations: Record<string, number> = {};
 
     Object.entries(scores).forEach(([key, value], index) => {
@@ -407,46 +521,16 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
 
   const handleRefresh = async () => {
     try {
-      setRefreshing(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      // Clear cache and regenerate
+      // Clear cache and force refetch
       analyticsService.clearCache();
-      const uid =
-        resolvedUserIdRef.current ||
-        (await (async () => {
-          try {
-            const supa = SupabaseService.getInstance();
-            const u = await supa.getCurrentUser();
-            return u?.id ?? null;
-          } catch (e) {
-            return null;
-          }
-        })());
-
-      if (!uid) {
-        console.warn(
-          'No authenticated user found - cannot refresh analytics report',
-        );
-        Alert.alert(
-          'Not signed in',
-          'Please sign in to refresh personalized analytics.',
-        );
-        setRefreshing(false);
-        return;
-      }
-
-      const report = await analyticsService.generateHolisticReport(uid, true);
-
-      setAnalyticsReport(report);
-      animateScores(report.overallScores);
+      setForceUpdate((prev) => prev + 1);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       console.error('Error refreshing analytics:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -467,9 +551,9 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
 
   // Render overall intelligence scores dashboard
   const renderIntelligenceScores = () => {
-    if (!analyticsReport) return null;
+    if (!report || !report.overallScores) return null;
 
-    const { overallScores } = analyticsReport;
+    const { overallScores } = report;
 
     return (
       <GlassCard style={styles.intelligenceCard} theme={theme}>
@@ -481,7 +565,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
         </View>
 
         <View style={styles.scoresGrid}>
-          {Object.entries(overallScores)
+          {Object.entries(overallScores as Record<string, number>)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([key, value]) => (
               <ScoreCard
@@ -502,10 +586,10 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
   };
 
   // Render learning analytics section
-  const renderLearningAnalytics = () => {
-    if (!analyticsReport?.learningAnalytics) return null;
+  const renderLearningAnalytics = useMemo(() => {
+    if (!report?.learningAnalytics || !report?._learningChartData) return null;
 
-    const { learningAnalytics } = analyticsReport;
+    const { learningAnalytics } = report;
 
     return (
       <GlassCard style={styles.analyticsCard} theme={theme}>
@@ -572,21 +656,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
         <View style={styles.chartContainer}>
           <Text style={styles.chartTitle}>Knowledge Mastery Distribution</Text>
           <PieChart
-            data={Object.entries(learningAnalytics.masteryDistribution).map(
-              ([level, count], index) => ({
-                name: level.charAt(0).toUpperCase() + level.slice(1),
-                population: count,
-                color:
-                  [
-                    adaptiveColors.needs_improvement.color,
-                    adaptiveColors.moderate.color,
-                    adaptiveColors.good.color,
-                    adaptiveColors.excellent.color,
-                  ][index] || adaptiveColors.needs_improvement.color,
-                legendFontColor: '#FFFFFF',
-                legendFontSize: 12,
-              }),
-            )}
+            data={report!._learningChartData.mastery}
             width={SCREEN_WIDTH * 0.8}
             height={200}
             chartConfig={{
@@ -608,13 +678,13 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
         </View>
       </GlassCard>
     );
-  };
+  }, [analyticsReport, adaptiveColors, theme]);
 
   // Render focus analytics section
   const renderFocusAnalytics = () => {
-    if (!analyticsReport?.focusAnalytics) return null;
+    if (!report?.focusAnalytics) return null;
 
-    const { focusAnalytics } = analyticsReport;
+    const { focusAnalytics } = report;
 
     return (
       <GlassCard style={styles.analyticsCard} theme={theme}>
@@ -659,12 +729,12 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
             <LineChart
               data={{
                 labels: focusAnalytics.cognitiveLoadTrend.map(
-                  (item) => item.date,
+                  (item: { date: string; load: number }) => item.date,
                 ),
                 datasets: [
                   {
                     data: focusAnalytics.cognitiveLoadTrend.map(
-                      (item) => item.load,
+                      (item: { date: string; load: number }) => item.load,
                     ),
                     color: (opacity = 1) => adaptiveColors.focus.primary,
                     strokeWidth: 2,
@@ -705,17 +775,34 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
 
   // Render correlation matrix heatmap
   const renderCorrelationMatrix = () => {
-    if (!analyticsReport?.correlationMatrix) return null;
+    if (!report?._correlations) return null;
 
-    const correlations = analyticsReport.correlationMatrix;
-    const correlationData = Object.entries(correlations).map(
-      ([key, value]) => ({
-        x: key.split('Vs')[0],
-        y: key.split('Vs')[1] || 'Performance',
-        z: value,
-        fill: getCorrelationColor(value),
-      }),
+    const correlationData = report._correlations;
+
+    const renderCorrelationItem = useCallback(
+      (info: any) => {
+        const item: CorrelationItem = info.item;
+        return (
+          <TouchableOpacity
+            style={[
+              styles.correlationCell,
+              { backgroundColor: item.fill + '30' },
+            ]}
+            onPress={() => handleMetricPress(`correlation_${item.x}_${item.y}`)}
+          >
+            <Text style={styles.correlationLabel}>{item.x}</Text>
+            <Text style={styles.correlationArrow}>↔</Text>
+            <Text style={styles.correlationLabel}>{item.y}</Text>
+            <Text style={[styles.correlationValue, { color: item.fill }]}>
+              {(item.z * 100).toFixed(0)}%
+            </Text>
+          </TouchableOpacity>
+        );
+      },
+      [handleMetricPress],
     );
+
+    const keyExtractor = useCallback((item: any) => item.id, []);
 
     return (
       <GlassCard style={styles.analyticsCard} theme={theme}>
@@ -726,48 +813,23 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
           </Text>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.correlationGrid}>
-            {correlationData.map((item, index) => (
-              <TouchableOpacity
-                key={index}
-                style={[
-                  styles.correlationCell,
-                  { backgroundColor: item.fill + '30' },
-                ]}
-                onPress={() =>
-                  handleMetricPress(`correlation_${item.x}_${item.y}`)
-                }
-              >
-                <Text style={styles.correlationLabel}>{item.x}</Text>
-                <Text style={styles.correlationArrow}>↔</Text>
-                <Text style={styles.correlationLabel}>{item.y}</Text>
-                <Text style={[styles.correlationValue, { color: item.fill }]}>
-                  {(item.z * 100).toFixed(0)}%
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
+        <FlashList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={correlationData}
+          renderItem={renderCorrelationItem}
+          keyExtractor={keyExtractor}
+          contentContainerStyle={styles.correlationGrid}
+        />
       </GlassCard>
     );
   };
 
-  const getCorrelationColor = (value: number): string => {
-    if (value > 0.7) return adaptiveColors.correlation.strong_positive;
-    if (value > 0.4) return adaptiveColors.correlation.moderate_positive;
-    if (value > 0.1) return adaptiveColors.correlation.weak_positive;
-    if (value > -0.1) return adaptiveColors.correlation.neutral;
-    if (value > -0.4) return adaptiveColors.correlation.weak_negative;
-    if (value > -0.7) return adaptiveColors.correlation.moderate_negative;
-    return adaptiveColors.correlation.strong_negative;
-  };
-
   // Render AI insights section
   const renderAIInsights = () => {
-    if (!analyticsReport?.aiInsights) return null;
+    if (!report?.aiInsights) return null;
 
-    const { aiInsights } = analyticsReport;
+    const { aiInsights } = report;
 
     return (
       <GlassCard style={styles.analyticsCard} theme={theme}>
@@ -811,27 +873,32 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
           </Text>
           {aiInsights.improvementRecommendations
             .slice(0, 3)
-            .map((rec, index) => (
-              <TouchableOpacity key={index} style={styles.recommendationItem}>
-                <View style={styles.recommendationDot} />
-                <View style={styles.recommendationContent}>
-                  <Text style={styles.recommendationDomain}>
-                    {rec.domain.toUpperCase()}
-                  </Text>
-                  <Text style={styles.recommendationText}>
-                    {rec.suggestion}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.recommendationImpact,
-                      { color: adaptiveColors.excellent.color },
-                    ]}
-                  >
-                    Impact: {Math.round(rec.impact * 100)}%
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))}
+            .map(
+              (
+                rec: { domain: string; suggestion: string; impact: number },
+                index: number,
+              ) => (
+                <TouchableOpacity key={index} style={styles.recommendationItem}>
+                  <View style={styles.recommendationDot} />
+                  <View style={styles.recommendationContent}>
+                    <Text style={styles.recommendationDomain}>
+                      {rec.domain.toUpperCase()}
+                    </Text>
+                    <Text style={styles.recommendationText}>
+                      {rec.suggestion}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.recommendationImpact,
+                        { color: adaptiveColors.excellent.color },
+                      ]}
+                    >
+                      Impact: {Math.round(rec.impact * 100)}%
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ),
+            )}
         </View>
       </GlassCard>
     );
@@ -944,7 +1011,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
         contentContainerStyle={styles.contentContainer}
         refreshControl={
           <RefreshControl
-            refreshing={refreshing}
+            refreshing={isFetching}
             onRefresh={handleRefresh}
             tintColor={adaptiveColors.intelligence.primary}
             colors={[adaptiveColors.intelligence.primary]}
@@ -958,7 +1025,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
 
         {/* Learning Analytics */}
         {(viewMode === 'overview' || viewMode === 'detailed') &&
-          renderLearningAnalytics()}
+          renderLearningAnalytics}
 
         {/* Focus Analytics */}
         {(viewMode === 'overview' || viewMode === 'detailed') &&

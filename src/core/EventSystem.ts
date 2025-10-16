@@ -100,8 +100,8 @@ export class EventSystem extends EventEmitter {
       timestamp: new Date(),
       priority,
       data,
-      correlationId,
-      userId
+      ...(correlationId !== undefined ? { correlationId } : {}),
+      ...(userId !== undefined ? { userId } : {})
     };
 
     this.logger.debug(`Event emitted: ${type}`, {
@@ -305,11 +305,12 @@ export class EventSystem extends EventEmitter {
   }
 
   private findInsertIndex(event: NeuroLearnEvent): number {
-  const priorityOrder: Record<'critical' | 'high' | 'medium' | 'low', number> = { critical: -1, high: 0, medium: 1, low: 2 };
-  const eventPriorityValue = priorityOrder[event.priority];
+    const priorityOrder: Record<'critical' | 'high' | 'medium' | 'low', number> = { critical: -1, high: 0, medium: 1, low: 2 };
+    const eventPriorityValue = priorityOrder[event.priority] ?? priorityOrder.medium;
 
     for (let i = 0; i < this.eventQueue.length; i++) {
-      const queueEventPriorityValue = priorityOrder[this.eventQueue[i].priority];
+      const queued = this.eventQueue[i];
+      const queueEventPriorityValue = priorityOrder[queued?.priority ?? 'medium'];
       if (eventPriorityValue < queueEventPriorityValue) {
         return i;
       }

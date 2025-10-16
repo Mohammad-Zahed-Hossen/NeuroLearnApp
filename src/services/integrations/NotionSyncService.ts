@@ -13,27 +13,29 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import MMKVStorageService from '../storage/MMKVStorageService';
 import { supabase } from '../storage/SupabaseService';
 import { HybridStorageService } from '../storage/HybridStorageService';
-// import { AICoachingService } from './AICoachingService'; // Commented out - file doesn't exist
 import { MindMapGenerator } from '../learning/MindMapGeneratorService';
 import { NOTION_CONFIG } from '../../config/integrations';
+import { NotionOAuthService } from './NotionOAuthService';
+import { base64Encode } from '../../utils/base64';
+import { encryptData, decryptData, safeDecrypt } from '../../utils/encryption';
 
 // Types
 interface NotionAuthConfig {
   token: string;
   workspaceId?: string;
   workspaceName?: string;
-  botId?: string;
+  botId?: string | null;
 }
 
 interface NotionPage {
   id: string;
   title: string;
   url: string;
-  databaseId?: string;
+  databaseId?: string | null;
   pageType: 'page' | 'database';
   lastEditedTime: string;
   createdTime: string;
-  parentId?: string;
+  parentId?: string | null;
   archived: boolean;
   properties: any;
   contentPreview?: string;
@@ -45,12 +47,12 @@ interface NotionBlock {
   blockType: string;
   contentText: string;
   richText: any[];
-  parentBlockId?: string;
+  parentBlockId?: string | null;
   hasChildren: boolean;
   blockOrder: number;
   properties: any;
   annotations: any;
-  href?: string;
+  href?: string | null;
 }
 
 interface NotionLink {
@@ -80,7 +82,7 @@ interface SyncStats {
   totalPages: number;
   totalBlocks: number;
   totalLinks: number;
-  lastSync?: Date;
+  lastSync?: Date | null;
   syncStatus: 'current' | 'pending' | 'stale';
   pendingChanges: number;
   successfulSyncsToday: number;
@@ -144,11 +146,11 @@ export class NotionSyncService {
       console.log('🔄 Exchanging OAuth code for token...');
 
       // Notion OAuth token exchange endpoint
-      const response = await fetch(NOTION_CONFIG.TOKEN_URL, {
+      const response = await fetch('https://api.notion.com/v1/oauth/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Basic ${btoa(NOTION_CONFIG.CLIENT_ID + ':' + NOTION_CONFIG.CLIENT_SECRET)}`
+          'Authorization': `Basic ${btoa((process.env.NOTION_CLIENT_ID || '') + ':' + (process.env.NOTION_CLIENT_SECRET || ''))}`
         },
         body: JSON.stringify({
           grant_type: 'authorization_code',
@@ -202,15 +204,18 @@ export class NotionSyncService {
         token,
         workspaceId: user.id,
         workspaceName: workspace || 'Notion Workspace',
-        botId: user.type === 'bot' ? user.id : undefined
+        botId: user.type === 'bot' ? user.id : null
       };
 
-      // Persist via storage wrapper (async)
-      await this.storage.setItem('notion.authToken', token);
-      await this.storage.setItem('notion.workspaceId', authConfig.workspaceId || '');
-      await this.storage.setItem('notion.workspaceName', authConfig.workspaceName || '');
-      await this.storage.setItem('notion.lastSync', String(Date.now()));
-      await this.storage.setItem('notion.connectionStatus', 'connected');
+      // Store encrypted token in Supabase
+      await this.storeEncryptedToken(token);
+
+      // Persist via storage wrapper (async) - keep for backward compatibility
+      await this.storageService.setItem('notion.authToken', token);
+      await this.storageService.setItem('notion.workspaceId', authConfig.workspaceId || '');
+      await this.storageService.setItem('notion.workspaceName', authConfig.workspaceName || '');
+      await this.storageService.setItem('notion.lastSync', String(Date.now()));
+      await this.storageService.setItem('notion.connectionStatus', 'connected');
 
       // Update in-memory cached values used by synchronous callers
       this.connected = true;
@@ -218,9 +223,9 @@ export class NotionSyncService {
       this.workspaceName = authConfig.workspaceName || null;
       this.cachedLastSync = Date.now();
 
-      // Update user profile in Supabase
+      // Update user profile in Supabase with encrypted token
       await this.updateUserProfile({
-        notion_token: token,
+        notion_token_encrypted: encryptData(token),
         notion_workspace_id: authConfig.workspaceId,
         notion_workspace_name: authConfig.workspaceName,
         notion_last_sync: new Date().toISOString()
@@ -244,8 +249,8 @@ export class NotionSyncService {
       console.error('❌ Failed to connect to Notion:', error);
 
   // Clear any partial auth data
-  await this.storage.removeItem('notion.authToken');
-  await this.storage.setItem('notion.connectionStatus', 'error');
+  await this.storageService.removeItem('notion.authToken');
+  await this.storageService.setItem('notion.connectionStatus', 'error');
   this.connected = false;
 
       return {
@@ -299,7 +304,7 @@ export class NotionSyncService {
       let totalBlocks = 0;
 
       for (const page of pages) {
-        const blocks = await this.syncPageBlocks(page.id);
+        const blocks = await this.syncBlocks(page.id, page.id);
         totalBlocks += blocks.length;
 
         // Add to block cache
@@ -320,9 +325,9 @@ export class NotionSyncService {
 
       // Update MMKV cache
   // Persist updated counters via async storage wrapper
-  await this.storage.setItem('notion.lastSync', String(Date.now()));
-  await this.storage.setItem('notion.pageCount', String(syncSession.pagesSynced));
-  await this.storage.setItem('notion.blockCount', String(syncSession.blocksSynced));
+  await this.storageService.setItem('notion.lastSync', String(Date.now()));
+  await this.storageService.setItem('notion.pageCount', String(syncSession.pagesSynced));
+  await this.storageService.setItem('notion.blockCount', String(syncSession.blocksSynced));
 
   // Update cached values
   this.cachedLastSync = Date.now();
@@ -385,7 +390,8 @@ export class NotionSyncService {
 
         // Process concept links
         for (const match of conceptMatches) {
-          const conceptName = (match as RegExpMatchArray)[1].trim();
+          if (!match) continue;
+          const conceptName = match[1].trim();
           const normalizedConcept = conceptName.toLowerCase();
 
           // Find matching neural node
@@ -404,7 +410,7 @@ export class NotionSyncService {
               confidenceScore: 0.9, // High confidence for explicit mentions
               autoLinked: true,
               linkContext: `Concept mentioned in Notion: "${conceptName}"`,
-              mentionText: (match as RegExpMatchArray)[0]
+              mentionText: match[0]
             };
 
             await this.createNotionLink(link);
@@ -626,7 +632,7 @@ export class NotionSyncService {
         totalPages: stats.total_pages,
         totalBlocks: stats.total_blocks,
         totalLinks: stats.total_links,
-        lastSync: stats.last_sync ? new Date(stats.last_sync) : undefined,
+        lastSync: stats.last_sync ? new Date(stats.last_sync) : null,
         syncStatus: syncStatusValue,
         pendingChanges: stats.pending_changes,
         successfulSyncsToday: stats.successful_syncs_today
@@ -637,15 +643,15 @@ export class NotionSyncService {
 
       // Fallback to async storage wrapper values (best-effort)
       try {
-        const p = await this.storage.getItem('notion.pageCount');
-        const b = await this.storage.getItem('notion.blockCount');
-        const ls = await this.storage.getItem('notion.lastSync');
+        const p = await this.storageService.getItem('notion.pageCount');
+        const b = await this.storageService.getItem('notion.blockCount');
+        const ls = await this.storageService.getItem('notion.lastSync');
 
         return {
           totalPages: p ? parseInt(p, 10) || 0 : this.cachedPageCount || 0,
           totalBlocks: b ? parseInt(b, 10) || 0 : this.cachedBlockCount || 0,
           totalLinks: 0,
-          lastSync: ls ? new Date(Number(ls)) : this.cachedLastSync ? new Date(this.cachedLastSync) : undefined,
+          lastSync: ls ? new Date(Number(ls)) : this.cachedLastSync ? new Date(this.cachedLastSync) : null,
           syncStatus: 'stale',
           pendingChanges: 0,
           successfulSyncsToday: 0
@@ -655,7 +661,7 @@ export class NotionSyncService {
           totalPages: this.cachedPageCount || 0,
           totalBlocks: this.cachedBlockCount || 0,
           totalLinks: 0,
-          lastSync: this.cachedLastSync ? new Date(this.cachedLastSync) : undefined,
+          lastSync: this.cachedLastSync ? new Date(this.cachedLastSync) : null,
           syncStatus: 'stale',
           pendingChanges: 0,
           successfulSyncsToday: 0
@@ -733,25 +739,66 @@ export class NotionSyncService {
 
   private async initializeFromCache(): Promise<void> {
     try {
-      const token = await this.storage.getItem('notion.authToken');
+      // Try to get encrypted token from Supabase first
+      const { data: userResp } = await supabase.auth.getUser();
+      const userId = userResp?.user?.id;
+      if (userId) {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('notion_token_encrypted')
+          .eq('id', userId)
+          .single();
+
+        if (profile?.notion_token_encrypted) {
+          try {
+            const decryptedToken = safeDecrypt(profile.notion_token_encrypted);
+            this.notionClient = new NotionClient({ auth: decryptedToken });
+            console.log('✅ Restored Notion connection from encrypted token');
+            this.connected = true;
+            return;
+          } catch (error) {
+            console.warn('⚠️ Failed to decrypt token from Supabase, trying server-side decryption:', error);
+
+            // Fallback: try server-side decryption via Edge Function
+            try {
+              const { data: decryptResult, error: decryptError } = await supabase.rpc('decrypt_token', {
+                encrypted_token: profile.notion_token_encrypted,
+                encryption_key: process.env.EXPO_PUBLIC_ENCRYPTION_KEY || 'neurolearn-secure-key-2024'
+              });
+
+              if (!decryptError && decryptResult) {
+                this.notionClient = new NotionClient({ auth: decryptResult });
+                console.log('✅ Restored Notion connection via server-side decryption');
+                this.connected = true;
+                return;
+              }
+            } catch (serverError) {
+              console.warn('⚠️ Server-side decryption also failed:', serverError);
+            }
+          }
+        }
+      }
+
+      // Fallback to local storage (for backward compatibility)
+      const token = await this.storageService.getItem('notion.authToken');
       if (token) {
         try {
           this.notionClient = new NotionClient({ auth: token });
-          console.log('✅ Restored Notion connection from cache');
+          console.log('✅ Restored Notion connection from local storage');
           this.connected = true;
         } catch (error) {
           console.warn('⚠️ Failed to restore Notion connection:', error);
-          await this.storage.removeItem('notion.authToken');
+          await this.storageService.removeItem('notion.authToken');
           this.connected = false;
         }
       }
 
       // Load workspace metadata
-      const wid = await this.storage.getItem('notion.workspaceId');
-      const wname = await this.storage.getItem('notion.workspaceName');
-      const pcount = await this.storage.getItem('notion.pageCount');
-      const bcount = await this.storage.getItem('notion.blockCount');
-      const ls = await this.storage.getItem('notion.lastSync');
+      const wid = await this.storageService.getItem('notion.workspaceId');
+      const wname = await this.storageService.getItem('notion.workspaceName');
+      const pcount = await this.storageService.getItem('notion.pageCount');
+      const bcount = await this.storageService.getItem('notion.blockCount');
+      const ls = await this.storageService.getItem('notion.lastSync');
 
       this.workspaceId = wid || null;
       this.workspaceName = wname || null;
@@ -770,7 +817,7 @@ export class NotionSyncService {
     let cursor: string | undefined;
 
     // Get last sync time for incremental sync
-    const lastSyncStr = await this.storage.getItem('notion.lastSync');
+    const lastSyncStr = await this.storageService.getItem('notion.lastSync');
     const lastSyncTime = syncType === 'incremental' && lastSyncStr ? Number(lastSyncStr) : undefined;
 
     do {
@@ -784,7 +831,7 @@ export class NotionSyncService {
           direction: 'descending',
           timestamp: 'last_edited_time'
         },
-        start_cursor: cursor,
+        ...(cursor && { start_cursor: cursor }),
         page_size: this.SYNC_BATCH_SIZE
       });
 
@@ -800,10 +847,10 @@ export class NotionSyncService {
             title: this.extractPageTitle(page),
             url: page.url || '',
             pageType: page.parent?.type === 'database_id' ? 'database' : 'page',
-            databaseId: page.parent?.type === 'database_id' ? page.parent.database_id : undefined,
+            databaseId: page.parent?.type === 'database_id' ? page.parent.database_id : null,
             lastEditedTime: page.last_edited_time,
             createdTime: page.created_time,
-            parentId: this.extractParentId(page.parent),
+            parentId: this.extractParentId(page.parent) || null,
             archived: page.archived || false,
             properties: page.properties,
             contentPreview: '' // Will be filled when syncing blocks
@@ -826,7 +873,7 @@ export class NotionSyncService {
     return pages;
   }
 
-  private async syncPageBlocks(pageId: string): Promise<NotionBlock[]> {
+  private async syncBlocks(pageId: string, blockId: string, parentBlockId: string | null = null): Promise<NotionBlock[]> {
     if (!this.notionClient) throw new Error('Notion client not initialized');
 
     const blocks: NotionBlock[] = [];
@@ -835,8 +882,8 @@ export class NotionSyncService {
 
     do {
       const response = await this.notionClient.blocks.children.list({
-        block_id: pageId,
-        start_cursor: cursor,
+        block_id: blockId,
+        ...(cursor && { start_cursor: cursor }),
         page_size: this.SYNC_BATCH_SIZE
       });
 
@@ -844,16 +891,16 @@ export class NotionSyncService {
         if ('type' in block) {
           const notionBlock: NotionBlock = {
             id: block.id,
-            pageId,
+            pageId: pageId,
             blockType: block.type,
             contentText: this.extractBlockText(block),
             richText: this.extractRichText(block),
-            parentBlockId: undefined, // Parent property not available in this block type
+            parentBlockId: parentBlockId,
             hasChildren: block.has_children || false,
             blockOrder: blockOrder++,
             properties: {},
             annotations: this.extractAnnotations(block),
-            href: this.extractHref(block)
+            href: this.extractHref(block) || null
           };
 
           blocks.push(notionBlock);
@@ -863,7 +910,7 @@ export class NotionSyncService {
 
           // Recursively sync child blocks if they exist
           if (block.has_children) {
-            const childBlocks = await this.syncPageBlocks(block.id);
+            const childBlocks = await this.syncBlocks(pageId, block.id, block.id);
             blocks.push(...childBlocks);
           }
         }
@@ -1112,6 +1159,31 @@ export class NotionSyncService {
     }
   }
 
+  /**
+   * Store encrypted Notion token in user profile
+   */
+  private async storeEncryptedToken(token: string): Promise<void> {
+    try {
+      const { data: userResp } = await supabase.auth.getUser();
+      const userId = userResp?.user?.id;
+      if (!userId) return;
+
+      // Encrypt the token
+      const encryptedToken = encryptData(token);
+
+      // Store encrypted token
+      await this.updateUserProfile({
+        notion_token_encrypted: encryptedToken,
+        notion_last_sync: new Date().toISOString()
+      });
+
+      console.log('✅ Encrypted Notion token stored securely');
+    } catch (error) {
+      console.warn('⚠️ Failed to store encrypted token:', error);
+      throw error;
+    }
+  }
+
   private async setupDefaultDatabases(): Promise<void> {
     try {
       const { data: userResp } = await supabase.auth.getUser();
@@ -1238,6 +1310,21 @@ export class NotionSyncService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Check if using OAuth
+   */
+  public async isUsingOAuth(): Promise<boolean> {
+    // For now, assume OAuth is always used since direct API key is not supported
+    return true;
+  }
+
+  /**
+   * Get OAuth service instance
+   */
+  public getOAuthService(): NotionOAuthService {
+    return NotionOAuthService.getInstance();
   }
 }
 

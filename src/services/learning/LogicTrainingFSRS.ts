@@ -111,8 +111,8 @@ export class LogicTrainingFSRS {
       reps: logicNode.repetitions,
       lapses: Math.max(0, logicNode.totalAttempts - logicNode.correctAttempts),
       state: this.determineLogicCardState(logicNode),
-      last_review: logicNode.lastReview,
-    };
+      ...(logicNode.lastReview ? { last_review: logicNode.lastReview } : {})
+    } as FSRSCard;
   }
 
   /**

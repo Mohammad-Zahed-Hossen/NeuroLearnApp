@@ -760,12 +760,13 @@ export class MindMapGenerator {
         currentId = previous.get(currentId);
       }
 
-      // Validate path
-      if (
-        path.length < 2 ||
-        path[0].id !== startNode.id ||
-        path[path.length - 1].id !== endNode.id
-      ) {
+      // Validate path — ensure we have at least two nodes and that first/last exist
+      if (path.length < 2) {
+        return null;
+      }
+      const firstNode = path[0];
+      const lastNode = path[path.length - 1];
+      if (!firstNode || !lastNode || firstNode.id !== startNode.id || lastNode.id !== endNode.id) {
         return null;
       }
 
@@ -1330,13 +1331,16 @@ export class MindMapGenerator {
       });
 
       for (const [cat, group] of byCategory.entries()) {
-        if (group.length < 2) continue;
+        if (!group || group.length < 2) continue;
         for (let i = 0; i < group.length; i++) {
           for (let j = i + 1; j < group.length; j++) {
+            const a = group[i];
+            const b = group[j];
+            if (!a || !b || !a.id || !b.id) continue;
             links.push({
-              id: `cat_${group[i].id}_${group[j].id}`,
-              source: group[i].id,
-              target: group[j].id,
+              id: `cat_${a.id}_${b.id}`,
+              source: a.id,
+              target: b.id,
               strength: 0.5,
               weight: 0.3,
               type: 'association',
@@ -1362,16 +1366,19 @@ export class MindMapGenerator {
         s.toLowerCase().replace(/[^a-z0-9 ]/g, '');
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
-          const a = sanitize(nodes[i].label || '');
-          const b = sanitize(nodes[j].label || '');
+          const ni = nodes[i];
+          const nj = nodes[j];
+          const a = sanitize(ni?.label || '');
+          const b = sanitize(nj?.label || '');
           const aWords = new Set(a.split(' ').filter(Boolean));
           const bWords = new Set(b.split(' ').filter(Boolean));
           const common = Array.from(aWords).filter((w) => bWords.has(w));
           if (common.length > 0) {
+            if (!ni?.id || !nj?.id) continue;
             links.push({
-              id: `sem_${nodes[i].id}_${nodes[j].id}`,
-              source: nodes[i].id,
-              target: nodes[j].id,
+              id: `sem_${ni.id}_${nj.id}`,
+              source: ni.id,
+              target: nj.id,
               strength: Math.min(0.9, 0.2 + common.length * 0.1),
               weight: 0.2,
               type: 'similarity',
@@ -1404,6 +1411,7 @@ export class MindMapGenerator {
           for (let j = i + 1; j < refs.length; j++) {
             const a = refs[i];
             const b = refs[j];
+            if (!a || !b) continue;
             links.push({
               id: `temp_${s.id}_${a}_${b}`,
               source: a,
@@ -1469,6 +1477,7 @@ export class MindMapGenerator {
       for (let i = 0; i < concepts.length - 1; i++) {
         const a = concepts[i];
         const b = concepts[i + 1];
+        if (!a || !b || !a.id || !b.id) continue;
         links.push({
           id: `prereq_${a.id}_${b.id}`,
           source: a.id,
@@ -1494,13 +1503,14 @@ export class MindMapGenerator {
       const conceptNodes = nodes.filter((n) => n.type === 'concept');
 
       logicNodes.forEach((ln) => {
-        const text =
-          typeof ln.content === 'string'
-            ? ln.content
-            : JSON.stringify(ln.content);
+        const text = typeof ln.content === 'string' ? ln.content : JSON.stringify(ln.content);
         conceptNodes.forEach((cn) => {
-          const label = (cn.label || '').toLowerCase();
-          if (label && text.toLowerCase().includes(label.split(' ')[0])) {
+          const labelRaw = cn?.label || '';
+          const label = labelRaw.toLowerCase();
+          const firstWord = label.split(' ')[0];
+          if (!firstWord) return;
+          if (text.toLowerCase().includes(firstWord)) {
+            if (!ln?.id || !cn?.id) return;
             links.push({
               id: `logical_${ln.id}_${cn.id}`,
               source: ln.id,

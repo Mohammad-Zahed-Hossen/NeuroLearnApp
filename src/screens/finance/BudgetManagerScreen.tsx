@@ -14,6 +14,7 @@ import { GlassCard } from '../../components/GlassComponents';
 import { supabase } from '../../services/storage/SupabaseService';
 import { ThemeType } from '../../theme/colors';
 import AdvancedGeminiService from '../../services/ai/AdvancedGeminiService';
+import { perf } from '../../utils/perfMarks';
 
 interface BudgetManagerScreenProps {
   onBack?: () => void;
@@ -40,6 +41,7 @@ interface BudgetWithSpending extends Budget {
 const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
   onBack,
 }) => {
+  const mountMarkRef = React.useRef<string | null>(null);
   const [budgets, setBudgets] = useState<BudgetWithSpending[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newBudget, setNewBudget] = useState({ category: '', amount: '' });
@@ -69,12 +71,23 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
   };
 
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('BudgetManagerScreen');
     loadBudgets();
   }, []);
 
   useEffect(() => {
     if (budgets.length > 0) {
       loadAIInsights();
+    }
+  }, [budgets]);
+
+  useEffect(() => {
+    // mark ready when budgets have loaded (either empty or with items)
+    if (mountMarkRef.current) {
+      try {
+        perf.measureReady('BudgetManagerScreen', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
     }
   }, [budgets]);
 
@@ -108,11 +121,18 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
 
           if (txError) {
             console.error('Error loading transactions:', txError);
-            return { ...budget, spent: 0, utilization: 0, status: 'healthy' as const };
+            return {
+              ...budget,
+              spent: 0,
+              utilization: 0,
+              status: 'healthy' as const,
+            };
           }
 
-          const spent = transactions?.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-          const utilization = budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
+          const spent =
+            transactions?.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+          const utilization =
+            budget.amount > 0 ? (spent / budget.amount) * 100 : 0;
 
           let status: 'healthy' | 'warning' | 'critical' | 'over_budget';
           if (spent > budget.amount) {
@@ -126,7 +146,7 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
           }
 
           return { ...budget, spent, utilization, status };
-        })
+        }),
       );
 
       setBudgets(budgetsWithSpending);
@@ -187,29 +207,35 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
 
     setLoadingAI(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
       const geminiService = AdvancedGeminiService.getInstance();
 
       // Generate financial forecast for the most spent category
       const topCategory = budgets.reduce((prev, current) =>
-        prev.spent > current.spent ? prev : current
+        prev.spent > current.spent ? prev : current,
       );
 
-      const forecast = await geminiService.generateFinancialForecast(user.id, topCategory.category);
+      const forecast = await geminiService.generateFinancialForecast(
+        user.id,
+        topCategory.category,
+      );
 
       // Get holistic summary for budget insights
       const holisticSummary = await geminiService.getHolisticSummary(user.id);
 
       setForecastData(forecast.forecast);
       setAiInsights([
-        ...holisticSummary.insights.filter(insight =>
-          insight.toLowerCase().includes('budget') ||
-          insight.toLowerCase().includes('spend') ||
-          insight.toLowerCase().includes('finance')
+        ...holisticSummary.insights.filter(
+          (insight) =>
+            insight.toLowerCase().includes('budget') ||
+            insight.toLowerCase().includes('spend') ||
+            insight.toLowerCase().includes('finance'),
         ),
-        ...forecast.alerts
+        ...forecast.alerts,
       ]);
     } catch (error) {
       console.error('Error loading AI insights:', error);
@@ -226,7 +252,8 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
       healthyCount: acc.healthyCount + (budget.status === 'healthy' ? 1 : 0),
       warningCount: acc.warningCount + (budget.status === 'warning' ? 1 : 0),
       criticalCount: acc.criticalCount + (budget.status === 'critical' ? 1 : 0),
-      overBudgetCount: acc.overBudgetCount + (budget.status === 'over_budget' ? 1 : 0),
+      overBudgetCount:
+        acc.overBudgetCount + (budget.status === 'over_budget' ? 1 : 0),
     }),
     {
       totalBudget: 0,
@@ -235,26 +262,36 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
       warningCount: 0,
       criticalCount: 0,
       overBudgetCount: 0,
-    }
+    },
   );
 
   const getProgressColor = (status: string) => {
     switch (status) {
-      case 'healthy': return '#10B981';
-      case 'warning': return '#F59E0B';
-      case 'critical': return '#EF4444';
-      case 'over_budget': return '#8B5CF6';
-      default: return '#6B7280';
+      case 'healthy':
+        return '#10B981';
+      case 'warning':
+        return '#F59E0B';
+      case 'critical':
+        return '#EF4444';
+      case 'over_budget':
+        return '#8B5CF6';
+      default:
+        return '#6B7280';
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'healthy': return 'check-circle';
-      case 'warning': return 'alert-circle';
-      case 'critical': return 'alert';
-      case 'over_budget': return 'alert-circle-outline';
-      default: return 'circle';
+      case 'healthy':
+        return 'check-circle';
+      case 'warning':
+        return 'alert-circle';
+      case 'critical':
+        return 'alert';
+      case 'over_budget':
+        return 'alert-circle-outline';
+      default:
+        return 'circle';
     }
   };
 
@@ -298,7 +335,13 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
         {/* Overview Summary Card */}
         {budgets.length > 0 && (
           <GlassCard theme="dark" style={{ marginBottom: 24 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}
+            >
               <Icon name="chart-pie" size={24} color="#6366F1" />
               <Text style={{ fontSize: 18, fontWeight: '600', marginLeft: 8 }}>
                 Budget Overview
@@ -306,45 +349,97 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
             </View>
 
             <View style={{ marginBottom: 16 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  marginBottom: 8,
+                }}
+              >
                 <Text style={{ color: '#6B7280' }}>Total Budget</Text>
-                <Text style={{ fontWeight: '600' }}>৳{overviewStats.totalBudget.toLocaleString()}</Text>
+                <Text style={{ fontWeight: '600' }}>
+                  ৳{overviewStats.totalBudget.toLocaleString()}
+                </Text>
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  marginBottom: 8,
+                }}
+              >
                 <Text style={{ color: '#6B7280' }}>Total Spent</Text>
-                <Text style={{ fontWeight: '600' }}>৳{overviewStats.totalSpent.toLocaleString()}</Text>
+                <Text style={{ fontWeight: '600' }}>
+                  ৳{overviewStats.totalSpent.toLocaleString()}
+                </Text>
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                }}
+              >
                 <Text style={{ color: '#6B7280' }}>Remaining</Text>
-                <Text style={{ fontWeight: '600', color: overviewStats.totalSpent > overviewStats.totalBudget ? '#EF4444' : '#10B981' }}>
-                  ৳{(overviewStats.totalBudget - overviewStats.totalSpent).toLocaleString()}
+                <Text
+                  style={{
+                    fontWeight: '600',
+                    color:
+                      overviewStats.totalSpent > overviewStats.totalBudget
+                        ? '#EF4444'
+                        : '#10B981',
+                  }}
+                >
+                  ৳
+                  {(
+                    overviewStats.totalBudget - overviewStats.totalSpent
+                  ).toLocaleString()}
                 </Text>
               </View>
             </View>
 
             <Progress.Bar
-              progress={Math.min(overviewStats.totalSpent / overviewStats.totalBudget, 1)}
+              progress={Math.min(
+                overviewStats.totalSpent / overviewStats.totalBudget,
+                1,
+              )}
               width={null}
               height={8}
-              color={overviewStats.totalSpent > overviewStats.totalBudget ? '#EF4444' : '#10B981'}
+              color={
+                overviewStats.totalSpent > overviewStats.totalBudget
+                  ? '#EF4444'
+                  : '#10B981'
+              }
               unfilledColor="#E5E7EB"
               borderRadius={4}
               style={{ marginBottom: 16 }}
             />
 
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <View
+              style={{ flexDirection: 'row', justifyContent: 'space-between' }}
+            >
               <Text style={{ fontSize: 12, color: '#6B7280' }}>
-                {Math.round((overviewStats.totalSpent / overviewStats.totalBudget) * 100)}% used
+                {Math.round(
+                  (overviewStats.totalSpent / overviewStats.totalBudget) * 100,
+                )}
+                % used
               </Text>
               <View style={{ flexDirection: 'row' }}>
                 {overviewStats.healthyCount > 0 && (
-                  <Text style={{ fontSize: 12, color: '#10B981', marginRight: 8 }}>
+                  <Text
+                    style={{ fontSize: 12, color: '#10B981', marginRight: 8 }}
+                  >
                     {overviewStats.healthyCount} on track
                   </Text>
                 )}
-                {(overviewStats.warningCount + overviewStats.criticalCount + overviewStats.overBudgetCount) > 0 && (
+                {overviewStats.warningCount +
+                  overviewStats.criticalCount +
+                  overviewStats.overBudgetCount >
+                  0 && (
                   <Text style={{ fontSize: 12, color: '#F59E0B' }}>
-                    {(overviewStats.warningCount + overviewStats.criticalCount + overviewStats.overBudgetCount)} need attention
+                    {overviewStats.warningCount +
+                      overviewStats.criticalCount +
+                      overviewStats.overBudgetCount}{' '}
+                    need attention
                   </Text>
                 )}
               </View>
@@ -381,11 +476,16 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
                     marginRight: 8,
                     marginBottom: 8,
                     backgroundColor:
-                      newBudget.category === cat ? categoryConfig[cat as keyof typeof categoryConfig].color : '#E5E7EB',
+                      newBudget.category === cat
+                        ? categoryConfig[cat as keyof typeof categoryConfig]
+                            .color
+                        : '#E5E7EB',
                   }}
                 >
                   <Icon
-                    name={categoryConfig[cat as keyof typeof categoryConfig].icon}
+                    name={
+                      categoryConfig[cat as keyof typeof categoryConfig].icon
+                    }
                     size={16}
                     color={newBudget.category === cat ? 'white' : '#374151'}
                     style={{ marginRight: 6 }}
@@ -469,11 +569,17 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
         </Text>
 
         {budgets.map((budget) => {
-          const config = categoryConfig[budget.category as keyof typeof categoryConfig] || categoryConfig.food;
+          const config =
+            categoryConfig[budget.category as keyof typeof categoryConfig] ||
+            categoryConfig.food;
           const remaining = Math.max(0, budget.amount - budget.spent);
 
           return (
-            <GlassCard key={budget.id} theme="dark" style={{ marginBottom: 16 }}>
+            <GlassCard
+              key={budget.id}
+              theme="dark"
+              style={{ marginBottom: 16 }}
+            >
               <View
                 style={{
                   flexDirection: 'row',
@@ -482,7 +588,13 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
                   marginBottom: 16,
                 }}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    flex: 1,
+                  }}
+                >
                   <View
                     style={{
                       width: 40,
@@ -524,7 +636,13 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
               </View>
 
               <View style={{ marginBottom: 12 }}>
-                <Text style={{ fontSize: 24, fontWeight: 'bold', color: config.color }}>
+                <Text
+                  style={{
+                    fontSize: 24,
+                    fontWeight: 'bold',
+                    color: config.color,
+                  }}
+                >
                   ৳{budget.spent.toLocaleString()}
                 </Text>
                 <Text style={{ fontSize: 14, color: '#6B7280' }}>
@@ -542,7 +660,13 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
                 style={{ marginBottom: 12 }}
               />
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Icon
                     name={getStatusIcon(budget.status)}
@@ -554,11 +678,13 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
                     {Math.round(budget.utilization)}% used
                   </Text>
                 </View>
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: '600',
-                  color: remaining > 0 ? '#10B981' : '#EF4444'
-                }}>
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '600',
+                    color: remaining > 0 ? '#10B981' : '#EF4444',
+                  }}
+                >
                   ৳{remaining.toLocaleString()} left
                 </Text>
               </View>
@@ -569,19 +695,32 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
         {/* AI Insights Section */}
         {aiInsights.length > 0 && (
           <GlassCard theme="dark" style={{ marginBottom: 24 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}
+            >
               <Icon name="brain" size={24} color="#8B5CF6" />
               <Text style={{ fontSize: 18, fontWeight: '600', marginLeft: 8 }}>
                 AI Insights
               </Text>
               {loadingAI && (
-                <Icon name="loading" size={20} color="#8B5CF6" style={{ marginLeft: 'auto' }} />
+                <Icon
+                  name="loading"
+                  size={20}
+                  color="#8B5CF6"
+                  style={{ marginLeft: 'auto' }}
+                />
               )}
             </View>
 
             {aiInsights.map((insight, index) => (
               <View key={index} style={{ marginBottom: 12 }}>
-                <Text style={{ fontSize: 14, color: '#6B7280', lineHeight: 20 }}>
+                <Text
+                  style={{ fontSize: 14, color: '#6B7280', lineHeight: 20 }}
+                >
                   • {insight}
                 </Text>
               </View>
@@ -592,7 +731,13 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
         {/* Financial Forecast Section */}
         {forecastData.length > 0 && (
           <GlassCard theme="dark" style={{ marginBottom: 24 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginBottom: 16,
+              }}
+            >
               <Icon name="trending-up" size={24} color="#06B6D4" />
               <Text style={{ fontSize: 18, fontWeight: '600', marginLeft: 8 }}>
                 Financial Forecast
@@ -601,11 +746,22 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
 
             {forecastData.slice(0, 3).map((forecast, index) => (
               <View key={index} style={{ marginBottom: 12 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
                   <Text style={{ fontSize: 14, fontWeight: '600' }}>
                     {forecast.category || 'Overall'}
                   </Text>
-                  <Text style={{ fontSize: 14, color: forecast.predicted > 0 ? '#10B981' : '#EF4444' }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      color: forecast.predicted > 0 ? '#10B981' : '#EF4444',
+                    }}
+                  >
                     ৳{Math.abs(forecast.predicted).toLocaleString()}
                   </Text>
                 </View>
@@ -622,9 +778,15 @@ const BudgetManagerScreen: React.FC<BudgetManagerScreenProps> = ({
             <View style={{ alignItems: 'center', paddingVertical: 32 }}>
               <Icon name="wallet-outline" size={48} color="#9CA3AF" />
               <Text
-                style={{ color: '#9CA3AF', marginTop: 16, textAlign: 'center', marginBottom: 16 }}
+                style={{
+                  color: '#9CA3AF',
+                  marginTop: 16,
+                  textAlign: 'center',
+                  marginBottom: 16,
+                }}
               >
-                No budgets set yet. Start tracking your expenses by creating your first budget.
+                No budgets set yet. Start tracking your expenses by creating
+                your first budget.
               </Text>
               <TouchableOpacity
                 onPress={() => setShowAddForm(true)}

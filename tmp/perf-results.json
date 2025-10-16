@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "screen": "AddTransactionScreen",
+      "durationMs": 2
+    },
+    {
+      "screen": "BudgetManagerScreen",
+      "durationMs": 2
+    },
+    {
+      "screen": "TransactionHistoryScreen",
+      "durationMs": 1
+    },
+    {
+      "screen": "AdvancedWorkoutLogger",
+      "durationMs": 1
+    },
+    {
+      "screen": "SmartSleepTracker",
+      "durationMs": 1
+    },
+    {
+      "screen": "FocusTimerScreen",
+      "durationMs": 2
+    }
+  ]
+}

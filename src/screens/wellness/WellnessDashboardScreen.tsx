@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,10 +11,27 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LineChart } from 'react-native-chart-kit';
+import { LinearGradient } from 'expo-linear-gradient';
 import { GlassCard } from '../../components/GlassComponents';
 import { FloatingActionButton } from '../../components/shared/FloatingActionButton';
 import { supabase } from '../../services/storage/SupabaseService';
 import { ThemeType } from '../../theme/colors';
+import { perf } from '../../utils/perfMarks';
+import DashboardSkeleton from '../../components/skeletons/DashboardSkeleton';
+import {
+  useOptimizedQuery,
+  useDebouncedRefetch,
+} from '../../hooks/useOptimizedQuery';
+
+interface WellnessData {
+  todayScore: number;
+  sleepHours: number;
+  workoutStreak: number;
+  waterIntake: number;
+  weeklyTrend: number[];
+}
+
+type TrendData = { weeklyTrend: number[] };
 
 interface WellnessDashboardScreenProps {
   theme: ThemeType;
@@ -25,17 +42,220 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
   theme,
   onNavigate,
 }) => {
+  const mountMarkRef = React.useRef<string | null>(null);
   const screenWidth = Dimensions.get('window').width;
-  const [wellnessData, setWellnessData] = useState<WellnessData>({
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Memoize calculateWeeklyTrend to prevent unnecessary recalculations
+  const calculateWeeklyTrend = useMemo(
+    () =>
+      async (userId: string): Promise<number[]> => {
+        try {
+          // Get data for the last 7 days
+          const weekAgo = new Date();
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          const weekAgoStr = weekAgo.toISOString().split('T')[0];
+
+          // Parallel fetch for historical data
+          const [sleepHistory, workoutHistory, waterHistory] =
+            await Promise.all([
+              supabase
+                .from('sleep_logs')
+                .select('duration, date')
+                .eq('user_id', userId)
+                .gte('date', weekAgoStr)
+                .order('date', { ascending: true }),
+              supabase
+                .from('workout_logs')
+                .select('duration, date')
+                .eq('user_id', userId)
+                .gte('date', weekAgoStr)
+                .order('date', { ascending: true }),
+              supabase
+                .from('water_logs')
+                .select('amount, date')
+                .eq('user_id', userId)
+                .gte('date', weekAgoStr)
+                .order('date', { ascending: true }),
+            ]);
+
+          const trend: number[] = [];
+          for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+
+            // Calculate daily score based on available data
+            const sleepScore =
+              sleepHistory.data?.find((s) => s.date === dateStr)?.duration || 0;
+            const workoutScore =
+              workoutHistory.data?.filter((w) => w.date === dateStr).length ||
+              0;
+            const waterScore =
+              waterHistory.data
+                ?.filter((w) => w.date === dateStr)
+                .reduce((sum, log) => sum + log.amount, 0) || 0;
+
+            // Simple scoring: sleep (0-30), workouts (0-35), water (0-35)
+            const dailyScore = Math.min(
+              100,
+              Math.round(
+                (sleepScore / 8) * 30 +
+                  (workoutScore / 3) * 35 +
+                  (waterScore / 8) * 35,
+              ),
+            );
+
+            trend.push(dailyScore);
+          }
+
+          return trend;
+        } catch (error) {
+          console.error('Error calculating weekly trend:', error);
+          return [0, 0, 0, 0, 0, 0, 0]; // Return zeros if calculation fails
+        }
+      },
+    [],
+  );
+
+  // Memoize healthScore calculation
+  const calculateHealthScore = useMemo(
+    () => (sleepHours: number, workoutStreak: number, waterIntake: number) => {
+      return Math.min(
+        100,
+        Math.round(
+          (sleepHours / 8) * 30 + // Sleep contributes 30%
+            (workoutStreak / 7) * 25 + // Workout streak contributes 25%
+            (waterIntake / 8) * 20 + // Water intake contributes 20%
+            25, // Base score
+        ),
+      );
+    },
+    [],
+  );
+
+  // Use optimized query for critical wellness data (immediate load) with parallel API calls
+  const {
+    data: criticalData,
+    isLoading: loading,
+    refetch,
+  } = useOptimizedQuery<WellnessData>({
+    queryKey: ['wellness-data-critical'],
+    queryFn: async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return {
+          todayScore: 0,
+          sleepHours: 0,
+          workoutStreak: 0,
+          waterIntake: 0,
+          weeklyTrend: [],
+        };
+      }
+
+      // Get today's date
+      const today = new Date().toISOString().split('T')[0];
+
+      // Parallelize queries for critical data points using Promise.all
+      const [sleepRes, workoutRes, waterRes] = await Promise.all([
+        supabase
+          .from('sleep_logs')
+          .select('duration')
+          .eq('user_id', user.id)
+          .eq('date', today)
+          .maybeSingle(),
+        (async () => {
+          const weekStart = new Date();
+          weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+          const weekStartStr = weekStart.toISOString().split('T')[0];
+          return supabase
+            .from('workout_logs')
+            .select('id')
+            .eq('user_id', user.id)
+            .gte('date', weekStartStr);
+        })(),
+        supabase
+          .from('water_logs')
+          .select('amount')
+          .eq('user_id', user.id)
+          .eq('date', today),
+      ]);
+
+      const sleepHours = sleepRes.data?.duration || 0;
+      const workoutStreak = workoutRes.data?.length || 0;
+      const waterIntake =
+        waterRes.data?.reduce((sum: number, log: any) => sum + log.amount, 0) ||
+        0;
+
+      const healthScore = calculateHealthScore(
+        sleepHours,
+        workoutStreak,
+        waterIntake,
+      );
+
+      return {
+        todayScore: healthScore,
+        sleepHours,
+        workoutStreak,
+        waterIntake,
+        weeklyTrend: [], // Empty initially, loaded lazily
+      };
+    },
+  });
+
+  // Lazy load weekly trend data (non-critical metric)
+  const { data: trendData, isLoading: trendLoading } =
+    useOptimizedQuery<TrendData>({
+      queryKey: ['wellness-trend'],
+      queryFn: async () => {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) return { weeklyTrend: [] };
+
+        return { weeklyTrend: await calculateWeeklyTrend(user.id) };
+      },
+      enabled: !loading && !!criticalData, // Only load after critical data is loaded
+      staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    });
+
+  const defaultWellnessData: WellnessData = {
     todayScore: 0,
     sleepHours: 0,
     workoutStreak: 0,
     waterIntake: 0,
     weeklyTrend: [],
-  });
+  };
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  function isWellnessData(data: any): data is WellnessData {
+    return (
+      data &&
+      typeof data.todayScore === 'number' &&
+      typeof data.sleepHours === 'number' &&
+      typeof data.workoutStreak === 'number' &&
+      typeof data.waterIntake === 'number' &&
+      Array.isArray(data.weeklyTrend)
+    );
+  }
+
+  const criticalWellnessData: WellnessData = isWellnessData(criticalData)
+    ? criticalData
+    : defaultWellnessData;
+
+  // Memoize wellnessData object construction
+  const wellnessData: WellnessData = useMemo(
+    () => ({
+      ...criticalWellnessData,
+      weeklyTrend:
+        (trendData as { weeklyTrend: number[] } | undefined)?.weeklyTrend ||
+        criticalWellnessData.weeklyTrend,
+    }),
+    [criticalWellnessData, trendData],
+  );
 
   const chartConfig = {
     backgroundGradientFrom: '#ffffff',
@@ -78,7 +298,6 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
     },
   ];
 
-
   interface QuickActionScreen {
     id: string;
     title: string;
@@ -99,14 +318,6 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
 
   type QuickAction = QuickActionScreen | QuickActionAction;
 
-  interface WellnessData {
-    todayScore: number;
-    sleepHours: number;
-    workoutStreak: number;
-    waterIntake: number;
-    weeklyTrend: number[];
-  }
-
   const handleQuickAction = async (action: QuickAction): Promise<void> => {
     if ('screen' in action && action.screen) {
       onNavigate(action.screen);
@@ -120,190 +331,83 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
           const today = new Date().toISOString().split('T')[0];
 
           // Save water intake to database
-          const { error } = await supabase
-            .from('water_logs')
-            .insert({
-              user_id: user.id,
-              amount: 1,
-              date: today,
-            });
+          const { error } = await supabase.from('water_logs').insert({
+            user_id: user.id,
+            amount: 1,
+            date: today,
+          });
 
           if (error) {
             console.error('Error saving water intake:', error);
             Alert.alert(
               'Water Intake Saved Locally',
-              'Your water intake was recorded but couldn\'t be synced to the cloud. It will be saved when you\'re back online.',
-              [{ text: 'OK' }]
+              "Your water intake was recorded but couldn't be synced to the cloud. It will be saved when you're back online.",
+              [{ text: 'OK' }],
             );
           } else {
             // Show success feedback
             console.log('Water intake logged successfully');
           }
 
-          // Update local state
-          setWellnessData((prev: WellnessData) => ({
-            ...prev,
-            waterIntake: Math.min(prev.waterIntake + 1, 8),
-          }));
+          // Refetch data to update the UI
+          await refetch();
         }
       } catch (error) {
         console.error('Error adding water intake:', error);
-        // Update local state anyway for better UX
-        setWellnessData((prev: WellnessData) => ({
-          ...prev,
-          waterIntake: Math.min(prev.waterIntake + 1, 8),
-        }));
       }
     }
   };
 
-  const calculateWeeklyTrend = async (userId: string): Promise<number[]> => {
-    try {
-      // Get data for the last 7 days
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      const weekAgoStr = weekAgo.toISOString().split('T')[0];
-
-      // Load historical sleep data
-      const { data: sleepHistory, error: sleepError } = await supabase
-        .from('sleep_logs')
-        .select('duration, date')
-        .eq('user_id', userId)
-        .gte('date', weekAgoStr)
-        .order('date', { ascending: true });
-
-      // Load historical workout data
-      const { data: workoutHistory, error: workoutError } = await supabase
-        .from('workout_logs')
-        .select('duration, date')
-        .eq('user_id', userId)
-        .gte('date', weekAgoStr)
-        .order('date', { ascending: true });
-
-      // Load historical water data
-      const { data: waterHistory, error: waterError } = await supabase
-        .from('water_logs')
-        .select('amount, date')
-        .eq('user_id', userId)
-        .gte('date', weekAgoStr)
-        .order('date', { ascending: true });
-
-      const trend: number[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
-
-        // Calculate daily score based on available data
-        const sleepScore = sleepHistory?.find(s => s.date === dateStr)?.duration || 0;
-        const workoutScore = workoutHistory?.filter(w => w.date === dateStr).length || 0;
-        const waterScore = waterHistory?.filter(w => w.date === dateStr).reduce((sum, log) => sum + log.amount, 0) || 0;
-
-        // Simple scoring: sleep (0-30), workouts (0-35), water (0-35)
-        const dailyScore = Math.min(100, Math.round(
-          (sleepScore / 8) * 30 +
-          (workoutScore / 3) * 35 +
-          (waterScore / 8) * 35
-        ));
-
-        trend.push(dailyScore);
-      }
-
-      return trend;
-    } catch (error) {
-      console.error('Error calculating weekly trend:', error);
-      return [0, 0, 0, 0, 0, 0, 0]; // Return zeros if calculation fails
-    }
-  };
-
-  useEffect(() => {
-    loadWellnessData();
-  }, []);
-
-  const loadWellnessData = async () => {
-    try {
-      setLoading(true);
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        // Get today's date
-        const today = new Date().toISOString().split('T')[0];
-
-        // Load sleep data for today
-        const { data: sleepData, error: sleepError } = await supabase
-          .from('sleep_logs')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('date', today)
-          .single();
-
-        // Load workout data for current week
-        const weekStart = new Date();
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-        const weekStartStr = weekStart.toISOString().split('T')[0];
-
-        const { data: workoutData, error: workoutError } = await supabase
-          .from('workout_logs')
-          .select('*')
-          .eq('user_id', user.id)
-          .gte('date', weekStartStr)
-          .order('date', { ascending: true });
-
-        // Load water intake for today
-        const { data: waterData, error: waterError } = await supabase
-          .from('water_logs')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('date', today);
-
-        // Calculate wellness metrics
-        const sleepHours = sleepData?.duration || 0;
-        const workoutStreak = workoutData ? workoutData.length : 0;
-        const waterIntake = waterData && Array.isArray(waterData) ? waterData.reduce((sum: number, log: any) => sum + log.amount, 0) : 0;
-
-        // Calculate weekly trend from historical data
-        const weeklyTrend = await calculateWeeklyTrend(user.id);
-
-        // Calculate today's health score based on various factors
-        const healthScore = Math.min(100, Math.round(
-          (sleepHours / 8) * 30 + // Sleep contributes 30%
-          (workoutStreak / 7) * 25 + // Workout streak contributes 25%
-          (waterIntake / 8) * 20 + // Water intake contributes 20%
-          25 // Base score
-        ));
-
-        setWellnessData({
-          todayScore: healthScore,
-          sleepHours,
-          workoutStreak,
-          waterIntake,
-          weeklyTrend,
-        });
-      }
-    } catch (error) {
-      console.error('Error loading wellness data:', error);
-      // Keep default values on error
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onRefresh = async () => {
+  const onRefreshInternal = useCallback(async () => {
+    if (refreshing) return; // Prevent multiple simultaneous refreshes
     setRefreshing(true);
-    await loadWellnessData();
-    setRefreshing(false);
-  };
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetch, refreshing]);
+
+  const onRefresh = useDebouncedRefetch(onRefreshInternal, 350);
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <Icon name="loading" size={48} color="#10B981" />
-        <Text style={styles.loadingText}>Loading wellness data...</Text>
-      </View>
+      <DashboardSkeleton
+        variant="wellness"
+        theme={theme === 'dark' ? 'dark' : 'light'}
+      />
     );
   }
+
+  // Memoize chart to avoid re-renders
+  const MemoizedLineChart = React.memo(() => {
+    if (trendLoading) {
+      return (
+        <View style={styles.chart}>
+          <DashboardSkeleton
+            variant="wellness"
+            theme={theme === 'dark' ? 'dark' : 'light'}
+          />
+        </View>
+      );
+    }
+
+    return (
+      <LineChart
+        data={{
+          labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          datasets: [{ data: wellnessData.weeklyTrend }],
+        }}
+        width={screenWidth - 64}
+        height={180}
+        chartConfig={chartConfig}
+        bezier
+        style={styles.chart}
+        withDots={true}
+        withShadow={false}
+      />
+    );
+  });
 
   return (
     <View style={styles.container}>
@@ -379,25 +483,7 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
             <Icon name="trending-up" size={20} color="#10B981" />
           </View>
 
-          <LineChart
-            data={{
-              labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-              datasets: [
-                {
-                  data: wellnessData.weeklyTrend,
-                  color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
-                  strokeWidth: 3,
-                },
-              ],
-            }}
-            width={screenWidth - 64}
-            height={180}
-            chartConfig={chartConfig}
-            bezier
-            style={styles.chart}
-            withDots={true}
-            withShadow={false}
-          />
+          <MemoizedLineChart />
         </GlassCard>
 
         {/* Quick Actions */}
@@ -407,7 +493,7 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
             {quickActions.map((action) => (
               <TouchableOpacity
                 key={action.id}
-                onPress={() => handleQuickAction(action)}
+                onPress={() => handleQuickAction(action as any)}
                 style={styles.actionButton}
               >
                 <View style={styles.actionContent}>
@@ -432,7 +518,7 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
             onLongPress={() => {
               Alert.alert(
                 'Reset Water Intake',
-                'Do you want to reset today\'s water intake to 0?',
+                "Do you want to reset today's water intake to 0?",
                 [
                   { text: 'Cancel', style: 'cancel' },
                   {
@@ -455,21 +541,21 @@ const WellnessDashboardScreen: React.FC<WellnessDashboardScreenProps> = ({
                             .eq('date', today);
 
                           if (error) {
-                            console.error('Error resetting water intake:', error);
+                            console.error(
+                              'Error resetting water intake:',
+                              error,
+                            );
                           }
 
-                          // Reset local state
-                          setWellnessData((prev: WellnessData) => ({
-                            ...prev,
-                            waterIntake: 0,
-                          }));
+                          // Refetch data to update the UI
+                          await refetch();
                         }
                       } catch (error) {
                         console.error('Error resetting water intake:', error);
                       }
                     },
                   },
-                ]
+                ],
               );
             }}
           >

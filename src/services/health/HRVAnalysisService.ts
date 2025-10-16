@@ -20,7 +20,7 @@ export class HRVAnalysisService {
       currentStress: stressLevel,
       stressPattern,
       recommendations: this.generateStressRecommendations(stressLevel, stressPattern),
-      breathingExercise: stressLevel > 60 ? this.prescribeBreathingExercise(stressLevel) : undefined
+      ...(stressLevel > 60 ? { breathingExercise: this.prescribeBreathingExercise(stressLevel) } : {})
     };
   }
 

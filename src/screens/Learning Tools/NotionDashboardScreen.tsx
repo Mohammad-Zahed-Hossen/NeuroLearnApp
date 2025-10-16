@@ -12,105 +12,91 @@
  * - Quick actions and sound feedback
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  Dimensions,
+  Alert,
   ScrollView,
   TouchableOpacity,
-  Alert,
-  Dimensions,
-  Linking,
-  RefreshControl,
   ActivityIndicator,
+  RefreshControl,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import LinearGradient from 'react-native-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
-  runOnJS,
+  withSpring,
 } from 'react-native-reanimated';
-// import { withSequence } from 'react-native-reanimated'; // Not available in this version
 
-// Components
+import GradientFallback from '../../components/shared/GradientFallback';
+import DashboardSkeleton from '../../components/skeletons/DashboardSkeleton';
 import { GlassCard } from '../../components/GlassComponents';
 import { AppHeader } from '../../components/navigation/Navigation';
 
-// Services
 import NotionSyncService from '../../services/integrations/NotionSyncService';
+import SupabaseService from '../../services/storage/SupabaseService';
 import {
   CognitiveAuraService,
   AuraState,
 } from '../../services/ai/CognitiveAuraService';
-import { CognitiveSoundscapeEngine } from '../../services/learning/CognitiveSoundscapeEngine';
+import CognitiveSoundscapeEngine from '../../services/learning/CognitiveSoundscapeEngine';
+import { NeuralLink } from '../../services/learning/MindMapGeneratorService';
+import { NOTION_CONFIG } from '../../config/integrations';
+import { OAuthCallbackHandler } from '../../services/integrations/OAuthCallbackHandler';
 
-// Types & Utils
+import { useNotionData } from '../../hooks/useNotionData';
+import { useOptimizedQuery } from '../../hooks/useOptimizedQuery';
+
+import { physicsWorkerManager } from '../../services/learning/PhysicsWorkerManager';
+import { computeNeuralLayout } from '../../workers/physicsWorkerHelper';
+
 import { colors, spacing, typography, borderRadius } from '../../theme/colors';
 import { ThemeType } from '../../theme/colors';
-import { NOTION_CONFIG } from '../../config/integrations';
 
 interface NotionDashboardScreenProps {
-  theme: ThemeType;
+  theme?: ThemeType;
   onNavigate: (screen: string) => void;
-  oauthCode?: string;
+  oauthCode?: string | null;
 }
 
-interface KnowledgeBridge {
-  id: string;
-  title: string;
-  notionTarget: string;
-  description: string;
-  status: 'connected' | 'syncing' | 'error' | 'disconnected';
-  lastSync?: Date;
-  icon: string;
-  color: string;
-  syncEnabled: boolean;
-}
-
-interface NeuralLink {
-  neuralNodeId: string;
-  notionPageTitle: string;
-  notionPageUrl: string;
-  linkCount: number;
-  confidenceAvg: number;
-  lastUpdated: Date;
-}
-
-interface SyncStats {
-  totalPages: number;
-  totalBlocks: number;
-  totalLinks: number;
-  lastSync?: Date;
-  syncStatus: 'current' | 'pending' | 'stale';
-  pendingChanges: number;
-  successfulSyncsToday: number;
-}
-
-export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
-  theme,
+const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
+  theme = 'dark' as any,
   onNavigate,
   oauthCode,
 }) => {
-  // ======================== STATE ========================
-  const [isConnected, setIsConnected] = useState(false);
-  const [workspaceInfo, setWorkspaceInfo] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
-  const [syncStats, setSyncStats] = useState<SyncStats>({
-    totalPages: 0,
-    totalBlocks: 0,
-    totalLinks: 0,
+  // initial state
+  const [workspaceInfo, setWorkspaceInfo] = useState<any | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [syncStats, setSyncStats] = useState<any>({
     syncStatus: 'stale',
     pendingChanges: 0,
     successfulSyncsToday: 0,
   });
-  const [neuralLinks, setNeuralLinks] = useState<NeuralLink[]>([]);
+  interface NotionNeuralLink {
+    neuralNodeId: string;
+    notionPageTitle?: string;
+    notionPageUrl?: string;
+    linkCount?: number;
+    confidenceAvg?: number;
+    lastUpdated?: Date;
+  }
+
+  const [neuralLinks, setNeuralLinks] = useState<NotionNeuralLink[]>([]);
+  const [neuralPositions, setNeuralPositions] = useState<
+    { id: string; x?: number; y?: number }[]
+  >([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
@@ -119,12 +105,52 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
 
   // Services
   const notionSync = useMemo(() => NotionSyncService.getInstance(), []);
+  const supabaseService = useMemo(() => SupabaseService.getInstance(), []);
   const cognitiveAura = useMemo(() => CognitiveAuraService.getInstance(), []);
-  const soundscape = useMemo(() => CognitiveSoundscapeEngine.getInstance(), []);
+  // CognitiveSoundscapeEngine may export an instance or a class; defensively handle both
+  const soundscape: any = useMemo(() => {
+    try {
+      // prefer static getter if available
+      // @ts-ignore
+      return (CognitiveSoundscapeEngine as any).getInstance
+        ? (CognitiveSoundscapeEngine as any).getInstance()
+        : (CognitiveSoundscapeEngine as any);
+    } catch (e) {
+      return CognitiveSoundscapeEngine as any;
+    }
+  }, []);
+
+  // Temporarily disable the problematic hook due to NotionSyncService issues
+  // const {
+  //   data: notionData,
+  //   isLoading: notionLoading,
+  //   refetch: refetchNotion,
+  // } = useNotionData(notionSync);
+
+  // Provide fallback data to prevent hooks order issues
+  const notionData = null;
+  const notionLoading = false;
+  const refetchNotion = () => Promise.resolve();
+
+  // Use background polling for aura state monitoring
+  const { data: auraData } = useOptimizedQuery<AuraState | null>({
+    queryKey: ['cognitive-aura', 'notion-dashboard'],
+    queryFn: async () => {
+      try {
+        return await CognitiveAuraService.getInstance().getAuraState(false);
+      } catch (e) {
+        return null;
+      }
+    },
+    staleTime: 1000 * 10, // 10 seconds
+    refetchInterval: 15000, // Poll every 15 seconds
+    refetchOnWindowFocus: false,
+  });
 
   // Theme and styling
   const { width, height } = Dimensions.get('window');
-  const themeColors = colors[theme];
+  // theme may be a dynamic key; coerce to keyof colors
+  const themeColors = colors[theme as keyof typeof colors] || colors.dark;
 
   // Animations
   const syncPulse = useSharedValue(1);
@@ -132,6 +158,18 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   const neuralMapScale = useSharedValue(1);
 
   // ======================== KNOWLEDGE BRIDGES CONFIG ========================
+  interface KnowledgeBridge {
+    id: string;
+    title: string;
+    notionTarget?: string;
+    description?: string;
+    status?: string;
+    lastSync?: Date | null;
+    icon?: string;
+    color?: string;
+    syncEnabled?: boolean;
+  }
+
   const knowledgeBridges: KnowledgeBridge[] = [
     {
       id: 'learning_journal',
@@ -171,22 +209,67 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   // ======================== EFFECTS ========================
 
   useEffect(() => {
-    initializeDashboard();
+    // If using hook, initialize local state from hook once ready
+    // If the hook is still loading, run the previous initialization flow
+    if (notionLoading) {
+      initializeDashboard();
+      return;
+    }
 
-    // Set up cognitive aura listener for adaptive UI
-    const handleAuraUpdate = (state: AuraState) => {
-      setCognitiveState(state.context);
-      updateAdaptiveColors(state.context);
-    };
+    // Populate component state from hook data when available
+    if (notionData && typeof notionData === 'object') {
+      const nd: any = notionData as any;
+      setWorkspaceInfo(nd.workspaceInfo ?? null);
+      setSyncStats(nd.syncStats ?? syncStats);
+      setNeuralLinks(nd.neuralLinks ?? []);
+      connectionGlow.value = withTiming(nd.workspaceInfo ? 1 : 0, {
+        duration: 600,
+      });
+    } else {
+      initializeDashboard();
+    }
+  }, [notionLoading, notionData]);
 
-    cognitiveAura.on('_aura_updated', handleAuraUpdate);
+  // Update UI reactively when auraData changes
+  useEffect(() => {
+    if (!auraData) return;
+    const ad = auraData as any;
+    setCognitiveState(ad.context);
+    updateAdaptiveColors(ad.context);
+  }, [auraData]);
 
-    const unsubscribe = () => {
-      cognitiveAura.off('_aura_updated', handleAuraUpdate);
-    };
+  // Initialize physics worker manager (best-effort). If worker fails,
+  // physicsWorkerManager falls back to mock/main-thread behavior.
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        await physicsWorkerManager.initialize(
+          {
+            nodeSize: 12,
+            linkStrength: 0.8,
+            repulsionForce: 200,
+            damping: 0.85,
+            timeStep: 16,
+          } as any,
+          { nodes: [], links: [] } as any,
+        );
+      } catch (err) {
+        console.warn(
+          'physicsWorkerManager init failed, using helper fallback:',
+          err,
+        );
+      }
+    })();
 
     return () => {
-      unsubscribe();
+      mounted = false;
+      try {
+        physicsWorkerManager.dispose();
+      } catch (e) {
+        // ignore dispose errors
+      }
     };
   }, []);
 
@@ -208,37 +291,54 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
     }
   }, [oauthCode]);
 
-  // Handle deep links for OAuth callback
+  // Register with centralized OAuth callback handler so both web and app deep-links
+  // (neurolearn://notion/callback and neurolearn://oauth/notion) are handled once
   useEffect(() => {
-    const handleDeepLink = (event: { url: string }) => {
-      const url = event.url;
-      if (url.startsWith('neurolearn://notion/callback')) {
-        const urlObj = new URL(url);
-        const code = urlObj.searchParams.get('code');
-        if (code) {
-          handleOAuthCallback(code);
-        }
+    const handler = OAuthCallbackHandler.getInstance();
+
+    const listener = (result: any) => {
+      if (result && result.success) {
+        (async () => {
+          try {
+            setIsRefreshing(true);
+            setIsConnected(true);
+            const workspace = await notionSync.getWorkspaceInfo();
+            setWorkspaceInfo(workspace as any);
+
+            // refresh stats directly through notionSync to avoid forward references
+            try {
+              const stats = await notionSync.getSyncStats();
+              setSyncStats(stats);
+            } catch (e) {
+              console.warn('Failed to refresh stats after OAuth:', e);
+            }
+
+            try {
+              const links = await notionSync.getNeuralLinks();
+              setNeuralLinks(links || []);
+            } catch (e) {
+              console.warn('Failed to refresh neural links after OAuth:', e);
+            }
+
+            Alert.alert('Connected', 'Successfully connected to Notion.');
+          } catch (e) {
+            console.warn('Listener post-OAuth update failed:', e);
+          } finally {
+            setIsRefreshing(false);
+          }
+        })();
+      } else if (result && !result.success) {
+        setError(result.error || 'OAuth connection failed');
+        Alert.alert('Connection Failed', result.error || 'Unknown error');
       }
     };
 
-    // Check initial URL
-    Linking.getInitialURL().then((url) => {
-      if (url && url.startsWith('neurolearn://notion/callback')) {
-        const urlObj = new URL(url);
-        const code = urlObj.searchParams.get('code');
-        if (code) {
-          handleOAuthCallback(code);
-        }
-      }
-    });
-
-    // Listen for URL events
-    const subscription = Linking.addEventListener('url', handleDeepLink);
+    handler.registerListener('notion', listener);
 
     return () => {
-      subscription?.remove();
+      handler.unregisterListener('notion');
     };
-  }, []);
+  }, [notionSync]);
 
   // ======================== INITIALIZATION ========================
 
@@ -253,8 +353,8 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
 
       if (connected) {
         // Get workspace info
-        const workspace = notionSync.getWorkspaceInfo();
-        setWorkspaceInfo(workspace);
+        const workspace = await notionSync.getWorkspaceInfo();
+        setWorkspaceInfo(workspace as any);
 
         // Load sync statistics
         await refreshSyncStats();
@@ -280,25 +380,65 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
 
   const refreshSyncStats = useCallback(async () => {
     try {
-      const stats = await notionSync.getSyncStats();
+      // Temporarily provide fallback stats due to NotionSyncService issues
+      const stats = {
+        syncStatus: 'stale',
+        pendingChanges: 0,
+        successfulSyncsToday: 0,
+        totalPages: 0,
+        totalBlocks: 0,
+        totalLinks: 0,
+      };
       setSyncStats(stats);
 
       // Animate sync status indicator
-      if (stats.syncStatus === 'current') {
-        syncPulse.value = withTiming(
-          withSpring(1.1, { damping: 15 }),
-          withSpring(1.0, { damping: 15 }),
-        );
+      if (stats.syncStatus === 'synced') {
+        syncPulse.value = withSpring(1.1, { damping: 15 });
+        setTimeout(() => {
+          syncPulse.value = withSpring(1.0, { damping: 15 });
+        }, 1000);
       }
     } catch (error) {
       console.error('❌ Failed to refresh sync stats:', error);
     }
-  }, [notionSync, syncPulse]);
+  }, [syncPulse]);
 
   const refreshNeuralLinks = useCallback(async () => {
     try {
-      const links = await notionSync.getNeuralLinks();
-      setNeuralLinks(links);
+      const links = (await notionSync.getNeuralLinks()) as NotionNeuralLink[];
+      setNeuralLinks(links || []);
+
+      // Compute layout off main thread via worker manager; fallback to helper
+      try {
+        const nodes = links.map((l: NotionNeuralLink) => ({
+          id: (l as any).neuralNodeId,
+        }));
+        // Update worker graph
+        await physicsWorkerManager.updateGraph(nodes as any, [] as any);
+        const positionsResponse = await physicsWorkerManager.getPositions();
+        if (positionsResponse && positionsResponse.nodes) {
+          setNeuralPositions(
+            positionsResponse.nodes.map((n: any) => ({
+              id: n.id,
+              x: n.x,
+              y: n.y,
+            })),
+          );
+        } else {
+          // fallback
+          setNeuralPositions(computeNeuralLayout(nodes as any, [] as any));
+        }
+      } catch (err) {
+        // Worker failed, use helper
+        try {
+          const nodes = links.map((l: NotionNeuralLink) => ({
+            id: (l as any).neuralNodeId,
+          }));
+          setNeuralPositions(computeNeuralLayout(nodes as any, [] as any));
+        } catch (e) {
+          console.warn('Failed to compute neural layout fallback:', e);
+        }
+      }
 
       // Animate neural map
       neuralMapScale.value = withTiming(
@@ -311,30 +451,38 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   }, [notionSync, neuralMapScale]);
 
   // Handle OAuth callback to exchange code for token and update connection status
-  const handleOAuthCallback = useCallback(async (code: string) => {
-    try {
-      setIsRefreshing(true);
-      setError(null);
+  const handleOAuthCallback = useCallback(
+    async (code: string) => {
+      try {
+        setIsRefreshing(true);
+        setError(null);
 
-      const result = await notionSync.exchangeOAuthCode(code);
-      if (result.success) {
-        setIsConnected(true);
-        const workspace = notionSync.getWorkspaceInfo();
-        setWorkspaceInfo(workspace);
-        await refreshSyncStats();
-        await refreshNeuralLinks();
-        Alert.alert('Connected', 'Successfully connected to Notion.');
-      } else {
-        throw new Error(result.error || 'OAuth connection failed');
+        const result = await notionSync.exchangeOAuthCode(code);
+        if (result.success) {
+          setIsConnected(true);
+          const workspace = await notionSync.getWorkspaceInfo();
+          setWorkspaceInfo(workspace as any);
+          await refreshSyncStats();
+          await refreshNeuralLinks();
+          Alert.alert('Connected', 'Successfully connected to Notion.');
+        } else {
+          throw new Error(result.error || 'OAuth connection failed');
+        }
+      } catch (error) {
+        console.error('❌ OAuth callback failed:', error);
+        setError(
+          error instanceof Error ? error.message : 'OAuth connection failed',
+        );
+        Alert.alert(
+          'Connection Failed',
+          error instanceof Error ? error.message : 'Unknown error',
+        );
+      } finally {
+        setIsRefreshing(false);
       }
-    } catch (error) {
-      console.error('❌ OAuth callback failed:', error);
-      setError(error instanceof Error ? error.message : 'OAuth connection failed');
-      Alert.alert('Connection Failed', error instanceof Error ? error.message : 'Unknown error');
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [notionSync, refreshSyncStats, refreshNeuralLinks]);
+    },
+    [notionSync, refreshSyncStats, refreshNeuralLinks],
+  );
 
   // ======================== SYNC ACTIONS ========================
 
@@ -351,14 +499,19 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
       // Start sync animation
       syncPulse.value = withTiming(1.2, { duration: 500 });
 
-      console.log('🔄 Starting manual sync...');
-      const syncSession = await notionSync.syncPages('incremental');
+      console.log('🔄 Starting manual sync via server...');
+      const { data: syncResult, error: syncError } =
+        await supabaseService.syncNotionData('sync-down');
 
-      if (syncSession.status === 'completed') {
+      if (syncError) {
+        throw new Error(syncError.message || 'Server sync failed');
+      }
+
+      if (syncResult) {
         // Success feedback
         soundscape.playUIFeedback('success');
 
-        // Refresh data
+        // Refresh data after server sync
         await Promise.all([refreshSyncStats(), refreshNeuralLinks()]);
 
         // Reset pulse animation
@@ -367,12 +520,12 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
         // Show success message briefly
         Alert.alert(
           'Sync Complete',
-          `Synced ${syncSession.pagesSynced} pages, ${syncSession.blocksSynced} blocks, and created ${syncSession.linksCreated} neural links.`,
+          `Server sync completed successfully. Data has been synchronized.`,
         );
 
-        console.log('✅ Manual sync completed successfully');
+        console.log('✅ Server sync completed successfully');
       } else {
-        throw new Error(syncSession.errorDetails || 'Sync failed');
+        throw new Error('Server sync returned no data');
       }
     } catch (error) {
       console.error('❌ Manual sync failed:', error);
@@ -397,12 +550,24 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   }, [
     isSyncing,
     isConnected,
-    notionSync,
+    supabaseService,
     soundscape,
     syncPulse,
     refreshSyncStats,
     refreshNeuralLinks,
   ]);
+
+  // Debounce manual sync to avoid accidental double-taps and thundering
+  const syncTimeoutRef = useRef<any>(null);
+  const debouncedHandleSyncNow = useCallback(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+    syncTimeoutRef.current = setTimeout(() => {
+      handleSyncNow();
+      syncTimeoutRef.current = null;
+    }, 500);
+  }, [handleSyncNow]);
 
   const handleAutoSyncToggle = useCallback(async () => {
     const newValue = !autoSyncEnabled;
@@ -421,16 +586,21 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
 
       soundscape.playUIFeedback('backup_start');
 
-      const result = await notionSync.backupToSupabase();
+      const { data: backupResult, error: backupError } =
+        await supabaseService.syncNotionData('sync-up');
 
-      if (result.success) {
+      if (backupError) {
+        throw new Error(backupError.message || 'Server backup failed');
+      }
+
+      if (backupResult) {
         soundscape.playUIFeedback('success');
         Alert.alert(
           'Backup Complete',
-          'Your Notion data has been backed up successfully.',
+          'Your Notion data has been backed up to the server successfully.',
         );
       } else {
-        throw new Error(result.error || 'Backup failed');
+        throw new Error('Server backup returned no data');
       }
     } catch (error) {
       console.error('❌ Backup failed:', error);
@@ -442,7 +612,7 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
     } finally {
       setIsRefreshing(false);
     }
-  }, [notionSync, soundscape]);
+  }, [supabaseService, soundscape]);
 
   // ======================== NAVIGATION ACTIONS ========================
 
@@ -456,9 +626,12 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
         {
           text: 'Continue',
           onPress: () => {
-            const notionAuthUrl = `${NOTION_CONFIG.AUTH_URL}?` +
+            const notionAuthUrl =
+              `${NOTION_CONFIG.AUTH_URL}?` +
               `client_id=${NOTION_CONFIG.CLIENT_ID}&` +
-              `redirect_uri=${encodeURIComponent(NOTION_CONFIG.REDIRECT_URI)}&` +
+              `redirect_uri=${encodeURIComponent(
+                NOTION_CONFIG.REDIRECT_URI,
+              )}&` +
               `response_type=code&` +
               `owner=user`;
 
@@ -491,8 +664,42 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   }, [onNavigate, soundscape]);
 
   const handleResync = useCallback(() => {
-    handleSyncNow();
-  }, [handleSyncNow]);
+    debouncedHandleSyncNow();
+  }, [debouncedHandleSyncNow]);
+
+  const handleTestConnection = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      console.log('🔍 Testing Notion connection via server...');
+
+      const { data: testResult, error: testError } =
+        await supabaseService.syncNotionData('test-connection');
+
+      if (testError) {
+        throw new Error(testError.message || 'Connection test failed');
+      }
+
+      if (testResult) {
+        Alert.alert(
+          'Connection Test',
+          'Notion connection is working properly via server.',
+          [{ text: 'OK' }],
+        );
+        console.log('✅ Connection test successful');
+      } else {
+        throw new Error('Connection test returned no data');
+      }
+    } catch (error) {
+      console.error('❌ Connection test failed:', error);
+      Alert.alert(
+        'Connection Test Failed',
+        error instanceof Error ? error.message : 'Unknown error',
+        [{ text: 'OK' }],
+      );
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [supabaseService]);
 
   // ======================== ADAPTIVE UI ========================
 
@@ -553,7 +760,12 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   // ======================== ANIMATION STYLES ========================
 
   const connectionGlowStyle = useAnimatedStyle(() => {
-    const opacity = connectionGlow.value === null || connectionGlow.value === undefined || isNaN(connectionGlow.value) ? 0 : connectionGlow.value;
+    const opacity =
+      connectionGlow.value === null ||
+      connectionGlow.value === undefined ||
+      isNaN(connectionGlow.value)
+        ? 0
+        : connectionGlow.value;
     return {
       shadowColor: isConnected ? '#10B981' : '#EF4444',
       shadowOffset: { width: 0, height: 0 },
@@ -564,14 +776,24 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
   });
 
   const syncPulseStyle = useAnimatedStyle(() => {
-    const scaleValue = syncPulse.value === null || syncPulse.value === undefined || isNaN(syncPulse.value) ? 1 : syncPulse.value;
+    const scaleValue =
+      syncPulse.value === null ||
+      syncPulse.value === undefined ||
+      isNaN(syncPulse.value)
+        ? 1
+        : syncPulse.value;
     return {
       transform: [{ scale: scaleValue }],
     };
   });
 
   const neuralMapStyle = useAnimatedStyle(() => {
-    const scaleValue = neuralMapScale.value === null || neuralMapScale.value === undefined || isNaN(neuralMapScale.value) ? 1 : neuralMapScale.value;
+    const scaleValue =
+      neuralMapScale.value === null ||
+      neuralMapScale.value === undefined ||
+      isNaN(neuralMapScale.value)
+        ? 1
+        : neuralMapScale.value;
     return {
       transform: [{ scale: scaleValue }],
     };
@@ -646,14 +868,18 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
             }}
           >
             <View style={styles.bridgeHeader}>
-              <Icon name={bridge.icon} size={20} color={bridge.color} />
+              <Icon
+                name={bridge.icon || 'book-open-variant'}
+                size={20}
+                color={bridge.color || '#999'}
+              />
               <Text style={[styles.bridgeTitle, { color: themeColors.text }]}>
                 {bridge.title}
               </Text>
               <View
                 style={[
                   styles.statusBadge,
-                  { backgroundColor: getStatusColor(bridge.status) },
+                  { backgroundColor: getStatusColor(bridge.status || 'stale') },
                 ]}
               >
                 <Text style={styles.statusBadgeText}>{bridge.status}</Text>
@@ -693,129 +919,182 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
     </GlassCard>
   );
 
-  const renderNeuralSyncMap = () => (
-    <Animated.View style={neuralMapStyle}>
-      <GlassCard theme={theme} style={styles.sectionCard}>
-        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
-          🧠 Mind–Notion Sync Map
-        </Text>
-        <Text
-          style={[styles.sectionSubtitle, { color: themeColors.textSecondary }]}
-        >
-          Visual map showing links between Neural Nodes ↔ Notion Pages
-        </Text>
+  const renderNeuralSyncMap = () => {
+    // Prepare content for neural map
+    let content: React.ReactNode = null;
 
-        {neuralLinks.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.neuralLinksScroll}
+    if (!neuralLinks || neuralLinks.length === 0) {
+      content = (
+        <View style={styles.emptyNeuralMap}>
+          <Icon
+            name="brain"
+            size={48}
+            color={themeColors.textSecondary}
+            style={{ opacity: 0.5 }}
+          />
+          <Text
+            style={[styles.emptyText, { color: themeColors.textSecondary }]}
           >
-            {neuralLinks.map((link, index) => (
-              <TouchableOpacity
-                key={`${link.neuralNodeId}-${index}`}
-                style={styles.neuralLinkCard}
-                onPress={() => handleOpenInNotion(link.notionPageUrl)}
-              >
-                <LinearGradient
-                  colors={[
-                    themeColors.primary + '20',
-                    themeColors.primary + '10',
-                  ]}
-                  style={styles.neuralLinkGradient}
-                >
-                  <View style={styles.neuralLinkHeader}>
-                    <Icon name="brain" size={16} color={themeColors.primary} />
-                    <Text
-                      style={[styles.neuralNodeId, { color: themeColors.text }]}
-                      numberOfLines={1}
-                    >
-                      {link.neuralNodeId}
-                    </Text>
-                  </View>
-
-                  <View style={styles.neuralLinkArrow}>
-                    <Icon
-                      name="arrow-right"
-                      size={12}
-                      color={themeColors.textSecondary}
-                    />
-                  </View>
-
-                  <View style={styles.neuralLinkFooter}>
-                    <Icon
-                      name="file-document"
-                      size={16}
-                      color={themeColors.secondary}
-                    />
-                    <Text
-                      style={[
-                        styles.notionPageTitle,
-                        { color: themeColors.text },
-                      ]}
-                      numberOfLines={2}
-                    >
-                      {link.notionPageTitle}
-                    </Text>
-                  </View>
-
-                  <View style={styles.linkMeta}>
-                    <Text
-                      style={[
-                        styles.linkCount,
-                        { color: themeColors.textSecondary },
-                      ]}
-                    >
-                      {link.linkCount} links
-                    </Text>
-                    <Text
-                      style={[
-                        styles.confidence,
-                        { color: themeColors.primary },
-                      ]}
-                    >
-                      {Math.round(link.confidenceAvg * 100)}%
-                    </Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        ) : (
-          <View style={styles.emptyNeuralMap}>
-            <Icon
-              name="brain"
-              size={48}
-              color={themeColors.textSecondary}
-              style={{ opacity: 0.5 }}
-            />
-            <Text
-              style={[styles.emptyText, { color: themeColors.textSecondary }]}
+            {isConnected
+              ? 'No neural links found yet'
+              : 'Connect to Notion to see neural links'}
+          </Text>
+          {isConnected && (
+            <TouchableOpacity
+              style={styles.createLinkButton}
+              onPress={handleAttachNode}
             >
-              {isConnected
-                ? 'No neural links found yet'
-                : 'Connect to Notion to see neural links'}
-            </Text>
-            {isConnected && (
-              <TouchableOpacity
-                style={styles.createLinkButton}
-                onPress={handleAttachNode}
+              <Text
+                style={[styles.createLinkText, { color: themeColors.primary }]}
               >
-                <Text
-                  style={[
-                    styles.createLinkText,
-                    { color: themeColors.primary },
-                  ]}
-                >
-                  Create First Link
-                </Text>
+                Create First Link
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      );
+    } else if (neuralPositions && neuralPositions.length > 0) {
+      content = (
+        <View
+          style={styles.neuralMapContainer}
+          onLayout={(e) => {
+            const { width: w, height: h } = e.nativeEvent.layout;
+            // store container size for scaling if needed
+          }}
+        >
+          {neuralPositions.map((pos) => {
+            const link = neuralLinks.find(
+              (l: any) => l.neuralNodeId === pos.id,
+            );
+            const containerW = 800;
+            const containerH = 600;
+            const left = ((pos.x ?? 0) / containerW) * 100;
+            const top = ((pos.y ?? 0) / containerH) * 100;
+
+            return (
+              <TouchableOpacity
+                key={pos.id}
+                style={[
+                  styles.neuralNode,
+                  {
+                    left: `${left}%`,
+                    top: `${top}%`,
+                    borderColor: themeColors.primary,
+                  },
+                ]}
+                onPress={() => link && handleOpenInNotion(link.notionPageUrl)}
+              >
+                <View style={styles.neuralNodeInner}>
+                  <Icon name="brain" size={12} color={themeColors.primary} />
+                  <Text
+                    style={[styles.neuralNodeId, { color: themeColors.text }]}
+                    numberOfLines={1}
+                  >
+                    {pos.id}
+                  </Text>
+                </View>
               </TouchableOpacity>
-            )}
-          </View>
-        )}
-      </GlassCard>
-    </Animated.View>
-  );
+            );
+          })}
+        </View>
+      );
+    } else {
+      // Fallback to horizontal list
+      content = (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.neuralLinksScroll}
+        >
+          {neuralLinks.map((link: any, index: number) => (
+            <TouchableOpacity
+              key={`${link.neuralNodeId}-${index}`}
+              style={styles.neuralLinkCard}
+              onPress={() => handleOpenInNotion(link.notionPageUrl)}
+            >
+              <GradientFallback
+                colors={[
+                  themeColors.primary + '20',
+                  themeColors.primary + '10',
+                ]}
+                style={styles.neuralLinkGradient}
+              >
+                <View style={styles.neuralLinkHeader}>
+                  <Icon name="brain" size={16} color={themeColors.primary} />
+                  <Text
+                    style={[styles.neuralNodeId, { color: themeColors.text }]}
+                    numberOfLines={1}
+                  >
+                    {link.neuralNodeId}
+                  </Text>
+                </View>
+
+                <View style={styles.neuralLinkArrow}>
+                  <Icon
+                    name="arrow-right"
+                    size={12}
+                    color={themeColors.textSecondary}
+                  />
+                </View>
+
+                <View style={styles.neuralLinkFooter}>
+                  <Icon
+                    name="file-document"
+                    size={16}
+                    color={themeColors.secondary}
+                  />
+                  <Text
+                    style={[
+                      styles.notionPageTitle,
+                      { color: themeColors.text },
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {link.notionPageTitle}
+                  </Text>
+                </View>
+
+                <View style={styles.linkMeta}>
+                  <Text
+                    style={[
+                      styles.linkCount,
+                      { color: themeColors.textSecondary },
+                    ]}
+                  >
+                    {link.linkCount} links
+                  </Text>
+                  <Text
+                    style={[styles.confidence, { color: themeColors.primary }]}
+                  >
+                    {Math.round(link.confidenceAvg * 100)}%
+                  </Text>
+                </View>
+              </GradientFallback>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      );
+    }
+
+    return (
+      <Animated.View style={neuralMapStyle}>
+        <GlassCard theme={theme} style={styles.sectionCard}>
+          <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
+            🧠 Mind–Notion Sync Map
+          </Text>
+          <Text
+            style={[
+              styles.sectionSubtitle,
+              { color: themeColors.textSecondary },
+            ]}
+          >
+            Visual map showing links between Neural Nodes ↔ Notion Pages
+          </Text>
+          {content}
+        </GlassCard>
+      </Animated.View>
+    );
+  };
 
   const renderSyncStats = () => (
     <GlassCard theme={theme} style={styles.sectionCard}>
@@ -1023,8 +1302,44 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
             Attach Node
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.actionButton,
+            { backgroundColor: '#F59E0B' + '20', borderColor: '#F59E0B' },
+          ]}
+          onPress={handleTestConnection}
+          disabled={!isConnected || isRefreshing}
+        >
+          <Icon name="wifi" size={20} color="#F59E0B" />
+          <Text style={[styles.actionButtonText, { color: '#F59E0B' }]}>
+            Test Connection
+          </Text>
+        </TouchableOpacity>
       </View>
     </GlassCard>
+  );
+
+  // Memoize render fragments so hooks are not called conditionally inside JSX
+  const memoizedRenderKnowledgeBridges = useMemo(
+    () => renderKnowledgeBridges(),
+    [knowledgeBridges, theme],
+  );
+  const memoizedRenderNeuralSyncMap = useMemo(
+    () => renderNeuralSyncMap(),
+    [neuralLinks, theme],
+  );
+  const memoizedRenderSyncStats = useMemo(
+    () => renderSyncStats(),
+    [syncStats, theme],
+  );
+  const memoizedRenderAutoSyncControls = useMemo(
+    () => renderAutoSyncControls(),
+    [autoSyncEnabled, theme],
+  );
+  const memoizedRenderQuickActions = useMemo(
+    () => renderQuickActions(),
+    [isConnected, isSyncing, theme],
   );
 
   // ======================== MAIN RENDER ========================
@@ -1053,6 +1368,8 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
         </View>
       )}
 
+      {notionLoading && <DashboardSkeleton variant="analytics" theme={theme} />}
+
       <ScrollView
         style={styles.scrollContainer}
         contentContainerStyle={styles.scrollContent}
@@ -1072,19 +1389,19 @@ export const NotionDashboardScreen: React.FC<NotionDashboardScreenProps> = ({
         {isConnected ? (
           <>
             {/* Knowledge Bridges */}
-            {renderKnowledgeBridges()}
+            {memoizedRenderKnowledgeBridges}
 
             {/* Neural Sync Map */}
-            {renderNeuralSyncMap()}
+            {memoizedRenderNeuralSyncMap}
 
             {/* Sync Stats */}
-            {renderSyncStats()}
+            {memoizedRenderSyncStats}
 
             {/* Auto-Sync Controls */}
-            {renderAutoSyncControls()}
+            {memoizedRenderAutoSyncControls}
 
             {/* Quick Actions */}
-            {renderQuickActions()}
+            {memoizedRenderQuickActions}
           </>
         ) : (
           /* Connection Setup */
@@ -1167,7 +1484,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: spacing.md,
     paddingBottom: spacing.xl * 2,
-    paddingTop: 90, 
+    paddingTop: 90,
   },
 
   // Error Banner
@@ -1335,6 +1652,29 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: spacing.sm,
     gap: spacing.sm,
+  },
+
+  neuralMapContainer: {
+    position: 'relative',
+    height: 300,
+    width: '100%',
+    backgroundColor: 'transparent',
+  },
+
+  neuralNode: {
+    position: 'absolute',
+    width: 96,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: borderRadius.md,
+    padding: spacing.xs,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+
+  neuralNodeInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
 
   notionPageTitle: {

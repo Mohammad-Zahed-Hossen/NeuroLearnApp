@@ -1,5 +1,5 @@
 // src/navigation/NavigationTypes.ts
-export type TabName = 'home' | 'learn' | 'focus' | 'profile';
+export type TabName = 'dashboard' | 'learn' | 'integrations' | 'finance' | 'wellness' | 'profile';
 
 export type FeatureScreen =
   | 'dashboard'
@@ -15,15 +15,30 @@ export type FeatureScreen =
   | 'cognitive-privacy'
   | 'WorkoutLogger'
   | 'SleepTracker'
-  | 'WellnessDashboard';
+  | 'WellnessDashboard'
+  | 'integrations'
+  | 'finance'
+  | 'wellness'
+  | 'profile';
 
 export interface NavigationParams {
   [key: string]: any;
 }
 
-export interface Tab {
+export interface TabItem {
   id: TabName;
   icon: string;
   label: string;
+  screen: string;
+  color: string;
   badge?: number;
+}
+
+// Performance-related type definitions
+export type CognitiveLoad = number; // 0.0 to 1.0
+export type UIMode = 'simple' | 'normal' | 'advanced';
+
+export interface NavigationPerformance {
+  cognitiveLoad: CognitiveLoad;
+  uiMode: UIMode;
 }

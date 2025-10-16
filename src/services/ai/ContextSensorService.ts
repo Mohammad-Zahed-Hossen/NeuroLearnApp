@@ -25,6 +25,14 @@ import StorageService from '../storage/StorageService';
 import CrossModuleBridgeService from '../integrations/CrossModuleBridgeService';
 import database from '../../database/database';
 
+// ==================== TYPE DEFINITIONS ====================
+
+type Interaction = {
+  timestamp: Date;
+  type: 'touch' | 'scroll' | 'type' | 'switch';
+  metadata: any;
+};
+
 // ==================== CORE INTERFACES ====================
 
 /**
@@ -368,7 +376,8 @@ export class ContextSensorService extends EventEmitter {
    */
   private mapToDayOfWeek(dayNum: number): TimeIntelligence['dayOfWeek'] {
     const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
-    return days[dayNum];
+    const dayIndex = dayNum as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+    return days[dayIndex];
   }
 
   /**
@@ -740,7 +749,8 @@ export class ContextSensorService extends EventEmitter {
    */
   private calculateAppSwitchFrequency(): number {
     const recentSwitches = this.appSwitchHistory.filter(
-      switch_ => switch_.timestamp > new Date(Date.now() - 600000) // Last 10 minutes
+      (switch_): switch_ is NonNullable<typeof switch_> =>
+        switch_ !== null && switch_ !== undefined && switch_.timestamp !== undefined && switch_.timestamp > new Date(Date.now() - 600000) // Last 10 minutes
     );
 
     return recentSwitches.length / 10; // Switches per minute
@@ -798,8 +808,12 @@ export class ContextSensorService extends EventEmitter {
     const pauses: number[] = [];
 
     for (let i = 1; i < interactions.length; i++) {
-      const pauseDuration = interactions[i].timestamp.getTime() - interactions[i-1].timestamp.getTime();
-      pauses.push(pauseDuration);
+      const current = interactions[i];
+      const previous = interactions[i-1];
+      if (current && previous) {
+        const pauseDuration = current!.timestamp.getTime() - previous!.timestamp.getTime();
+        pauses.push(pauseDuration);
+      }
     }
 
     return pauses.slice(-10); // Last 10 pauses
@@ -816,7 +830,9 @@ export class ContextSensorService extends EventEmitter {
 
     const intervals = recentSwitches.map((switch_, index) => {
       if (index === 0) return 0;
-      return differenceInMinutes(switch_.timestamp, recentSwitches[index - 1].timestamp);
+      const prev = recentSwitches[index - 1];
+      if (!prev) return 0;
+      return differenceInMinutes(switch_.timestamp, prev.timestamp);
     }).filter(interval => interval > 0);
 
     if (intervals.length === 0) return 20;
@@ -860,15 +876,22 @@ export class ContextSensorService extends EventEmitter {
     // Rapid consecutive actions
     let rapidActions = 0;
     for (let i = 1; i < interactions.length; i++) {
-      const timeDiff = interactions[i].timestamp.getTime() - interactions[i-1].timestamp.getTime();
-      if (timeDiff < 500) rapidActions++; // Less than 500ms between actions
+      const current = interactions[i];
+      const previous = interactions[i-1];
+      if (current && previous) {
+        const timeDiff = current!.timestamp.getTime() - previous!.timestamp.getTime();
+        if (timeDiff < 500) rapidActions++; // Less than 500ms between actions
+      }
     }
 
     if (rapidActions > 5) stressScore += 0.3;
 
     // High frequency of corrections/backtracking
-    const typeEvents = interactions.filter(i => i.type === 'type');
-    const corrections = typeEvents.filter(e => e.metadata?.isCorrection).length;
+    const typeEvents = interactions.filter((i): i is Interaction => i !== null && i !== undefined && i.type === 'type');
+    const corrections = typeEvents.filter(e => {
+      if (!e.metadata || typeof e.metadata !== 'object') return false;
+      return 'isCorrection' in e.metadata && Boolean((e.metadata as any).isCorrection);
+    }).length;
 
     if (corrections > typeEvents.length * 0.2) stressScore += 0.2;
 

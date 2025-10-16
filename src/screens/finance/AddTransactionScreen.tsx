@@ -26,8 +26,8 @@ import * as Haptics from 'expo-haptics';
 import { GlassCard } from '../../components/GlassComponents';
 import { supabase } from '../../services/storage/SupabaseService';
 import TrieService from '../../utils/TrieService';
-
-
+import { perf } from '../../utils/perfMarks';
+import { colors, ThemeType } from '../../theme/colors';
 
 const categories = [
   { id: 'food', name: 'Food', icon: 'food', color: '#F59E0B' },
@@ -41,25 +41,25 @@ const categories = [
 
 interface AddTransactionScreenProps {
   onBack?: () => void;
+  theme?: ThemeType;
 }
 
 const CategoryButton = ({
   category,
   isSelected,
   onPress,
+  theme = 'dark',
 }: {
   category: any;
   isSelected: boolean;
   onPress: () => void;
+  theme?: ThemeType;
 }) => {
   const scale = useSharedValue(1);
   const rotate = useSharedValue(0);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: scale.value },
-      { rotate: `${rotate.value}deg` },
-    ],
+    transform: [{ scale: scale.value }, { rotate: `${rotate.value}deg` }],
   }));
 
   const handlePress = () => {
@@ -75,7 +75,12 @@ const CategoryButton = ({
   };
 
   return (
-    <Animated.View style={[animatedStyle, { width: '30%', marginRight: 8, marginBottom: 12 }]}>
+    <Animated.View
+      style={[
+        animatedStyle,
+        { width: '30%', marginRight: 8, marginBottom: 12 },
+      ]}
+    >
       <TouchableOpacity
         onPress={handlePress}
         style={{
@@ -88,12 +93,14 @@ const CategoryButton = ({
           shadowOpacity: isSelected ? 0.5 : 0,
           shadowRadius: isSelected ? 4 : 0,
           alignItems: 'center',
-          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
+          backgroundColor: isSelected
+            ? 'rgba(99, 102, 241, 0.1)'
+            : 'transparent',
           transform: isSelected ? [{ scale: 1.05 }] : [{ scale: 1 }],
         }}
       >
         <Icon name={category.icon} size={24} color={category.color} />
-        <Text style={{ fontSize: 12, marginTop: 4, color: '#FFFFFF' }}>
+        <Text style={{ fontSize: 12, marginTop: 4, color: colors[theme].text }}>
           {category.name}
         </Text>
       </TouchableOpacity>
@@ -103,7 +110,9 @@ const CategoryButton = ({
 
 const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
   onBack,
+  theme = 'dark',
 }) => {
+  const mountMarkRef = React.useRef<string | null>(null);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<any>(null);
@@ -121,6 +130,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
   const trieService = TrieService.getInstance();
 
   useEffect(() => {
+    mountMarkRef.current = perf.startMark('AddTransactionScreen');
     if (description.length >= 2) {
       const newSuggestions = trieService.getSuggestions(description, 5);
       setSuggestions(newSuggestions);
@@ -129,6 +139,15 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
       setShowSuggestions(false);
     }
   }, [description]);
+
+  useEffect(() => {
+    if (!loading && mountMarkRef.current) {
+      try {
+        perf.measureReady('AddTransactionScreen', mountMarkRef.current);
+      } catch (e) {}
+      mountMarkRef.current = null;
+    }
+  }, [loading]);
 
   // Animated styles for currency symbol
   const currencyScale = useSharedValue(1);
@@ -193,7 +212,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
 
   return (
     <LinearGradient
-      colors={['#1F2937', '#111827']}
+      colors={colors[theme].gradientBackground}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{ flex: 1 }}
@@ -218,21 +237,21 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
               onPress={() => onBack?.()}
               style={{ marginRight: 16 }}
             >
-              <Icon name="arrow-left" size={24} color="#FFFFFF" />
+              <Icon name="arrow-left" size={24} color={colors[theme].text} />
             </TouchableOpacity>
             <Text
-              style={{ fontSize: 24, fontWeight: 'bold', color: '#FFFFFF' }}
+              style={{ fontSize: 24, fontWeight: 'bold', color: colors[theme].text }}
             >
               Add Transaction
             </Text>
           </View>
 
-          <GlassCard theme="dark" style={{ marginBottom: 24 }}>
+          <GlassCard theme={theme} style={{ marginBottom: 24 }}>
             <Text
               style={{
                 fontSize: 18,
                 fontWeight: '600',
-                color: '#FFFFFF',
+                color: colors[theme].text,
                 marginBottom: 16,
               }}
             >
@@ -258,7 +277,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                   style={{
                     textAlign: 'center',
                     fontWeight: '500',
-                    color: '#FFFFFF',
+                    color: colors[theme].text,
                   }}
                 >
                   Expense
@@ -282,7 +301,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                   style={{
                     textAlign: 'center',
                     fontWeight: '500',
-                    color: '#FFFFFF',
+                    color: colors[theme].text,
                   }}
                 >
                   Income
@@ -291,12 +310,12 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
             </View>
           </GlassCard>
 
-          <GlassCard theme="dark" style={{ marginBottom: 24 }}>
+          <GlassCard theme={theme} style={{ marginBottom: 24 }}>
             <Text
               style={{
                 fontSize: 18,
                 fontWeight: '600',
-                color: '#FFFFFF',
+                color: colors[theme].text,
                 marginBottom: 16,
               }}
             >
@@ -308,7 +327,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                   fontSize: 24,
                   fontWeight: 'bold',
                   marginRight: 8,
-                  color: '#FFFFFF',
+                  color: colors[theme].text,
                   ...animatedCurrency,
                 }}
               >
@@ -319,25 +338,25 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                 onChangeText={setAmount}
                 onFocus={() => setShowNumpad(true)}
                 placeholder="0.00"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors[theme].textSecondary + '80'}
                 keyboardType="numeric"
                 style={{
                   flex: 1,
                   fontSize: 24,
                   fontWeight: 'bold',
-                  color: '#FFFFFF',
+                  color: colors[theme].text,
                 }}
                 showSoftInputOnFocus={false}
               />
             </View>
           </GlassCard>
 
-          <GlassCard theme="dark" style={{ marginBottom: 24 }}>
+          <GlassCard theme={theme} style={{ marginBottom: 24 }}>
             <Text
               style={{
                 fontSize: 18,
                 fontWeight: '600',
-                color: '#FFFFFF',
+                color: colors[theme].text,
                 marginBottom: 16,
               }}
             >
@@ -355,6 +374,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                     key={category.id}
                     category={category}
                     isSelected={selectedCategory?.id === category.id}
+                    theme={theme}
                     onPress={() => {
                       setSelectedCategory(category);
                       Haptics.selectionAsync();
@@ -364,12 +384,12 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
             </View>
           </GlassCard>
 
-          <GlassCard theme="dark" style={{ marginBottom: 32 }}>
+          <GlassCard theme={theme} style={{ marginBottom: 32 }}>
             <Text
               style={{
                 fontSize: 18,
                 fontWeight: '600',
-                color: '#FFFFFF',
+                color: colors[theme].text,
                 marginBottom: 16,
               }}
             >
@@ -379,12 +399,12 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
               value={description}
               onChangeText={setDescription}
               placeholder="Add note..."
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={colors[theme].textSecondary + '80'}
               style={{
                 backgroundColor: 'rgba(255,255,255,0.1)',
                 borderRadius: 12,
                 padding: 16,
-                color: '#FFFFFF',
+                color: colors[theme].text,
               }}
             />
 
@@ -393,9 +413,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
               <View style={{ marginTop: 8 }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   {suggestions.map((suggestion, index) => (
-                    <View
-                      key={index}
-                    >
+                    <View key={index}>
                       <TouchableOpacity
                         onPress={() => {
                           setDescription(suggestion.text);
@@ -406,7 +424,9 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                             if (category) setSelectedCategory(category);
                           }
                           setShowSuggestions(false);
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          Haptics.impactAsync(
+                            Haptics.ImpactFeedbackStyle.Light,
+                          );
                         }}
                         style={{
                           backgroundColor: 'rgba(99, 102, 241, 0.1)',
@@ -444,7 +464,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
                               style={{
                                 fontSize: 10,
                                 fontWeight: '600',
-                                color: '#FFFFFF',
+                                color: colors[theme].text,
                               }}
                             >
                               {
@@ -608,9 +628,7 @@ const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({
 
       {/* Success Feedback Modal */}
       {showSuccess && (
-        <View
-          style={StyleSheet.absoluteFill}
-        >
+        <View style={StyleSheet.absoluteFill}>
           <View
             style={{
               flex: 1,

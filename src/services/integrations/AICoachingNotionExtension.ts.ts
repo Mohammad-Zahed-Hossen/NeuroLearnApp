@@ -88,8 +88,8 @@ export class AICoachingNotionExtension {
           generated_at: new Date().toISOString(),
           metrics: reflectionData.metrics,
           insights: reflectionData.keyInsights,
-          recommendations: reflectionData.recommendations,
-          confidence_score: this.calculateConfidenceScore(reflectionData)
+          ...(reflectionData.recommendations ? { recommendations: reflectionData.recommendations } : {}),
+          ...(this.calculateConfidenceScore(reflectionData) ? { confidence_score: this.calculateConfidenceScore(reflectionData) } : {})
         }
       };
 
@@ -100,17 +100,17 @@ export class AICoachingNotionExtension {
         insightPayload.metadata
       );
 
-      if (result.success) {
+        if (result.success) {
         console.log('✅ Reflection successfully pushed to Notion:', result.pageId);
 
         // Store local reference
-        await this.storeNotionReflectionReference(reflectionData.sessionId, result.pageId!);
+        await this.storeNotionReflectionReference(reflectionData.sessionId, result.pageId ?? '');
 
-        return { success: true, pageId: result.pageId };
-      } else {
-        console.error('❌ Failed to push reflection to Notion:', result.error);
-        return { success: false, error: result.error };
-      }
+        return { success: true, ...(result.pageId ? { pageId: result.pageId } : {}) };
+        } else {
+          console.error('❌ Failed to push reflection to Notion:', result.error);
+          return { success: false, error: result.error ?? 'Unknown error' };
+        }
 
     } catch (error) {
       console.error('❌ Error pushing reflection to Notion:', error);

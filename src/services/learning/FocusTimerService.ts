@@ -353,13 +353,13 @@ export class FocusTimerService {
       this.activeSession = {
         id: sessionId,
         taskId,
-        nodeId,
+        ...(nodeId ? { nodeId } : {}),
         startTime: new Date(),
         plannedDurationMinutes,
         distractionCount: 0,
         cognitiveLoadStart,
         focusLockActive: false,
-      };
+      } as ActiveSession;
 
       // Phase 5.5: Enforce Focus Lock
       await this.engageFocusLock();
@@ -428,9 +428,9 @@ export class FocusTimerService {
         reason: options.reason || 'Unspecified distraction',
         severity: options.severity || 3,
         triggerType: options.triggerType || 'unknown',
-        duration: options.duration,
+        ...(options.duration !== undefined ? { duration: options.duration } : {}),
         contextSwitch: false, // Could be detected via app state changes
-      };
+      } as DistractionEvent;
 
       // Save distraction event with retry logic
       await withExponentialBackoff(
@@ -495,16 +495,16 @@ export class FocusTimerService {
       const completedSession: FocusSession = {
         id: this.activeSession.id,
         taskId: this.activeSession.taskId,
-        nodeId: this.activeSession.nodeId,
+        ...(this.activeSession.nodeId ? { nodeId: this.activeSession.nodeId } : {}),
         startTime: this.activeSession.startTime,
         endTime: endTime,
         durationMinutes: actualDurationMinutes,
         plannedDurationMinutes: this.activeSession.plannedDurationMinutes,
         distractionCount: this.activeSession.distractionCount,
         distractionEvents: distractionEvents,
-        selfReportFocus: options.selfReportFocus,
-        distractionReason: options.distractionReason,
-        completionRate: options.completionRate,
+  selfReportFocus: options.selfReportFocus,
+  ...(options.distractionReason ? { distractionReason: options.distractionReason } : {}),
+  completionRate: options.completionRate,
 
         // Neural health impact
         cognitiveLoadStart: this.activeSession.cognitiveLoadStart,
@@ -512,7 +512,7 @@ export class FocusTimerService {
         focusLockUsed: this.activeSession.focusLockActive,
 
         // Task convergence
-        todoistTaskCompleted: options.todoistTaskCompleted,
+  ...(options.todoistTaskCompleted ? { todoistTaskCompleted: options.todoistTaskCompleted } : {}),
         neuralNodeStrengthened: await this.calculateNeuralReinforcement(
           options,
         ),

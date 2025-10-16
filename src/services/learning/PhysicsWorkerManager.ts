@@ -30,6 +30,7 @@ export interface PhysicsWorkerCallbacks {
   onContextUpdated?: (context: string, cognitiveLoad: number) => void;
   onError?: (error: string) => void;
   onDisposed?: () => void;
+  onFallbackActivated?: () => void;
 }
 
 export class PhysicsWorkerManager {
@@ -39,13 +40,44 @@ export class PhysicsWorkerManager {
   private pendingPromises = new Map<string, {
     resolve: (value: any) => void;
     reject: (error: any) => void;
+    timeoutId?: ReturnType<typeof setTimeout>;
   }>();
+  // Main-thread fallback state (chunked, non-blocking)
+  private fallbackNodes: WorkerNode[] = [];
+  private fallbackLinks: WorkerLink[] = [];
+  private fallbackRunning = false;
+  private fallbackBatchMs = 30; // process small batches every 30ms
 
   // Worker URL (will be set during initialization)
   private workerUrl: string | null = null;
 
   constructor(callbacks: PhysicsWorkerCallbacks = {}) {
     this.callbacks = callbacks;
+  }
+
+  /**
+   * Set or update callbacks after construction
+   */
+  public setCallbacks(callbacks: PhysicsWorkerCallbacks): void {
+    this.callbacks = { ...this.callbacks, ...callbacks };
+  }
+
+  /**
+   * Start the physics processing loop (no-op for worker-backed manager).
+   * Kept for API compatibility with other worker wrappers.
+   */
+  public start(): void {
+    // Worker runs on demand; no explicit start required. Keep as no-op for compatibility.
+    return;
+  }
+
+  /**
+   * Stop the physics processing loop (no-op for worker-backed manager).
+   */
+  public stop(): void {
+    // No-op: consumers may call stop to request worker pause. If needed,
+    // implement message to worker to pause simulation here.
+    return;
   }
 
   /**
@@ -79,8 +111,11 @@ export class PhysicsWorkerManager {
 
       if (!workerInitialized || !this.worker) {
         console.warn('All worker URLs failed, physics will run on main thread');
+        // Setup deterministic fallback (no heavy synchronous simulation)
         this.isInitialized = true;
+        this.startFallbackLoop();
         this.callbacks.onInitialized?.();
+        this.callbacks.onFallbackActivated?.();
         return;
       }
 
@@ -203,20 +238,104 @@ export class PhysicsWorkerManager {
     const message = createPhysicsMessage(type, data, messageId);
 
     return new Promise((resolve, reject) => {
-      // Store the promise callbacks
-      this.pendingPromises.set(messageId, { resolve, reject });
+      // We'll set a timeout for the response with a simple retry mechanism
+      let retryCount = 0;
+      const maxRetries = 1;
+
+      const handleTimeout = () => {
+        const pending = this.pendingPromises.get(messageId);
+        if (pending && retryCount < maxRetries) {
+          retryCount++;
+          console.warn(`Worker message timeout for ${type}, attempting retry ${retryCount}/${maxRetries}...`);
+
+          // Retry once after a short delay
+          setTimeout(() => {
+            if (this.worker && this.pendingPromises.has(messageId)) {
+              this.worker!.postMessage(message);
+            }
+          }, 100);
+
+          // Schedule another timeout to possibly fail after retry
+          const pendingNow = this.pendingPromises.get(messageId);
+          if (pendingNow) {
+            pendingNow.timeoutId = setTimeout(handleTimeout, 5000);
+          }
+        } else if (this.pendingPromises.has(messageId)) {
+          // Final failure
+          this.pendingPromises.delete(messageId);
+          reject(new Error(`Worker message failed after ${maxRetries + 1} attempts: ${type}`));
+        }
+      };
+
+      const timeoutId = setTimeout(handleTimeout, 5000);
+
+      // Store the promise callbacks and timeout id
+      this.pendingPromises.set(messageId, { resolve, reject, timeoutId });
 
       // Send the message
-      this.worker!.postMessage(message);
-
-      // Set a timeout for the response
-      setTimeout(() => {
-        if (this.pendingPromises.has(messageId)) {
-          this.pendingPromises.delete(messageId);
-          reject(new Error(`Worker message timeout: ${type}`));
+      if (this.worker) {
+        this.worker.postMessage(message);
+      } else {
+        // If no worker, immediately resolve with a mock response to avoid blocking
+        try {
+          const mock = this.getMockResponse(type, data);
+          // Give consumers microtask timing to behave similarly to worker
+          setTimeout(() => resolve(mock), 0);
+        } catch (err) {
+          setTimeout(() => reject(err), 0);
         }
-      }, 5000); // 5 second timeout
+      }
     });
+  }
+
+  private startFallbackLoop(): void {
+    if (this.fallbackRunning) return;
+    this.fallbackRunning = true;
+
+    const step = () => {
+      if (!this.fallbackRunning) return;
+
+      // Process small updates in micro-batches to avoid blocking
+      if (this.fallbackNodes.length > 0) {
+        // Apply tiny deterministic nudges instead of random moves
+        for (let i = 0; i < Math.min(50, this.fallbackNodes.length); i++) {
+          const node = this.fallbackNodes[i];
+          if (!node) continue;
+          // Deterministic, tiny oscillation based on id hash
+          const hash = this.stringHash(node.id || String(i));
+          const dx = ((hash % 7) - 3) * 0.05;
+          const dy = (((hash >> 3) % 7) - 3) * 0.05;
+          node.x = Math.max(0, Math.min(2000, (node.x || 0) + dx));
+          node.y = Math.max(0, Math.min(2000, (node.y || 0) + dy));
+        }
+
+        const positions = {
+          nodes: this.fallbackNodes.map(n => ({ id: n.id, x: n.x, y: n.y, size: (n as any).size || 15, opacity: (n as any).opacity ?? 1 })),
+          links: this.fallbackLinks.map(l => ({ id: l.id, opacity: (l as any).opacity ?? 0.5, width: (l as any).width ?? 1 })),
+          timestamp: Date.now(),
+        } as PositionsResponseData;
+
+        // Notify listeners without blocking
+        this.callbacks.onPositionsUpdated?.(positions);
+      }
+
+      setTimeout(step, this.fallbackBatchMs);
+    };
+
+    setTimeout(step, this.fallbackBatchMs);
+  }
+
+  private stopFallbackLoop(): void {
+    this.fallbackRunning = false;
+  }
+
+  private stringHash(s: string): number {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h;
   }
 
   /**

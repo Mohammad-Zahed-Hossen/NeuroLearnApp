@@ -703,13 +703,18 @@ export const useAuraStore = create<AuraStoreState & AuraStoreActions>()(
         name: 'cognitive-aura-store',
         storage: createJSONStorage(() => AsyncStorage),
         partialize: (state) => ({
-          // Only persist essential data
+          // Only persist essential data with optimized limits for large objects
           currentAuraState: state.currentAuraState,
-          previousStates: state.previousStates.slice(0, 5),
-          performanceHistory: state.performanceHistory.slice(-50),
-          analytics: state.analytics,
+          previousStates: state.previousStates.slice(0, 5), // Limit to last 5 for persistence
+          performanceHistory: state.performanceHistory.slice(-50), // Limit to last 50 for persistence (reduced from 100)
+          analytics: {
+            ...state.analytics,
+            adaptationTrends: state.analytics.adaptationTrends.slice(-10), // Limit trends
+            confidenceTrend: state.analytics.confidenceTrend.slice(-10), // Limit confidence trend
+          },
           autoRefreshConfig: state.autoRefreshConfig,
           version: state.version,
+          // Note: stateHistory is not persisted to reduce storage size; can be reconstructed from performanceHistory
         }),
         version: 1,
         migrate: (persistedState: any, version: number) => {

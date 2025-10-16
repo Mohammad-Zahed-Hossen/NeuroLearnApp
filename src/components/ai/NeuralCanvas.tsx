@@ -240,7 +240,10 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   // Phase 2: Enhanced viewport culling with adaptive buffering
   const viewportBounds = useMemo(() => {
     const basePadding = 100; // Base padding to avoid pop-in
-    const adaptivePadding = Math.max(basePadding, basePadding * (1 / scale.value)); // Scale padding with zoom
+    const adaptivePadding = Math.max(
+      basePadding,
+      basePadding * (1 / scale.value),
+    ); // Scale padding with zoom
 
     return {
       minX: -translateX.value / scale.value - adaptivePadding,
@@ -254,9 +257,13 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
   const visibleNodes = useMemo(() => {
     // Adaptive node limiting based on multiple factors
     const baseLimit = 100;
-    const cognitiveMultiplier = cognitiveLoad > 0.8 ? 0.3 : cognitiveLoad > 0.6 ? 0.5 : 1.0;
-    const zoomMultiplier = scale.value < 0.5 ? 0.4 : scale.value > 2 ? 1.5 : 1.0;
-    const maxNodes = Math.floor(baseLimit * cognitiveMultiplier * zoomMultiplier);
+    const cognitiveMultiplier =
+      cognitiveLoad > 0.8 ? 0.3 : cognitiveLoad > 0.6 ? 0.5 : 1.0;
+    const zoomMultiplier =
+      scale.value < 0.5 ? 0.4 : scale.value > 2 ? 1.5 : 1.0;
+    const maxNodes = Math.floor(
+      baseLimit * cognitiveMultiplier * zoomMultiplier,
+    );
 
     // Use spatial grid for efficient filtering when available
     if (spatialGrid.grid.size > 0) {
@@ -273,11 +280,16 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
         for (let cellY = startCellY - 1; cellY <= endCellY + 1; cellY++) {
           const cellKey = `${cellX},${cellY}`;
           const cellNodes = spatialGrid.grid.get(cellKey) || [];
-          cellNodes.forEach(node => {
-            if (node &&
-                typeof node.x === 'number' && typeof node.y === 'number' &&
-                node.x >= viewportBounds.minX && node.x <= viewportBounds.maxX &&
-                node.y >= viewportBounds.minY && node.y <= viewportBounds.maxY) {
+          cellNodes.forEach((node) => {
+            if (
+              node &&
+              typeof node.x === 'number' &&
+              typeof node.y === 'number' &&
+              node.x >= viewportBounds.minX &&
+              node.x <= viewportBounds.maxX &&
+              node.y >= viewportBounds.minY &&
+              node.y <= viewportBounds.maxY
+            ) {
               visibleNodeIds.add(node.id);
             }
           });
@@ -285,17 +297,24 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
       }
 
       // Convert back to node array and apply limits
-      const visibleNodeArray = nodes.filter(node => visibleNodeIds.has(node.id));
+      const visibleNodeArray = nodes.filter((node) =>
+        visibleNodeIds.has(node.id),
+      );
       return visibleNodeArray.slice(0, maxNodes);
     }
 
     // Fallback to simple filtering
-    return nodes.filter(
-      (node) =>
-        typeof node.x === 'number' && typeof node.y === 'number' &&
-        node.x >= viewportBounds.minX && node.x <= viewportBounds.maxX &&
-        node.y >= viewportBounds.minY && node.y <= viewportBounds.maxY,
-    ).slice(0, maxNodes);
+    return nodes
+      .filter(
+        (node) =>
+          typeof node.x === 'number' &&
+          typeof node.y === 'number' &&
+          node.x >= viewportBounds.minX &&
+          node.x <= viewportBounds.maxX &&
+          node.y >= viewportBounds.minY &&
+          node.y <= viewportBounds.maxY,
+      )
+      .slice(0, maxNodes);
   }, [nodes, viewportBounds, cognitiveLoad, scale.value, spatialGrid]);
 
   // Phase 5: Focus state
@@ -919,14 +938,16 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
           // Simple convex hull calculation (gift wrapping algorithm simplified)
           const hullPoints = calculateConvexHull(positionedNodes);
 
-          if (hullPoints.length < 3) return null;
+          if (!Array.isArray(hullPoints) || hullPoints.length < 3) return null;
 
-          // Create Skia path from hull points
+          // Create Skia path from hull points (safe indexing)
           const path = Skia.Path.Make();
-          path.moveTo(hullPoints[0].x, hullPoints[0].y);
+          const firstPt = hullPoints[0]!;
+          path.moveTo(firstPt.x, firstPt.y);
 
           for (let i = 1; i < hullPoints.length; i++) {
-            path.lineTo(hullPoints[i].x, hullPoints[i].y);
+            const pt = hullPoints[i]!;
+            path.lineTo(pt.x, pt.y);
           }
           path.close();
 
@@ -960,25 +981,36 @@ export const NeuralCanvas: React.FC<NeuralCanvasProps> = ({
    */
   const calculateConvexHull = useCallback(
     (points: NeuralNode[]): { x: number; y: number }[] => {
-      if (points.length < 3) return points.map((p) => ({ x: p.x!, y: p.y! }));
+      // Filter out nodes that don't have numeric coordinates and work with a
+      // guaranteed array of plain points. This avoids indexed accesses on
+      // possibly-undefined array slots which TypeScript flags when
+      // noUncheckedIndexedAccess is enabled.
+      const safePoints = points
+        .filter(
+          (p): p is NeuralNode =>
+            !!p && typeof p.x === 'number' && typeof p.y === 'number',
+        )
+        .map((p) => ({ x: p.x as number, y: p.y as number }));
 
-      // Find the bottom-most point
+      if (safePoints.length < 3) return safePoints;
+
+      // Find the bottom-most point (with smallest y -> in screen coords bigger y is lower)
       let bottom = 0;
-      for (let i = 1; i < points.length; i++) {
-        if (
-          points[i].y! > points[bottom].y! ||
-          (points[i].y! === points[bottom].y! &&
-            points[i].x! < points[bottom].x!)
-        ) {
+      for (let i = 1; i < safePoints.length; i++) {
+        const pi = safePoints[i]!;
+        const pb = safePoints[bottom]!; // safe because safePoints.length >= 3
+        if (pi.y > pb.y || (pi.y === pb.y && pi.x < pb.x)) {
           bottom = i;
         }
       }
 
-      // Simple hull - just create a bounding box with some padding
-      const minX = Math.min(...points.map((p) => p.x!)) - 20;
-      const maxX = Math.max(...points.map((p) => p.x!)) + 20;
-      const minY = Math.min(...points.map((p) => p.y!)) - 20;
-      const maxY = Math.max(...points.map((p) => p.y!)) + 20;
+      // Simple hull - use bounding box around safePoints with padding
+      const xs = safePoints.map((p) => p.x);
+      const ys = safePoints.map((p) => p.y);
+      const minX = Math.min(...xs) - 20;
+      const maxX = Math.max(...xs) + 20;
+      const minY = Math.min(...ys) - 20;
+      const maxY = Math.max(...ys) + 20;
 
       return [
         { x: minX, y: minY },
@@ -1700,8 +1732,8 @@ export const NeuralMindMap: React.FC<NeuralMindMapProps> = ({
         theme={theme}
         width={width}
         height={canvasHeight}
-        onNodePress={onNodePress}
-        onNodeLongPress={onNodeLongPress}
+        {...(onNodePress ? { onNodePress } : {})}
+        {...(onNodeLongPress ? { onNodeLongPress } : {})}
         cognitiveLoad={cognitiveLoad}
         viewMode={viewMode}
         focusNodeId={focusNodeId} // Phase 5: Pass focus prop

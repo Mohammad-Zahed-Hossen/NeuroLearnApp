@@ -208,13 +208,15 @@ export class EyeTrackingService extends EventEmitter {
     // Use CAE 2.0 advanced calculation if context available
     if (this.contextAwareMode && this.cognitiveHistory.length > 0) {
       const latestSample = this.cognitiveHistory[this.cognitiveHistory.length - 1];
-      return calculateAdvancedAttentionScore(
-        this.metrics.gazeStability,
-        this.calculateHeadStillness(),
-        this.metrics.blinkRate / 30, // Normalize blink rate
-        latestSample.contextSnapshot,
-        this.getCognitiveLoad()
-      );
+      if (latestSample && latestSample.contextSnapshot) {
+        return calculateAdvancedAttentionScore(
+          this.metrics.gazeStability,
+          this.calculateHeadStillness(),
+          this.metrics.blinkRate / 30, // Normalize blink rate
+          latestSample.contextSnapshot,
+          this.getCognitiveLoad()
+        );
+      }
     }
 
     // Fallback to basic calculation
@@ -224,11 +226,15 @@ export class EyeTrackingService extends EventEmitter {
 
   private calculateHeadStillness(): number {
     // Calculate head movement stability
-    const recentPositions = this.cognitiveHistory.slice(-10).map(s => s.eyeMetrics.headPosition);
+    const recentPositions = this.cognitiveHistory
+      .slice(-10)
+      .map((s) => s.eyeMetrics && s.eyeMetrics.headPosition)
+      .filter(Boolean) as { x: number; y: number; z: number }[];
     if (recentPositions.length < 2) return 0.8;
 
     const movements = recentPositions.slice(1).map((pos, i) => {
       const prev = recentPositions[i];
+      if (!prev || !pos) return 0;
       return Math.sqrt(
         Math.pow(pos.x - prev.x, 2) +
         Math.pow(pos.y - prev.y, 2) +

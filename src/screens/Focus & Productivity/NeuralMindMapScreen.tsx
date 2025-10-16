@@ -5,18 +5,34 @@
  * - Environmental & Biometric Context Sensing
  * - Neural Capacity Forecasting &  States
  * - Adaptive Physics with 4  cognitive contexts
- * - Context-aware micro-task generation
+    // initialize forecastStartTime to 0 to avoid explicit `undefined` which
+    // can conflict with strict exactOptionalPropertyTypes. 0 is a safe neutral default.
+    forecastStartTime: 0,
  * - Predictive intelligence and anticipatory adjustments
  * - Multi-modal system integration
  */
 
 import React, {
-  useState,
   useEffect,
   useCallback,
   useMemo,
   useRef,
+  useState,
 } from 'react';
+import { debounce } from 'lodash';
+import { getNeuralWorker } from '../../workers/neuralWorker';
+import { useNeuralMindMapState } from '../../hooks/useNeuralMindMapState';
+import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
+import { useProgressiveLoading } from '../../hooks/useProgressiveLoading';
+import { useOptimizedCanvas } from '../../hooks/useOptimizedCanvas';
+import { MemoryManager } from '../../utils/MemoryManager';
+import {
+  AdaptiveUIManager,
+  AdaptiveUIConfig,
+} from '../../utils/AdaptiveUIManager';
+import { SmartCacheManager } from '../../utils/SmartCacheManager';
+import { BackgroundProcessor } from '../../utils/BackgroundProcessor';
+import { ServiceManager } from '../../utils/ServiceManager';
 import {
   View,
   Text,
@@ -32,7 +48,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import LinearGradient from 'react-native-linear-gradient';
+import { LinearGradient } from 'expo-linear-gradient';
+import GradientFallback from '../../components/shared/GradientFallback';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -53,6 +70,10 @@ import {
   ScreenContainer,
 } from '../../components/GlassComponents';
 import { NeuralMindMap } from '../../components/ai/NeuralCanvas';
+// Temporary typed shim so we can pass experimental renderData prop without
+// changing the upstream component props. Keep this minimal and remove once
+// NeuralMindMap accepts `renderData` in its props.
+const AnyNeuralMindMap: any = NeuralMindMap as any;
 import { MiniPlayer } from '../../components/MiniPlayerComponent';
 
 //  CAE 2.0 imports
@@ -107,6 +128,7 @@ import {
   useAuraActions,
   useNeuralCanvasData,
 } from '../../hooks/useOptimizedSelectors';
+import { perf } from '../../utils/perfMarks';
 
 // ====================  INTERFACES ====================
 
@@ -240,71 +262,232 @@ const COGNITIVE_CONTEXT_COLORS = {
   CognitiveOverload: '#EA580C',
 } as const;
 
+/**
+ * Pure helper: map AuraContext to optimal view mode.
+ * Moved to module scope to be deterministic and avoid render-order issues.
+ */
+function getOptimalViewModeForContext(
+  context: AuraContext,
+): 'clusters' | 'network' | 'paths' | 'health' | 'context_adaptive' {
+  switch (context) {
+    case 'DeepFocus':
+      return 'clusters';
+    case 'CreativeFlow':
+      return 'network';
+    case 'FragmentedAttention':
+      return 'paths';
+    case 'CognitiveOverload':
+      return 'health';
+    default:
+      return 'context_adaptive';
+  }
+}
+
 // ====================  COMPONENT ====================
+
+// Module-level deterministic helpers (avoid non-deterministic Math.random in production)
+const _devRandom = (() => {
+  try {
+    return (process && process.env && process.env.NODE_ENV) !== 'production';
+  } catch (e) {
+    return false;
+  }
+})();
+
+function deterministicUnitValue(id: string, salt = ''): number {
+  let h = 2166136261 >>> 0;
+  const s = id + '|' + salt;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h % 1000000) / 1000000;
+}
+
 
 export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   theme,
   onNavigate,
   focusNodeId,
 }) => {
-  // ==================== STATE MANAGEMENT ====================
+  const mountMarkRef = useRef<string | null>(null);
+  const memoryManager = MemoryManager.getInstance();
+  const { measureAsync } = usePerformanceMonitor('NeuralMindMapScreen');
 
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [loadingState, setLoadingState] = useState<LoadingState>({
-    isGenerating: true,
-    isCalculating: false,
-    isRefreshing: false,
-    isGeneratingAura: false,
-    isContextSensing: false,
-    isForecasting: false,
-    stage: 'Initializing...',
-  });
+  // ==================== OPTIMIZED STATE MANAGEMENT ====================
+  const { state, actions } = useNeuralMindMapState();
 
-  // Core data state
-  const [neuralGraph, setNeuralGraph] = useState<NeuralGraph | null>(null);
-  const [viewMode, setViewMode] = useState<string>('context_adaptive');
-  const [selectedNode, setSelectedNode] = useState<NeuralNode | null>(null);
-  const [nodeDetailVisible, setNodeDetailVisible] = useState(false);
-  const [nodeDetail, setNodeDetail] = useState<NodeDetail | null>(null);
+  // Destructure state for easier access
+  const {
+    ui: {
+      menuVisible,
+      nodeDetailVisible,
+      microTaskVisible,
+      microTaskMinimized,
+      contextInsightsVisible,
+      capacityForecastVisible,
+      adaptiveControlsVisible,
+      sidePanelCollapsed,
+      showBottomSheet,
+      bottomActiveTab,
+    },
+    data: {
+      neuralGraph,
+      selectedNode,
+      nodeDetail,
+      auraState,
+      contextSnapshot,
+      physicsState,
+    },
+    settings: { viewMode, adaptiveColors },
+    loading: loadingState,
+    error,
+  } = state;
 
-  // CAE 2.0  state
-  const [auraState, setAuraState] = useState<AuraState | null>(null);
-  const [contextSnapshot, setContextSnapshot] =
-    useState<ContextSnapshot | null>(null);
-  const [physicsState, setPhysicsState] = useState<PhysicsState | null>(null);
+  // Local state for complex objects that don't need frequent updates
+  const [forecastStages, setForecastStages] = useState<{
+    shortTerm: boolean;
+    mediumTerm: boolean;
+    longTerm: boolean;
+  }>({ shortTerm: false, mediumTerm: false, longTerm: false });
 
-  // UI state
-  const [microTaskVisible, setMicroTaskVisible] = useState(true);
-  const [microTaskMinimized, setMicroTaskMinimized] = useState(false);
-  const [contextInsightsVisible, setContextInsightsVisible] = useState(false);
-  const [capacityForecastVisible, setCapacityForecastVisible] = useState(true);
-  const [adaptiveControlsVisible, setAdaptiveControlsVisible] = useState(false);
+  const [forecastProgress, setForecastProgress] = useState<{
+    currentStage: 'short' | 'medium' | 'long' | null;
+    progress: number;
+  }>({ currentStage: null, progress: 0 });
 
-  // Performance tracking
+  const [forecastCache, setForecastCache] = useState<{
+    shortTerm?: any;
+    mediumTerm?: any;
+    longTerm?: any;
+    lastUpdated: number;
+  }>({ lastUpdated: 0 });
+
+  // Performance tracking (kept local as it's frequently updated)
   const [performanceTracking, setPerformanceTracking] = useState<{
     taskStartTime: Date | null;
     completionCount: number;
     skipCount: number;
     contextSwitchCount: number;
     accuracyScore: number;
+    forecastStartTime?: number;
   }>({
     taskStartTime: null,
     completionCount: 0,
     skipCount: 0,
     contextSwitchCount: 0,
     accuracyScore: 0.75,
+    forecastStartTime: 0,
   });
 
-  // Adaptive UI state
-  const [adaptiveColors, setAdaptiveColors] = useState<{
-    primary: string;
-    secondary: string;
-    background: string;
-    text: string;
-    accent: string;
-  } | null>(null);
+  // Backwards-compatible setter aliases (map older local setter names to
+  // the centralized actions / local state used by the new reducer-based
+  // hook. This is a minimal, low-risk compatibility layer so existing
+  // logic that calls setX(...) keeps working without large refactors.
+  const setPerformanceMetrics = setPerformanceTracking;
 
-  const [error, setError] = useState<string | null>(null);
+  const setLoadingState = (
+    updater: Partial<LoadingState> | ((prev: LoadingState) => LoadingState),
+  ) => {
+    if (typeof updater === 'function') {
+      // pass current loadingState to the reducer helper
+      actions.setLoading(
+        (updater as (p: LoadingState) => LoadingState)(loadingState),
+      );
+    } else {
+      actions.setLoading(updater as Partial<LoadingState>);
+    }
+  };
+
+  const setAuraState = (s: AuraState) => {
+    actions.setData({ auraState: s });
+  };
+
+  const setPhysicsState = (p: PhysicsState) => {
+    actions.setData({ physicsState: p });
+  };
+
+  const setViewMode = (mode: ViewMode['id'] | string) => {
+    actions.setSettings({ viewMode: mode as any });
+  };
+
+  const setSelectedNode = (node: NeuralNode | null) => {
+    actions.setData({ selectedNode: node });
+  };
+
+  const setNodeDetail = (detail: NodeDetail | null) => {
+    actions.setData({ nodeDetail: detail });
+  };
+
+  const setNodeDetailVisible = (v: boolean) => {
+    // actions API exposes setUI (uppercase) from the reducer-based hook
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ nodeDetailVisible: v });
+    } else {
+      // fallback for older API
+      (actions as any).setUi?.({ nodeDetailVisible: v } as any);
+    }
+  };
+
+  const setMenuVisible = (v: boolean) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ menuVisible: v });
+    } else {
+      (actions as any).setUi?.({ menuVisible: v } as any);
+    }
+  };
+
+  const setContextInsightsVisible = (v: boolean) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ contextInsightsVisible: v });
+    } else {
+      (actions as any).setUi?.({ contextInsightsVisible: v } as any);
+    }
+  };
+
+  const setAdaptiveControlsVisible = (v: boolean) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ adaptiveControlsVisible: v });
+    } else {
+      (actions as any).setUi?.({ adaptiveControlsVisible: v } as any);
+    }
+  };
+
+  const setCapacityForecastVisible = (v: boolean) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ capacityForecastVisible: v });
+    } else {
+      (actions as any).setUi?.({ capacityForecastVisible: v } as any);
+    }
+  };
+
+  const setMicroTaskMinimized = (v: boolean) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ microTaskMinimized: v });
+    } else {
+      (actions as any).setUi?.({ microTaskMinimized: v } as any);
+    }
+  };
+
+  const setBottomActiveTab = (tab: string) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ bottomActiveTab: tab as any });
+    } else {
+      (actions as any).setUi?.({ bottomActiveTab: tab as any } as any);
+    }
+  };
+
+  const setShowBottomSheet = (v: boolean) => {
+    if (typeof (actions as any).setUI === 'function') {
+      (actions as any).setUI({ showBottomSheet: v });
+    } else {
+      (actions as any).setUi?.({ showBottomSheet: v } as any);
+    }
+  };
+
+  const setContextSnapshot = (s: ContextSnapshot) => {
+    actions.setData({ contextSnapshot: s });
+  };
 
   // Contexts and services
   const { focusState, startFocusSession } = useFocus();
@@ -324,6 +507,18 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     [],
   );
 
+  // Performance optimization services
+  const adaptiveUIManager = useMemo(() => AdaptiveUIManager.getInstance(), []);
+  const cacheManager = useMemo(() => SmartCacheManager.getInstance(), []);
+  const backgroundProcessor = useMemo(
+    () => BackgroundProcessor.getInstance(),
+    [],
+  );
+  const serviceManager = useMemo(() => ServiceManager.getInstance(), []);
+
+  // Optimized hooks
+  const { getOptimizedRenderData, updateViewport } = useOptimizedCanvas();
+
   // Screen dimensions
   const { width, height } = Dimensions.get('window');
   const themeColors = colors[theme];
@@ -332,11 +527,16 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   const contextTransitionProgress = useSharedValue(0);
   const capacityForecastScale = useSharedValue(1);
   const microTaskPulse = useSharedValue(1);
+  // Side panel open/closed progress (0 = collapsed, 1 = expanded)
+  const sidePanelProgress = useSharedValue(
+    Dimensions.get('window').width < 720 ? 0 : 1,
+  );
 
   // Timers and refs
   const auraUpdateTimer = useRef<NodeJS.Timeout | null>(null);
   const contextUpdateTimer = useRef<NodeJS.Timeout | null>(null);
   const performanceTimer = useRef<NodeJS.Timeout | null>(null);
+  const monitoringStarted = useRef(false);
   // Listener handler refs so we can remove them precisely on cleanup
   const caeAuraUpdatedHandler = useRef<((a: AuraState) => void) | null>(null);
   const caeContextChangeHandler = useRef<((c: AuraContext) => void) | null>(
@@ -362,6 +562,8 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   );
 
   // Map viewMode to supported NeuralMindMap view modes
+  // Using module-level getOptimalViewModeForContext helper (pure function)
+
   const effectiveViewMode = useMemo(() => {
     if (viewMode === 'context_adaptive') {
       return getOptimalViewModeForContext(auraState?.context || 'DeepFocus') as
@@ -382,7 +584,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   }, [auraState, themeColors.primary]);
 
   const isContextOptimized = useMemo(() => {
-    if (!auraState) return false;
+    if (!auraState || !currentViewMode) return false;
     return currentViewMode.contextOptimized.includes(auraState.context);
   }, [currentViewMode, auraState]);
 
@@ -451,76 +653,76 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
   // ====================  INITIALIZATION ====================
 
+  // Progressive loading setup
+  const loadingStages = useMemo(
+    () => [
+      {
+        key: 'contextSensing',
+        loader: () => Promise.resolve(contextSensorService.startMonitoring(1)),
+        priority: 'critical' as const,
+      },
+      {
+        key: 'neuralGraph',
+        loader: () => Promise.resolve(generateNeuralGraph()),
+        priority: 'critical' as const,
+        dependencies: ['contextSensing'],
+      },
+      {
+        key: 'cognitiveAura',
+        loader: () => Promise.resolve(initializeCognitiveAuraEngine()),
+        priority: 'important' as const,
+        dependencies: ['neuralGraph'],
+      },
+      {
+        key: 'physicsEngine',
+        loader: () => Promise.resolve(initializePhysicsIntegration()),
+        priority: 'important' as const,
+      },
+      {
+        key: 'monitoring',
+        loader: () => Promise.resolve(setupMonitoring()),
+        priority: 'optional' as const,
+      },
+    ],
+    [],
+  );
+
+  const progressiveLoading = useProgressiveLoading(loadingStages);
+
   useEffect(() => {
     let mounted = true;
+    mountMarkRef.current = perf.startMark('NeuralMindMapScreen');
+    const componentId = 'neural-mind-map-screen';
+
+    // Register services with service manager
+    serviceManager.registerService('mindMapGenerator', mindMapGenerator);
+    serviceManager.registerService('CAE', CAE);
+    serviceManager.registerService('contextSensor', contextSensorService);
+    serviceManager.registerService('physicsEngine', PhysicsEngine);
 
     const initializeSystem = async () => {
       try {
-        console.log('🚀 Initializing  Neural Mind Map with CAE 2.0...');
+        console.log('🚀 Initializing Neural Mind Map with optimizations...');
 
-        setLoadingState((prev) => ({
-          ...prev,
-          isGenerating: true,
-          isContextSensing: true,
-          stage: 'Starting context sensing...',
-        }));
+        // Use progressive loading
+        await progressiveLoading.loadAll();
 
-        // Step 1: Initialize context sensing
-        await contextSensorService.startMonitoring(1); // 1-minute intervals for high responsiveness
-
-        setLoadingState((prev) => ({
-          ...prev,
-          isGenerating: true,
-          stage: 'Generating neural graph...',
-        }));
-
-        // Step 2: Generate neural graph
-        await generateNeuralGraph();
-
-        setLoadingState((prev) => ({
-          ...prev,
-          isGeneratingAura: true,
-          stage: 'Initializing Cognitive Aura Engine 2.0...',
-        }));
-
-        // Step 3: Initialize CAE 2.0
-        await initializeCognitiveAuraEngine();
-
-        setLoadingState((prev) => ({
-          ...prev,
-          isForecasting: true,
-          stage: 'Setting up predictive intelligence...',
-        }));
-
-        // Step 4: Set up physics engine integration
-        await initializePhysicsIntegration();
-
-        // Step 5: Set up real-time monitoring
         if (mounted) {
-          setupMonitoring();
-          setLoadingState((prev) => ({
-            ...prev,
+          actions.setLoading({
             isGenerating: false,
             isContextSensing: false,
             isGeneratingAura: false,
             isForecasting: false,
             stage: 'Ready',
-          }));
+          });
         }
 
-        console.log('✅  Neural Mind Map system initialized successfully');
+        console.log('✅ Neural Mind Map system initialized successfully');
       } catch (error) {
         if (mounted) {
-          console.error('❌  system initialization failed:', error);
-          setError('Failed to initialize  learning system');
-          setLoadingState((prev) => ({
-            ...prev,
-            isGenerating: false,
-            isContextSensing: false,
-            isGeneratingAura: false,
-            isForecasting: false,
-            stage: 'Error',
-          }));
+          console.error('❌ System initialization failed:', error);
+          actions.setError('Failed to initialize learning system');
+          actions.setLoading({ stage: 'Error' });
         }
       }
     };
@@ -529,9 +731,35 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
     return () => {
       mounted = false;
+      memoryManager.cleanup(componentId);
+      backgroundProcessor.cleanup();
+      serviceManager.cleanup();
       cleanup();
     };
-  }, []);
+  }, [
+    actions,
+    progressiveLoading,
+    serviceManager,
+    backgroundProcessor,
+    memoryManager,
+  ]);
+
+  useEffect(() => {
+    // mark ready when stage becomes 'Ready' and generation flags are false
+    if (
+      loadingState.stage === 'Ready' &&
+      !loadingState.isGenerating &&
+      !loadingState.isContextSensing &&
+      mountMarkRef.current
+    ) {
+      try {
+        perf.measureReady('NeuralMindMapScreen', mountMarkRef.current);
+      } catch (e) {
+        // guarded
+      }
+      mountMarkRef.current = null;
+    }
+  }, [loadingState]);
 
   // ====================  CORE METHODS ====================
 
@@ -541,21 +769,44 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   const generateNeuralGraph = useCallback(
     async (forceRefresh = false) => {
       try {
-        setLoadingState((prev) => ({ ...prev, isGenerating: true }));
-        setError(null);
+        actions.setLoading({ isGenerating: true });
+        actions.setError(null);
 
-        const graph = await mindMapGenerator.generateNeuralGraph(forceRefresh);
-        setNeuralGraph(graph);
+        // Try to get from cache first
+        const cacheKey = 'neural-graph-main';
+        let graph: NeuralGraph | null = null;
+
+        if (!forceRefresh) {
+          graph = await cacheManager.get<NeuralGraph>(cacheKey);
+        }
+
+        if (!graph) {
+          graph = await measureAsync('Neural Graph Generation', async () => {
+            return await mindMapGenerator.generateNeuralGraph(forceRefresh);
+          });
+
+          // Cache the generated graph
+          await cacheManager.set(cacheKey, graph, 'warm');
+        }
+
+        actions.setData({ neuralGraph: graph });
 
         // Integrate with physics engine
         if (graph && graph.nodes.length > 0) {
-          const nodeData = graph.nodes.map((node) => ({
-            id: node.id,
-            label: node.label,
-            cognitiveLoad: node.cognitiveLoad || Math.random(),
-            masteryLevel: node.masteryLevel || Math.random(),
-            size: 12 + (node.cognitiveLoad || 0.5) * 12,
-          }));
+          const nodeData = graph.nodes.map((node) => {
+            const id = String(node.id || '');
+            const cognitiveUnit = _devRandom ? Math.random() : deterministicUnitValue(id, 'cog');
+            const masteryUnit = _devRandom ? Math.random() : deterministicUnitValue(id, 'mastery');
+            const cognitiveLoad = node.cognitiveLoad ?? cognitiveUnit;
+            const masteryLevel = node.masteryLevel ?? masteryUnit;
+            return {
+              id: node.id,
+              label: node.label,
+              cognitiveLoad,
+              masteryLevel,
+              size: 12 + cognitiveLoad * 12,
+            };
+          });
 
           const linkData = graph.links.map((link) => ({
             source:
@@ -577,30 +828,98 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           paths: graph.learningPaths?.length || 0,
         });
       } catch (error: unknown) {
-        console.error('❌  neural graph generation failed:', error);
-        setError((error as Error)?.message || 'Failed to generate  brain map');
+        console.error('❌ Neural graph generation failed:', error);
+        actions.setError(
+          (error as Error)?.message || 'Failed to generate brain map',
+        );
 
         Alert.alert(
-          ' Neural Map Error',
-          'Failed to generate your  brain map. The system will fall back to basic mode.',
+          'Neural Map Error',
+          'Failed to generate your brain map. The system will fall back to basic mode.',
           [
             {
               text: 'Go to Flashcards',
               onPress: () => onNavigate('flashcards'),
             },
-            { text: 'Retry ', onPress: () => generateNeuralGraph(true) },
+            { text: 'Retry', onPress: () => generateNeuralGraph(true) },
             { text: 'Continue Basic', style: 'cancel' },
           ],
         );
       } finally {
-        setLoadingState((prev) => ({ ...prev, isGenerating: false }));
+        actions.setLoading({ isGenerating: false });
       }
     },
-    [mindMapGenerator, onNavigate, PhysicsEngine],
+    [mindMapGenerator, onNavigate, PhysicsEngine, actions],
   );
 
   /**
-   * Initialize Cognitive Aura Engine 2.0
+   * Progressive forecasting implementation with staged loading
+   */
+  const performProgressiveForecasting = useCallback(async () => {
+    try {
+      console.log('🔮 Starting progressive forecasting...');
+
+      // Stage 1: Short-term forecasting (30min)
+      setForecastProgress({ currentStage: 'short', progress: 0 });
+      setPerformanceMetrics((prev) => ({
+        ...prev,
+        forecastStartTime: Date.now(),
+      }));
+
+      const shortTermForecast = await CAE.getCapacityForecast('short');
+      setForecastCache((prev) => ({
+        ...prev,
+        shortTerm: shortTermForecast,
+        lastUpdated: Date.now(),
+      }));
+      setForecastStages((prev) => ({ ...prev, shortTerm: true }));
+      setForecastProgress({ currentStage: 'short', progress: 100 });
+
+      // Allow UI interaction with short-term data
+      setLoadingState((prev) => ({
+        ...prev,
+        stage: 'Short-term forecast ready',
+      }));
+
+      // Stage 2: Medium-term forecasting (2-4h)
+      setForecastProgress({ currentStage: 'medium', progress: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 100)); // Brief pause for UX
+
+      const mediumTermForecast = await CAE.getCapacityForecast('medium');
+      setForecastCache((prev) => ({ ...prev, mediumTerm: mediumTermForecast }));
+      setForecastStages((prev) => ({ ...prev, mediumTerm: true }));
+      setForecastProgress({ currentStage: 'medium', progress: 100 });
+
+      setLoadingState((prev) => ({
+        ...prev,
+        stage: 'Medium-term forecast ready',
+      }));
+
+      // Stage 3: Long-term forecasting (24h)
+      setForecastProgress({ currentStage: 'long', progress: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 100)); // Brief pause for UX
+
+      const longTermForecast = await CAE.getCapacityForecast('long');
+      setForecastCache((prev) => ({ ...prev, longTerm: longTermForecast }));
+      setForecastStages((prev) => ({ ...prev, longTerm: true }));
+      setForecastProgress({ currentStage: null, progress: 0 });
+
+      const forecastEndTime = Date.now();
+      setPerformanceMetrics((prev) => ({
+        ...prev,
+        totalLoadTime:
+          forecastEndTime - (prev.forecastStartTime || forecastEndTime),
+      }));
+
+      console.log('✅ Progressive forecasting completed');
+    } catch (error) {
+      console.error('❌ Progressive forecasting failed:', error);
+      setForecastProgress({ currentStage: null, progress: 0 });
+    }
+  }, [CAE]);
+
+  /**
+   * Initialize Cognitive Aura Engine 2.0 with progressive forecasting
    */
   const initializeCognitiveAuraEngine = useCallback(async () => {
     try {
@@ -612,7 +931,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
       // Set up aura state listeners
       // register CAE handlers and keep refs for precise removal
-      caeAuraUpdatedHandler.current = (auraState: AuraState) => {
+      caeAuraUpdatedHandler.current = safeHandler((auraState: AuraState) => {
         console.log(
           `🧠  aura updated: ${auraState.context} (${(
             auraState.compositeCognitiveScore * 100
@@ -627,12 +946,12 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           ...prev,
           contextSwitchCount: prev.contextSwitchCount + 1,
         }));
-      };
+      });
 
-      caeContextChangeHandler.current = (context: AuraContext) => {
+      caeContextChangeHandler.current = safeHandler((context: AuraContext) => {
         console.log(`🔄 Context changed to: ${context}`);
         updateViewModeForContext(context);
-      };
+      });
 
       if (caeAuraUpdatedHandler.current)
         CAE.on('_aura_updated', caeAuraUpdatedHandler.current);
@@ -641,16 +960,18 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
       // Set up context sensor listeners
       // context sensor handlers
-      contextSensorContextUpdatedHandler.current = (
-        snapshot: ContextSnapshot,
-      ) => {
-        setContextSnapshot(snapshot);
-        updateEnvironmentalUI(snapshot);
-      };
+      contextSensorContextUpdatedHandler.current = safeHandler(
+        (snapshot: ContextSnapshot) => {
+          setContextSnapshot(snapshot);
+          updateEnvironmentalUI(snapshot);
+        },
+      );
 
-      contextSensorDblUpdatedHandler.current = (dbl: DigitalBodyLanguage) => {
-        updateDBLIndicators(dbl);
-      };
+      contextSensorDblUpdatedHandler.current = safeHandler(
+        (dbl: DigitalBodyLanguage) => {
+          updateDBLIndicators(dbl);
+        },
+      );
 
       if (contextSensorContextUpdatedHandler.current)
         contextSensorService.on(
@@ -663,12 +984,15 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           contextSensorDblUpdatedHandler.current,
         );
 
+      // Start progressive forecasting
+      await performProgressiveForecasting();
+
       console.log('✅  Cognitive Aura Engine initialized');
     } catch (error) {
       console.error('❌ CAE 2.0 initialization failed:', error);
       throw error;
     }
-  }, [CAE, contextSensorService]);
+  }, [CAE, contextSensorService, performProgressiveForecasting]);
 
   /**
    * Initialize physics engine integration
@@ -679,34 +1003,50 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
 
       // Set up physics engine listeners
       // physics handlers stored in refs so we can remove them precisely
-      physicsUpdatedHandler.current = (update: any) => {
-        console.log(
-          `🎯 Physics updated: ${update.context} (Load: ${(
-            update.cognitiveLoad * 100
-          ).toFixed(1)}%)`,
-        );
-      };
+      physicsUpdatedHandler.current = safeHandler((update: any) => {
+        try {
+          console.log(
+            `🎯 Physics updated: ${update.context} (Load: ${(
+              update.cognitiveLoad * 100
+            ).toFixed(1)}%)`,
+          );
+        } catch (e) {
+          console.warn('Physics update handler failed:', e);
+        }
+      });
 
-      physicsTransitionCompleteHandler.current = (event: any) => {
-        console.log(`✅ Physics transition complete: ${event.context}`);
-      };
+      physicsTransitionCompleteHandler.current = safeHandler((event: any) => {
+        try {
+          console.log(`✅ Physics transition complete: ${event.context}`);
+        } catch (e) {
+          console.warn('Physics transition handler failed:', e);
+        }
+      });
 
-      physicsNodeInteractionHandler.current = (event: any) => {
-        handleNodeInteraction(event.nodeId, event.type);
-      };
+      physicsNodeInteractionHandler.current = safeHandler((event: any) => {
+        try {
+          handleNodeInteraction(event.nodeId, event.type);
+        } catch (e) {
+          console.warn('Physics node interaction handler failed:', e);
+        }
+      });
 
-      if (physicsUpdatedHandler.current)
-        PhysicsEngine.on('physics_updated', physicsUpdatedHandler.current);
-      if (physicsTransitionCompleteHandler.current)
-        PhysicsEngine.on(
-          'transition_complete',
-          physicsTransitionCompleteHandler.current,
-        );
-      if (physicsNodeInteractionHandler.current)
-        PhysicsEngine.on(
-          'node_interaction',
-          physicsNodeInteractionHandler.current,
-        );
+      try {
+        if (physicsUpdatedHandler.current)
+          PhysicsEngine.on('physics_updated', physicsUpdatedHandler.current);
+        if (physicsTransitionCompleteHandler.current)
+          PhysicsEngine.on(
+            'transition_complete',
+            physicsTransitionCompleteHandler.current,
+          );
+        if (physicsNodeInteractionHandler.current)
+          PhysicsEngine.on(
+            'node_interaction',
+            physicsNodeInteractionHandler.current,
+          );
+      } catch (e) {
+        console.warn('Failed to register PhysicsEngine handlers:', e);
+      }
 
       // Start physics simulation
       PhysicsEngine.startSimulation();
@@ -726,6 +1066,12 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
    * Set up  monitoring systems
    */
   const setupMonitoring = useCallback(() => {
+    // Prevent duplicate monitoring setup
+    if (monitoringStarted.current) {
+      console.log('Monitoring already started - skipping duplicate setup');
+      return;
+    }
+    monitoringStarted.current = true;
     //  aura state updates (every 90 seconds for balance)
     auraUpdateTimer.current = setInterval(async () => {
       try {
@@ -767,42 +1113,71 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
   }, [CAE, contextSensorService, PhysicsEngine, contextSnapshot]);
 
   /**
-   * Update adaptive UI based on aura state
+   * Update adaptive UI based on aura state with performance optimization
    */
   const updateAdaptiveUI = useCallback(
-    (auraState: AuraState) => {
+    async (auraState: AuraState) => {
       const contextColor = COGNITIVE_CONTEXT_COLORS[auraState.context];
 
+      // Get adaptive UI configuration
+      const adaptiveConfig: AdaptiveUIConfig = {
+        cognitiveLoad: auraState.compositeCognitiveScore,
+        devicePerformance: 'medium', // Would be detected dynamically
+        batteryLevel: 0.8, // Would be from device info
+        networkQuality: 'good', // Would be from network monitoring
+        memoryPressure: 'low', // Would be from memory monitoring
+      };
+
+      const uiConfig = adaptiveUIManager.updateConfiguration(adaptiveConfig);
+
       // Update adaptive color scheme
-      setAdaptiveColors({
+      const newColors = {
         primary: contextColor,
         secondary: adjustColorBrightness(contextColor, 20),
         background: adjustColorBrightness(contextColor, -80),
         text: adjustColorBrightness(contextColor, 40),
         accent: adjustColorBrightness(contextColor, 60),
-      });
+      };
 
-      // Update capacity forecast widget
-      capacityForecastScale.value = withSpring(
-        auraState.capacityForecast.mentalClarityScore > 0.7
-          ? 1.1
-          : auraState.capacityForecast.mentalClarityScore < 0.4
-          ? 0.9
-          : 1.0,
-        { damping: 15, stiffness: 150 },
+      actions.setSettings({ adaptiveColors: newColors });
+
+      // Only animate if animations are enabled
+      if (uiConfig.animationsEnabled) {
+        // Update capacity forecast widget
+        capacityForecastScale.value = withSpring(
+          auraState.capacityForecast.mentalClarityScore > 0.7
+            ? 1.1
+            : auraState.capacityForecast.mentalClarityScore < 0.4
+            ? 0.9
+            : 1.0,
+          { damping: 15, stiffness: 150 },
+        );
+
+        // Update micro-task pulse based on urgency
+        const urgency =
+          auraState.context === 'CognitiveOverload'
+            ? 0.7
+            : auraState.context === 'DeepFocus'
+            ? 1.2
+            : 1.0;
+
+        microTaskPulse.value = withTiming(urgency, { duration: 1000 });
+      }
+
+      // Cache the UI state for quick restoration
+      await cacheManager.set(
+        `ui-state-${auraState.context}`,
+        { colors: newColors, config: uiConfig },
+        'hot',
       );
-
-      // Update micro-task pulse based on urgency
-      const urgency =
-        auraState.context === 'CognitiveOverload'
-          ? 0.7
-          : auraState.context === 'DeepFocus'
-          ? 1.2
-          : 1.0;
-
-      microTaskPulse.value = withTiming(urgency, { duration: 1000 });
     },
-    [capacityForecastScale, microTaskPulse],
+    [
+      capacityForecastScale,
+      microTaskPulse,
+      adaptiveUIManager,
+      cacheManager,
+      actions,
+    ],
   );
 
   /**
@@ -872,28 +1247,26 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     [viewMode],
   );
 
-  /**
-   * Get optimal view mode for context
-   */
-  const getOptimalViewModeForContext = useCallback(
-    (context: AuraContext): string => {
-      switch (context) {
-        case 'DeepFocus':
-          return 'clusters'; // Focused clustering for deep work
-        case 'CreativeFlow':
-          return 'network'; // Full network for creative exploration
-        case 'FragmentedAttention':
-          return 'paths'; // Clear paths for fragmented attention
-        case 'CognitiveOverload':
-          return 'health'; // Health view for recovery guidance
-        default:
-          return 'context_adaptive';
-      }
+  // ====================  INTERACTION HANDLERS ====================
+
+  // Small helper: wrap event handlers to prevent unhandled exceptions from
+  // propagating up (for example SQLITE_FULL when a background save fails).
+  // This keeps the UI responsive and logs the error for diagnostics.
+  const safeHandler = useCallback(
+    <T extends (...args: any[]) => any>(fn: T): T => {
+      return ((...args: any[]) => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore - forward to the original handler
+          return fn(...args);
+        } catch (e) {
+          console.warn('Non-fatal handler error:', e);
+          return undefined;
+        }
+      }) as unknown as T;
     },
     [],
   );
-
-  // ====================  INTERACTION HANDLERS ====================
 
   /**
    * Handle  node interaction
@@ -950,9 +1323,10 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         const masteryLevel = node.masteryLevel ?? 0.5;
 
         // Generate context relevance scores
+        const creativeFlowExtra = _devRandom ? Math.random() * 0.3 : deterministicUnitValue(node.id, 'creativeFlow') * 0.3;
         const contextRelevance: Record<AuraContext, number> = {
           DeepFocus: Math.max(0, cognitiveLoad - masteryLevel + 0.5),
-          CreativeFlow: Math.max(0, connections / 10 + Math.random() * 0.3),
+          CreativeFlow: Math.max(0, connections / 10 + creativeFlowExtra),
           FragmentedAttention: Math.max(0, masteryLevel - cognitiveLoad + 0.3),
           CognitiveOverload: Math.max(0, 1 - cognitiveLoad),
         };
@@ -1155,11 +1529,14 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       if (currentContext && contextRelevance[currentContext] > 0.7) {
         recommendations.push(`Excellent choice for ${currentContext} context`);
       } else if (currentContext && contextRelevance[currentContext] < 0.3) {
-        recommendations.push(
-          `Consider reviewing in ${
-            Object.entries(contextRelevance).sort(([, a], [, b]) => b - a)[0][0]
-          } context`,
+        const entries = Object.entries(contextRelevance).sort(
+          ([, a], [, b]) => b - a,
         );
+        let topContext: AuraContext = 'DeepFocus';
+        if (entries && entries.length > 0 && entries[0] && entries[0][0]) {
+          topContext = entries[0][0] as AuraContext;
+        }
+        recommendations.push(`Consider reviewing in ${topContext} context`);
       }
 
       // Add cognitive load recommendations
@@ -1339,6 +1716,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     }
 
     console.log('🧹  Neural Mind Map cleanup complete');
+    monitoringStarted.current = false;
   }, [CAE, contextSensorService, PhysicsEngine]);
 
   // ==================== ANIMATION STYLES ====================
@@ -1369,7 +1747,28 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
     transform: [{ scale: microTaskPulse.value }],
   }));
 
+  const sidePanelAnimatedStyle = useAnimatedStyle(() => ({
+    width: (interpolate as any)(sidePanelProgress.value, [0, 1], [64, 320]),
+    // subtle fade for children when collapsing
+    opacity: (interpolate as any)(
+      sidePanelProgress.value,
+      [0, 0.2, 1],
+      [0.9, 0.98, 1],
+    ),
+  }));
+
+  // Sync sidePanelProgress when state changes
+  useEffect(() => {
+    sidePanelProgress.value = withTiming(sidePanelCollapsed ? 0 : 1, {
+      duration: 300,
+    });
+  }, [sidePanelCollapsed, sidePanelProgress]);
+
   // ==================== RENDER ====================
+
+  // guard progress access - `loadingState.progress` may be optional in the
+  // strict typing, so read via a local runtime-safe variable
+  const _loadingProgress: number | undefined = (loadingState as any).progress;
 
   if (loadingState.isGenerating || loadingState.isContextSensing) {
     return (
@@ -1380,7 +1779,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
         <StatusBar backgroundColor={contextColor} barStyle="light-content" />
 
         <View style={styles.loadingContainer}>
-          <LinearGradient
+          <GradientFallback
             colors={[contextColor, adjustColorBrightness(contextColor, -20)]}
             style={styles.loadingGradient}
           >
@@ -1394,17 +1793,17 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
               {loadingState.stage}
             </Text>
 
-            {loadingState.progress !== undefined && (
+            {_loadingProgress !== undefined && (
               <View style={styles.progressContainer}>
                 <View
                   style={[
                     styles.progressBar,
-                    { width: `${loadingState.progress * 100}%` },
+                    { width: `${_loadingProgress * 100}%` },
                   ]}
                 />
               </View>
             )}
-          </LinearGradient>
+          </GradientFallback>
         </View>
       </ScreenContainer>
     );
@@ -1420,7 +1819,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       {/*  Header */}
       <AppHeader
         title=" Neural Map"
-        subtitle={auraState ? `${auraState.context} Context` : undefined}
+        subtitle={auraState ? `${auraState.context} Context` : ''}
         theme={theme}
         onMenuPress={() => setMenuVisible(true)}
         backgroundColor={contextColor}
@@ -1495,103 +1894,9 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
           })}
         </ScrollView>
 
-        {/* Main Content Area */}
+        {/* Main Content Area - simplified 2-panel layout: Map + Collapsible Side Panel */}
         <View style={styles.mainContent}>
-          {/* Left Panel - Controls & Insights */}
-          <View style={styles.leftPanel}>
-            {/* Capacity Forecast Widget */}
-            {capacityForecastVisible && auraState && (
-              <Animated.View
-                style={[
-                  styles.capacityForecastContainer,
-                  capacityForecastStyle,
-                ]}
-              >
-                <CapacityForecastWidget
-                  theme={theme}
-                  contextColor={contextColor}
-                  onToggleVisibility={() =>
-                    setCapacityForecastVisible(!capacityForecastVisible)
-                  }
-                />
-              </Animated.View>
-            )}
-            {/* Context Insights */}
-            {adaptiveRecommendations.length > 0 && (
-          <GlassCard
-            theme={theme}
-            variant="modal"
-            style={[styles.insightsCard, { borderLeftColor: contextColor }]}
-          >
-                <Text style={[styles.insightsTitle, { color: contextColor }]}>
-                  Context Insights
-                </Text>
-                {adaptiveRecommendations
-                  .slice(0, 3)
-                  .map((recommendation, index) => (
-                    <Text
-                      key={index}
-                      style={[
-                        styles.insightText,
-                        { color: themeColors.textSecondary },
-                      ]}
-                    >
-                      • {recommendation}
-                    </Text>
-                  ))}
-              </GlassCard>
-            )}
-
-            {/* Performance Metrics */}
-            <GlassCard theme={theme} style={styles.metricsCard}>
-              <Text style={[styles.metricsTitle, { color: themeColors.text }]}>
-                Session Performance
-              </Text>
-              <View style={styles.metricsRow}>
-                <View style={styles.metricItem}>
-                  <Text style={[styles.metricValue, { color: contextColor }]}>
-                    {performanceTracking.completionCount}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.metricLabel,
-                      { color: themeColors.textSecondary },
-                    ]}
-                  >
-                    Completed
-                  </Text>
-                </View>
-                <View style={styles.metricItem}>
-                  <Text style={[styles.metricValue, { color: contextColor }]}>
-                    {(performanceTracking.accuracyScore * 100).toFixed(0)}%
-                  </Text>
-                  <Text
-                    style={[
-                      styles.metricLabel,
-                      { color: themeColors.textSecondary },
-                    ]}
-                  >
-                    Accuracy
-                  </Text>
-                </View>
-                <View style={styles.metricItem}>
-                  <Text style={[styles.metricValue, { color: contextColor }]}>
-                    {performanceTracking.contextSwitchCount}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.metricLabel,
-                      { color: themeColors.textSecondary },
-                    ]}
-                  >
-                    Switches
-                  </Text>
-                </View>
-              </View>
-            </GlassCard>
-          </View>
-
-          {/* Center Panel - Neural Map */}
+          {/* Map Panel (center) */}
           <View style={styles.centerPanel}>
             <GlassCard theme={theme} style={styles.neuralMapContainer}>
               {error ? (
@@ -1626,7 +1931,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                 </View>
               ) : neuralGraph ? (
                 <>
-                  <NeuralMindMap
+                  <AnyNeuralMindMap
                     graph={neuralGraph}
                     viewMode={
                       effectiveViewMode as
@@ -1639,12 +1944,14 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                     theme={theme}
                     cognitiveLoad={auraState?.compositeCognitiveScore || 0.5}
                     focusNodeId={focusState.focusNodeId}
+                    renderData={getOptimizedRenderData(neuralGraph, 1.0) as any}
+                    onViewportChange={updateViewport}
                   />
 
                   {/* Context Overlay */}
                   {auraState && (
                     <View style={[styles.contextOverlay]}>
-                      <LinearGradient
+                      <GradientFallback
                         colors={[`${contextColor}20`, 'transparent']}
                         style={styles.contextGradient}
                       >
@@ -1662,7 +1969,7 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                           {(auraState.compositeCognitiveScore * 100).toFixed(0)}
                           % Cognitive Score
                         </Text>
-                      </LinearGradient>
+                      </GradientFallback>
                     </View>
                   )}
                 </>
@@ -1700,73 +2007,412 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
             </GlassCard>
           </View>
 
-          {/* Right Panel - Micro Task & Actions */}
-          <View style={styles.rightPanel}>
-            {/*  Micro Task Card */}
-            {microTaskVisible && auraState && (
-              <Animated.View
-                style={[styles.microTaskContainer, microTaskStyle]}
+          {/* Bottom Tab Bar - replaces sidebar for clearer mobile UX */}
+          <View style={styles.bottomTabWrapper}>
+            {/* Floating content panel shown above the tab bar when a tab is active */}
+            {/** Show small panel with content based on active tab **/}
+            <View style={styles.bottomPanelContainer}>
+              {/** Determine which content to render based on active tab **/}
+              {bottomActiveTab === 'controls' && (
+                <View>
+                  {capacityForecastVisible && auraState && (
+                    <CapacityForecastWidget
+                      theme={theme}
+                      contextColor={contextColor}
+                      onToggleVisibility={() =>
+                        setCapacityForecastVisible(!capacityForecastVisible)
+                      }
+                    />
+                  )}
+                </View>
+              )}
+
+              {bottomActiveTab === 'insights' && (
+                <GlassCard theme={theme} style={styles.insightsCard}>
+                  <Text style={[styles.insightsTitle, { color: contextColor }]}>
+                    Context Insights
+                  </Text>
+                  {adaptiveRecommendations.slice(0, 5).map((rec, i) => (
+                    <Text
+                      key={i}
+                      style={[
+                        styles.insightText,
+                        { color: themeColors.textSecondary },
+                      ]}
+                    >
+                      • {rec}
+                    </Text>
+                  ))}
+                </GlassCard>
+              )}
+
+              {bottomActiveTab === 'forecast' && (
+                <GlassCard theme={theme} style={styles.metricsCard}>
+                  <Text
+                    style={[styles.metricsTitle, { color: themeColors.text }]}
+                  >
+                    Capacity Forecast
+                  </Text>
+                  {forecastCache.shortTerm ||
+                  forecastCache.mediumTerm ||
+                  forecastCache.longTerm ? (
+                    <View>
+                      <Text
+                        style={[
+                          styles.insightText,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Short-term: {forecastCache.shortTerm ? 'Ready' : '—'}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.insightText,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Medium-term: {forecastCache.mediumTerm ? 'Ready' : '—'}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.insightText,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        Long-term: {forecastCache.longTerm ? 'Ready' : '—'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.insightText,
+                        { color: themeColors.textSecondary },
+                      ]}
+                    >
+                      Forecasts are being prepared — pull to refresh or wait a
+                      moment.
+                    </Text>
+                  )}
+                </GlassCard>
+              )}
+
+              {bottomActiveTab === 'microtask' &&
+                microTaskVisible &&
+                auraState && (
+                  <Animated.View
+                    style={[styles.microTaskContainer, microTaskStyle]}
+                  >
+                    <MicroTaskCard
+                      auraState={auraState}
+                      onTaskComplete={handleMicroTaskComplete}
+                      onTaskSkip={() => handleMicroTaskComplete(false, 0, 2)}
+                      onMinimizeToggle={() =>
+                        setMicroTaskMinimized(!microTaskMinimized)
+                      }
+                      minimized={microTaskMinimized}
+                      theme={theme}
+                    />
+                  </Animated.View>
+                )}
+
+              {bottomActiveTab === 'actions' && (
+                <GlassCard theme={theme} style={styles.actionsCard}>
+                  <Text
+                    style={[styles.actionsTitle, { color: themeColors.text }]}
+                  >
+                    Quick Actions
+                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: `${contextColor}20` },
+                    ]}
+                    onPress={() => CAE.refreshAuraState()}
+                  >
+                    <Icon name="refresh" size={16} color={contextColor} />
+                    <Text style={[styles.actionText, { color: contextColor }]}>
+                      Refresh Aura
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: `${contextColor}20` },
+                    ]}
+                    onPress={() => generateNeuralGraph(true)}
+                  >
+                    <Icon name="brain" size={16} color={contextColor} />
+                    <Text style={[styles.actionText, { color: contextColor }]}>
+                      Rebuild Map
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: `${contextColor}20` },
+                    ]}
+                    onPress={() => setContextInsightsVisible(true)}
+                  >
+                    <Icon name="lightbulb" size={16} color={contextColor} />
+                    <Text style={[styles.actionText, { color: contextColor }]}>
+                      View Insights
+                    </Text>
+                  </TouchableOpacity>
+                </GlassCard>
+              )}
+            </View>
+
+            {/* Bottom Tab Bar */}
+            <View style={styles.bottomTabBar}>
+              <TouchableOpacity
+                style={styles.tabButton}
+                onPress={() => setBottomActiveTab('controls')}
               >
-                <MicroTaskCard
-                  auraState={auraState}
-                  onTaskComplete={handleMicroTaskComplete}
-                  onTaskSkip={() => handleMicroTaskComplete(false, 0, 2)}
-                  onMinimizeToggle={() =>
-                    setMicroTaskMinimized(!microTaskMinimized)
+                <Icon
+                  name="tune"
+                  size={20}
+                  color={
+                    bottomActiveTab === 'controls'
+                      ? contextColor
+                      : themeColors.textSecondary
                   }
-                  minimized={microTaskMinimized}
-                  theme={theme}
                 />
-              </Animated.View>
-            )}
-
-            {/* Quick Actions */}
-            <GlassCard theme={theme} style={styles.actionsCard}>
-              <Text style={[styles.actionsTitle, { color: themeColors.text }]}>
-                Quick Actions
-              </Text>
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  { backgroundColor: `${contextColor}20` },
-                ]}
-                onPress={() => CAE.refreshAuraState()}
-              >
-                <Icon name="refresh" size={16} color={contextColor} />
-                <Text style={[styles.actionText, { color: contextColor }]}>
-                  Refresh Aura
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    {
+                      color:
+                        bottomActiveTab === 'controls'
+                          ? contextColor
+                          : themeColors.textSecondary,
+                    },
+                  ]}
+                >
+                  Controls
                 </Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  { backgroundColor: `${contextColor}20` },
-                ]}
-                onPress={() => generateNeuralGraph(true)}
+                style={styles.tabButton}
+                onPress={() => setBottomActiveTab('insights')}
               >
-                <Icon name="brain" size={16} color={contextColor} />
-                <Text style={[styles.actionText, { color: contextColor }]}>
-                  Rebuild Map
+                <Icon
+                  name="lightbulb"
+                  size={20}
+                  color={
+                    bottomActiveTab === 'insights'
+                      ? contextColor
+                      : themeColors.textSecondary
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    {
+                      color:
+                        bottomActiveTab === 'insights'
+                          ? contextColor
+                          : themeColors.textSecondary,
+                    },
+                  ]}
+                >
+                  Insights
                 </Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  { backgroundColor: `${contextColor}20` },
-                ]}
-                onPress={() => setContextInsightsVisible(true)}
+                style={styles.tabButton}
+                onPress={() => setBottomActiveTab('forecast')}
               >
-                <Icon name="lightbulb" size={16} color={contextColor} />
-                <Text style={[styles.actionText, { color: contextColor }]}>
-                  View Insights
+                <Icon
+                  name="clock"
+                  size={20}
+                  color={
+                    bottomActiveTab === 'forecast'
+                      ? contextColor
+                      : themeColors.textSecondary
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    {
+                      color:
+                        bottomActiveTab === 'forecast'
+                          ? contextColor
+                          : themeColors.textSecondary,
+                    },
+                  ]}
+                >
+                  Forecast
                 </Text>
               </TouchableOpacity>
-            </GlassCard>
+              <TouchableOpacity
+                style={styles.tabButton}
+                onPress={() => setBottomActiveTab('microtask')}
+              >
+                <Icon
+                  name="format-list-checks"
+                  size={20}
+                  color={
+                    bottomActiveTab === 'microtask'
+                      ? contextColor
+                      : themeColors.textSecondary
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    {
+                      color:
+                        bottomActiveTab === 'microtask'
+                          ? contextColor
+                          : themeColors.textSecondary,
+                    },
+                  ]}
+                >
+                  Microtask
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.tabButton}
+                onPress={() => setBottomActiveTab('actions')}
+              >
+                <Icon
+                  name="dots-horizontal"
+                  size={20}
+                  color={
+                    bottomActiveTab === 'actions'
+                      ? contextColor
+                      : themeColors.textSecondary
+                  }
+                />
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    {
+                      color:
+                        bottomActiveTab === 'actions'
+                          ? contextColor
+                          : themeColors.textSecondary,
+                    },
+                  ]}
+                >
+                  Actions
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Animated.View>
+
+      {/* Bottom sheet modal for small screens */}
+      <Modal
+        visible={showBottomSheet}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowBottomSheet(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPressOut={() => setShowBottomSheet(false)}
+        >
+          <Animated.View
+            style={[
+              styles.bottomSheet,
+              { backgroundColor: themeColors.surface || '#fff' },
+            ]}
+          >
+            <View style={styles.bottomSheetHandle} />
+
+            {/* View Mode Selector inside bottom sheet */}
+            <View style={styles.bottomSheetContent}>
+              <Text style={[styles.sectionTitle, { color: themeColors.text }]}>
+                View Modes
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingVertical: spacing.sm }}
+              >
+                {_VIEW_MODES.map((mode) => {
+                  const isActive = viewMode === mode.id;
+                  return (
+                    <TouchableOpacity
+                      key={mode.id}
+                      style={[
+                        styles.viewModeButton,
+                        { marginRight: spacing.sm },
+                        isActive && { backgroundColor: mode.color + '20' },
+                      ]}
+                      onPress={() => {
+                        handleViewModeChange(mode.id);
+                        setShowBottomSheet(false);
+                      }}
+                    >
+                      <Text style={styles.viewModeIcon}>{mode.icon}</Text>
+                      <Text
+                        style={[
+                          styles.viewModeText,
+                          { color: isActive ? mode.color : themeColors.text },
+                        ]}
+                      >
+                        {mode.shortName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Quick actions */}
+              <View style={{ marginTop: spacing.md }}>
+                <Text
+                  style={[styles.sectionTitle, { color: themeColors.text }]}
+                >
+                  Quick Actions
+                </Text>
+                <TouchableOpacity
+                  style={[styles.actionButton, { marginTop: spacing.sm }]}
+                  onPress={() => {
+                    CAE.refreshAuraState();
+                    setShowBottomSheet(false);
+                  }}
+                >
+                  <Icon name="refresh" size={18} color={contextColor} />
+                  <Text style={[styles.actionText, { color: contextColor }]}>
+                    Refresh Aura
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionButton, { marginTop: spacing.xs }]}
+                  onPress={() => {
+                    generateNeuralGraph(true);
+                    setShowBottomSheet(false);
+                  }}
+                >
+                  <Icon name="brain" size={18} color={contextColor} />
+                  <Text style={[styles.actionText, { color: contextColor }]}>
+                    Rebuild Map
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionButton, { marginTop: spacing.xs }]}
+                  onPress={() => {
+                    setContextInsightsVisible(true);
+                    setShowBottomSheet(false);
+                  }}
+                >
+                  <Icon name="lightbulb" size={18} color={contextColor} />
+                  <Text style={[styles.actionText, { color: contextColor }]}>
+                    View Insights
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Animated.View>
+        </TouchableOpacity>
+      </Modal>
 
       {/*  Node Detail Modal */}
       <Modal
@@ -1777,7 +2423,11 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
       >
         {nodeDetail && (
           <View style={styles.modalOverlay}>
-            <GlassCard theme={theme} variant="modal" style={styles.nodeDetailModal}>
+            <GlassCard
+              theme={theme}
+              variant="modal"
+              style={styles.nodeDetailModal}
+            >
               <View
                 style={[
                   styles.nodeDetailHeader,
@@ -1810,45 +2460,45 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                     Context Relevance
                   </Text>
                   {Object.entries(nodeDetail.contextRelevance).map(
-                    ([context, relevance]) => (
-                      <View key={context} style={styles.relevanceRow}>
-                        <Text
-                          style={[
-                            styles.contextName,
-                            {
-                              color:
-                                COGNITIVE_CONTEXT_COLORS[
-                                  context as AuraContext
-                                ],
-                            },
-                          ]}
-                        >
-                          {context}
-                        </Text>
-                        <View style={styles.relevanceBar}>
-                          <View
+                    ([context, relevanceRaw]: [string, unknown]) => {
+                      const ctx = context as AuraContext;
+                      const relevance =
+                        typeof relevanceRaw === 'number'
+                          ? relevanceRaw
+                          : Number(relevanceRaw) || 0;
+                      return (
+                        <View key={ctx} style={styles.relevanceRow}>
+                          <Text
                             style={[
-                              styles.relevanceFill,
-                              {
-                                width: `${relevance * 100}%`,
-                                backgroundColor:
-                                  COGNITIVE_CONTEXT_COLORS[
-                                    context as AuraContext
-                                  ],
-                              },
+                              styles.contextName,
+                              { color: COGNITIVE_CONTEXT_COLORS[ctx] },
                             ]}
-                          />
+                          >
+                            {ctx}
+                          </Text>
+                          <View style={styles.relevanceBar}>
+                            <View
+                              style={[
+                                styles.relevanceFill,
+                                {
+                                  width: `${relevance * 100}%`,
+                                  backgroundColor:
+                                    COGNITIVE_CONTEXT_COLORS[ctx],
+                                },
+                              ]}
+                            />
+                          </View>
+                          <Text
+                            style={[
+                              styles.relevanceScore,
+                              { color: themeColors.textSecondary },
+                            ]}
+                          >
+                            {(relevance * 100).toFixed(0)}%
+                          </Text>
                         </View>
-                        <Text
-                          style={[
-                            styles.relevanceScore,
-                            { color: themeColors.textSecondary },
-                          ]}
-                        >
-                          {(relevance * 100).toFixed(0)}%
-                        </Text>
-                      </View>
-                    ),
+                      );
+                    },
                   )}
                 </View>
 
@@ -1915,17 +2565,19 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                   >
                     Recommendations
                   </Text>
-                  {nodeDetail.recommendations.map((rec, index) => (
-                    <Text
-                      key={index}
-                      style={[
-                        styles.recommendationText,
-                        { color: themeColors.textSecondary },
-                      ]}
-                    >
-                      • {rec}
-                    </Text>
-                  ))}
+                  {nodeDetail.recommendations.map(
+                    (rec: string, index: number) => (
+                      <Text
+                        key={index}
+                        style={[
+                          styles.recommendationText,
+                          { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        • {rec}
+                      </Text>
+                    ),
+                  )}
                 </View>
 
                 {/* Optimal Contexts */}
@@ -1936,20 +2588,27 @@ export const NeuralMindMapScreen: React.FC<NeuralMindMapScreenProps> = ({
                     Optimal Contexts
                   </Text>
                   <View style={styles.contextChips}>
-                    {nodeDetail.optimalContexts.map((context) => (
+                    {nodeDetail.optimalContexts.map((context: AuraContext) => (
                       <View
                         key={context}
                         style={[
                           styles.contextChip,
                           {
-                            backgroundColor: `${COGNITIVE_CONTEXT_COLORS[context]}20`,
+                            backgroundColor: `${
+                              COGNITIVE_CONTEXT_COLORS[context as AuraContext]
+                            }20`,
                           },
                         ]}
                       >
                         <Text
                           style={[
                             styles.contextChipText,
-                            { color: COGNITIVE_CONTEXT_COLORS[context] },
+                            {
+                              color:
+                                COGNITIVE_CONTEXT_COLORS[
+                                  context as AuraContext
+                                ],
+                            },
                           ]}
                         >
                           {context}
@@ -2058,8 +2717,10 @@ const styles = StyleSheet.create({
 
   // View mode selector
   viewModeSelector: {
-    maxHeight: 80,
+    maxHeight: 96,
     paddingHorizontal: spacing.md,
+    paddingTop: spacing.xxl || spacing.lg + spacing.xs, // keep selector below floating header
+    zIndex: 10,
   },
   viewModeSelectorContent: {
     paddingVertical: spacing.sm,
@@ -2102,20 +2763,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: spacing.md,
     gap: spacing.md,
-  },
-
-  leftPanel: {
-    width: 280,
-    gap: spacing.md,
+    paddingTop: spacing.xl, // ensure content sits below header
   },
 
   centerPanel: {
     flex: 1,
+    minWidth: 0,
   },
 
-  rightPanel: {
+  sidePanel: {
     width: 320,
     gap: spacing.md,
+    backgroundColor: 'transparent',
+    padding: spacing.xs,
+  },
+
+  sidePanelCollapsed: {
+    width: 64,
+    paddingHorizontal: spacing.xs,
   },
 
   // Neural map
@@ -2406,45 +3071,64 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm,
     fontWeight: typography.weights.medium,
   },
+  // Bottom sheet styles
+  bottomSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopLeftRadius: borderRadius.lg,
+    borderTopRightRadius: borderRadius.lg,
+    padding: spacing.md,
+    maxHeight: '60%',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  bottomSheetHandle: {
+    width: 40,
+    height: 6,
+    borderRadius: 4,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    alignSelf: 'center',
+    marginBottom: spacing.sm,
+  },
+  bottomSheetContent: {
+    paddingBottom: spacing.lg,
+  },
+  // Bottom tab components
+  bottomTabWrapper: {
+    position: 'absolute',
+    left: spacing.sm,
+    right: spacing.sm,
+    bottom: spacing.md,
+    alignItems: 'center',
+  },
+  bottomPanelContainer: {
+    marginBottom: spacing.sm,
+    width: '100%',
+  },
+  bottomTabBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: spacing.sm,
+    borderRadius: borderRadius.lg,
+    width: '100%',
+  },
+  tabButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+  },
+  tabLabel: {
+    fontSize: typography.sizes.xs,
+    marginTop: spacing.xs,
+  },
 });
 
 export default NeuralMindMapScreen;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // // Add these imports to your existing NeuralMindMapScreen.tsx
 // import React, { useState, useEffect, useCallback, useMemo } from 'react';

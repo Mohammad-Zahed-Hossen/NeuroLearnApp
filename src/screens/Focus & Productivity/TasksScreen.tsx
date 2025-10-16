@@ -1,4 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from 'react';
 import {
   View,
   Text,
@@ -11,7 +17,10 @@ import {
   RefreshControl,
   Platform,
   Linking,
+  AppState,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import { FlashList } from '@shopify/flash-list';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   AppHeader,
@@ -27,6 +36,10 @@ import { ThemeType } from '../../theme/colors';
 import StorageService from '../../services/storage/StorageService';
 import { TodoistService } from '../../services/integrations/TodoistService';
 import { Task } from '../../types/index';
+import { perf } from '../../utils/perfMarks';
+import { TaskListSkeleton } from '../../components/skeletons';
+import { useDebouncedRefetch } from '../../hooks/useOptimizedQuery';
+import useTasksData from '../../hooks/useTasksData';
 
 interface TasksScreenProps {
   theme: ThemeType;
@@ -43,15 +56,33 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
 }) => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('todoist');
-  const [todoistTasks, setTodoistTasks] = useState<Task[]>([]);
-  const [localTasks, setLocalTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [syncingTodoist, setSyncingTodoist] = useState(false);
+  const mountMarkRef = useRef<string | null>(null);
+
+  // Centralized tasks data hook (local + Todoist) with progressive loading
+  const {
+    data: tasksData,
+    isLoading: loading,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    syncProgress,
+  } = useTasksData();
+  const { localTasks = [], todoistTasks = [] } =
+    (tasksData as { localTasks: Task[]; todoistTasks: Task[] } | undefined) ||
+    {};
 
   // Filters and sorting
   const [filter, setFilter] = useState<TaskFilter>('active');
   const [sort, setSort] = useState<TaskSort>('priority');
+
+  // Refresh state
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Connection status
+  const [todoistConnected, setTodoistConnected] = useState<boolean | null>(null);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [localConnected, setLocalConnected] = useState(true); // Local is always connected
 
   // Modals
   const [addTaskModalVisible, setAddTaskModalVisible] = useState(false);
@@ -59,12 +90,25 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
+  // Loading states for async operations
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [isUpdatingTask, setIsUpdatingTask] = useState(false);
+  const [isDeletingTask, setIsDeletingTask] = useState(false);
+  const [togglingTasks, setTogglingTasks] = useState<Set<string>>(new Set());
+
+  // Optimistic updates state
+  const [optimisticTasks, setOptimisticTasks] = useState<Task[]>([]);
+  const [pendingOperations, setPendingOperations] = useState<Set<string>>(new Set());
+  const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+
   // Form data
   const [formData, setFormData] = useState({
     content: '',
     description: '',
     priority: 2 as 1 | 2 | 3 | 4,
-    dueDate: '',
+    dueDate: undefined as string | undefined,
     projectName: 'Inbox',
   });
 
@@ -72,10 +116,72 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   const storage = StorageService.getInstance();
   const todoistService = TodoistService.getInstance();
 
+  // Start a mount mark for performance measurement
   useEffect(() => {
-    loadTasks();
-    initializeTodoistToken();
+    try {
+      mountMarkRef.current = perf.startMark('TasksScreen');
+    } catch (e) {
+      // ignore
+    }
   }, []);
+
+  // When loading completes, measure ready time from mount
+  useEffect(() => {
+    try {
+      if (!loading && mountMarkRef.current) {
+        perf.measureReady('TasksScreen', mountMarkRef.current);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [loading]);
+
+  // Check Todoist connection status
+  useEffect(() => {
+    const checkConnection = async () => {
+      if (activeTab === 'todoist') {
+        setCheckingConnection(true);
+        try {
+          const isValid = await todoistService.isTokenValid();
+          setTodoistConnected(isValid);
+        } catch (error) {
+          console.warn('Connection check failed:', error);
+          setTodoistConnected(false);
+        } finally {
+          setCheckingConnection(false);
+        }
+      }
+    };
+
+    checkConnection();
+  }, [activeTab, todoistService]);
+
+  // Monitor network connectivity
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const wasOnline = isOnline;
+      const nowOnline = state.isConnected ?? true;
+      setIsOnline(nowOnline);
+
+      // Process queue when coming back online
+      if (!wasOnline && nowOnline && offlineQueue.length > 0) {
+        processOfflineQueue();
+      }
+    });
+
+    return () => unsubscribe();
+  }, [isOnline, offlineQueue]);
+
+  // Process offline queue when app comes to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active' && isOnline && offlineQueue.length > 0) {
+        processOfflineQueue();
+      }
+    });
+
+    return () => subscription?.remove();
+  }, [isOnline, offlineQueue]);
 
   const initializeTodoistToken = async () => {
     try {
@@ -88,47 +194,15 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     }
   };
 
-  const loadTasks = async () => {
-    try {
-      setLoading(true);
-      const localTasksData = await storage.getTasks();
-      setLocalTasks(localTasksData);
+  // Debounced refresh to avoid repeated sync storms
+  const debouncedOnRefresh = useDebouncedRefetch(refetch, 300);
 
-      // Try to load Todoist tasks if token is available
-      await syncTodoistTasks();
-    } catch (error) {
-      console.error('Error loading tasks:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const syncTodoistTasks = async () => {
-    try {
-      setSyncingTodoist(true);
-      const settings = await storage.getSettings();
-
-      if (!settings.todoistToken) {
-        setTodoistTasks([]);
-        return;
-      }
-
-      todoistService.setApiToken(settings.todoistToken);
-      const tasks = await todoistService.getTasks();
-      setTodoistTasks(tasks);
-    } catch (error) {
-      console.error('Error syncing Todoist tasks:', error);
-      setTodoistTasks([]);
-    } finally {
-      setSyncingTodoist(false);
-    }
-  };
-
-  const onRefresh = async () => {
+  // Custom onRefresh that manages refreshing state
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadTasks();
+    await debouncedOnRefresh();
     setRefreshing(false);
-  };
+  }, [debouncedOnRefresh]);
 
   const getCurrentTasks = (): Task[] => {
     const tasks = activeTab === 'todoist' ? todoistTasks : localTasks;
@@ -195,54 +269,37 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
       return;
     }
 
+    setIsCreatingTask(true);
+    const tempId = `temp_${Date.now()}`;
+
+    // Capture form data before resetting
+    const taskContent = formData.content;
+    const taskDescription = formData.description;
+    const taskPriority = formData.priority;
+    const taskDueDate = formData.dueDate;
+    const taskProjectName = formData.projectName;
+
     try {
-      if (activeTab === 'todoist') {
-        // Create in Todoist
-        const settings = await storage.getSettings();
-        if (!settings.todoistToken) {
-          Alert.alert(
-            'Error',
-            'Please configure your Todoist token in Settings',
-          );
-          return;
-        }
-
-        todoistService.setApiToken(settings.todoistToken);
-        const taskId = await todoistService.createTask({
-          content: formData.content,
-          description: formData.description || undefined,
-          priority: formData.priority,
-          due: formData.dueDate ? { date: formData.dueDate } : undefined,
-          projectName: formData.projectName,
-          isCompleted: false,
-          source: 'todoist',
-        });
-
-        if (taskId) {
-          await syncTodoistTasks();
-        } else {
-          Alert.alert('Error', 'Failed to create task in Todoist');
-        }
-      } else {
-        // Create locally
-        const newTask: Task = {
-          id: `local_${Date.now()}`,
-          content: formData.content,
-          description: formData.description || undefined,
-          isCompleted: false,
-          priority: formData.priority,
-          due: formData.dueDate ? { date: formData.dueDate } : undefined,
-          projectName: formData.projectName,
-          source: 'local',
-          created: new Date(),
-        };
-
-        const updatedTasks = [newTask, ...localTasks];
-        await storage.saveTasks(updatedTasks);
-        setLocalTasks(updatedTasks);
+      // Create optimistic task
+      const optimisticTask: Task = {
+        id: tempId,
+        content: taskContent,
+        isCompleted: false,
+        priority: taskPriority,
+        due: taskDueDate ? { date: taskDueDate } : undefined,
+        projectName: taskProjectName,
+        source: activeTab,
+        created: new Date(),
+      };
+      if (taskDescription.trim()) {
+        optimisticTask.description = taskDescription;
       }
 
-      // Reset form and close modal
+      // Add to optimistic tasks
+      setOptimisticTasks(prev => [optimisticTask, ...prev]);
+      setPendingOperations(prev => new Set(prev).add(tempId));
+
+      // Reset form and close modal immediately
       setFormData({
         content: '',
         description: '',
@@ -251,33 +308,128 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         projectName: 'Inbox',
       });
       setAddTaskModalVisible(false);
+
+      // Perform actual operation in background
+      if (activeTab === 'todoist') {
+        if (!isOnline) {
+          setOfflineQueue(prev => [...prev, { type: 'create', task: optimisticTask, tempId }]);
+          return;
+        }
+
+        const settings = await storage.getSettings();
+        if (!settings.todoistToken) {
+          throw new Error('Please configure your Todoist token in Settings');
+        }
+
+        todoistService.setApiToken(settings.todoistToken);
+        const taskData: any = {
+          content: taskContent,
+          priority: taskPriority,
+          due: taskDueDate ? { date: taskDueDate } : undefined,
+          projectName: taskProjectName,
+          isCompleted: false,
+          source: 'todoist',
+        };
+        if (taskDescription.trim()) {
+          taskData.description = taskDescription;
+        }
+        const taskId = await todoistService.createTask(taskData);
+
+        if (taskId) {
+          // Remove optimistic task and refresh real data
+          setOptimisticTasks(prev => prev.filter(t => t.id !== tempId));
+          setPendingOperations(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(tempId);
+            return newSet;
+          });
+          await refetch();
+        } else {
+          throw new Error('Failed to create task in Todoist');
+        }
+      } else {
+        // Create locally
+        const newTask: Task = {
+          ...optimisticTask,
+          id: `local_${Date.now()}`,
+        };
+
+        const updatedTasks = [newTask, ...(localTasks || [])];
+        await storage.saveTasks(updatedTasks);
+
+        // Remove optimistic task and refresh real data
+        setOptimisticTasks(prev => prev.filter(t => t.id !== tempId));
+        setPendingOperations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(tempId);
+          return newSet;
+        });
+        await refetch();
+      }
     } catch (error: any) {
       console.error('Error creating task:', error);
+      // Revert optimistic update
+      setOptimisticTasks(prev => prev.filter(t => t.id !== tempId));
+      setPendingOperations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(tempId);
+        return newSet;
+      });
       Alert.alert('Error', `Failed to create task: ${error.message}`);
+    } finally {
+      setIsCreatingTask(false);
     }
   };
 
   const toggleTaskCompletion = async (task: Task) => {
+    const taskId = task.id;
+    const wasCompleted = task.isCompleted;
+    const newCompleted = !wasCompleted;
+
+    // Optimistic update
+    const optimisticTask = { ...task, isCompleted: newCompleted };
+    setOptimisticTasks(prev => prev.map(t => t.id === taskId ? optimisticTask : t));
+    setPendingOperations(prev => new Set(prev).add(taskId));
+
     try {
       if (task.source === 'todoist') {
-        if (!task.isCompleted) {
-          await todoistService.completeTask(task.id);
-          setTodoistTasks((prev) =>
-            prev.map((t) =>
-              t.id === task.id ? { ...t, isCompleted: true } : t,
-            ),
-          );
+        if (!isOnline) {
+          setOfflineQueue(prev => [...prev, { type: 'toggle', task: optimisticTask, originalCompleted: wasCompleted }]);
+          return;
         }
+
+        if (!newCompleted) {
+          await todoistService.completeTask(taskId);
+        } else {
+          // Todoist doesn't have uncomplete, so we might need to handle differently, but assuming complete/uncomplete
+          await todoistService.completeTask(taskId); // Adjust if needed
+        }
+        await refetch();
       } else {
-        const updatedTask = { ...task, isCompleted: !task.isCompleted };
-        const updatedTasks = localTasks.map((t) =>
-          t.id === task.id ? updatedTask : t,
+        const updatedTask = { ...task, isCompleted: newCompleted };
+        const updatedTasks = (localTasks || []).map((t: Task) =>
+          t.id === taskId ? updatedTask : t,
         );
         await storage.saveTasks(updatedTasks);
-        setLocalTasks(updatedTasks);
+        await refetch();
       }
+
+      // Remove optimistic task and pending operation
+      setOptimisticTasks(prev => prev.filter(t => t.id !== taskId));
+      setPendingOperations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskId);
+        return newSet;
+      });
     } catch (error: any) {
       console.error('Error toggling task completion:', error);
+      // Revert optimistic update
+      setOptimisticTasks(prev => prev.map(t => t.id === taskId ? { ...t, isCompleted: wasCompleted } : t));
+      setPendingOperations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskId);
+        return newSet;
+      });
       Alert.alert('Error', `Failed to update task: ${error.message}`);
     }
   };
@@ -289,17 +441,45 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
+          const taskId = task.id;
+          const originalTask = task;
+
+          // Optimistic update: remove from UI immediately
+          setOptimisticTasks(prev => prev.filter(t => t.id !== taskId));
+          setPendingOperations(prev => new Set(prev).add(taskId));
+
           try {
             if (task.source === 'todoist') {
-              await todoistService.deleteTask(task.id);
-              setTodoistTasks((prev) => prev.filter((t) => t.id !== task.id));
+              if (!isOnline) {
+                setOfflineQueue(prev => [...prev, { type: 'delete', task: originalTask }]);
+                return;
+              }
+
+              await todoistService.deleteTask(taskId);
+              await refetch();
             } else {
-              const updatedTasks = localTasks.filter((t) => t.id !== task.id);
+              const updatedTasks = (localTasks || []).filter(
+                (t: Task) => t.id !== taskId,
+              );
               await storage.saveTasks(updatedTasks);
-              setLocalTasks(updatedTasks);
+              await refetch();
             }
+
+            // Remove from pending operations
+            setPendingOperations(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(taskId);
+              return newSet;
+            });
           } catch (error: any) {
             console.error('Error deleting task:', error);
+            // Revert optimistic update: add back to UI
+            setOptimisticTasks(prev => [...prev, originalTask]);
+            setPendingOperations(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(taskId);
+              return newSet;
+            });
             Alert.alert('Error', `Failed to delete task: ${error.message}`);
           }
         },
@@ -311,10 +491,10 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     setEditingTask(task);
     setFormData({
       content: task.content,
-      description: task.description || '',
+      description: task.description ?? '',
       priority: task.priority as 1 | 2 | 3 | 4,
-      dueDate: task.due?.date || '',
-      projectName: task.projectName || 'Inbox',
+      dueDate: task.due?.date ?? '',
+      projectName: task.projectName ?? 'Inbox',
     });
     setEditTaskModalVisible(true);
   };
@@ -325,19 +505,62 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
       return;
     }
 
+    const taskId = editingTask.id;
+    const originalTask = editingTask;
+
+    // Create optimistic task with updated data
+    const optimisticTask: Task = {
+      ...editingTask,
+      content: formData.content,
+      description: formData.description || undefined,
+      priority: formData.priority,
+      due: formData.dueDate ? { date: formData.dueDate } : undefined,
+      projectName: formData.projectName,
+    };
+
+    // Optimistic update: replace in UI immediately
+    setOptimisticTasks(prev => prev.map(t => t.id === taskId ? optimisticTask : t));
+    setPendingOperations(prev => new Set(prev).add(taskId));
+
+    // Reset form and close modal immediately
+    setFormData({
+      content: '',
+      description: '',
+      priority: 2,
+      dueDate: '',
+      projectName: 'Inbox',
+    });
+    setEditTaskModalVisible(false);
+    setEditingTask(null);
+
     try {
       if (editingTask.source === 'todoist') {
-        const success = await todoistService.updateTask(editingTask.id, {
+        if (!isOnline) {
+          setOfflineQueue(prev => [...prev, { type: 'update', task: optimisticTask, originalTask }]);
+          return;
+        }
+
+        const updateData: any = {
           content: formData.content,
-          description: formData.description || undefined,
           priority: formData.priority,
           due: formData.dueDate ? { date: formData.dueDate } : undefined,
-        });
+        };
+        if (formData.description.trim()) {
+          updateData.description = formData.description;
+        }
+        const success = await todoistService.updateTask(taskId, updateData);
 
         if (success) {
-          await syncTodoistTasks();
+          // Remove optimistic task and refresh real data
+          setOptimisticTasks(prev => prev.filter(t => t.id !== taskId));
+          setPendingOperations(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(taskId);
+            return newSet;
+          });
+          await refetch();
         } else {
-          Alert.alert('Error', 'Failed to update task in Todoist');
+          throw new Error('Failed to update task in Todoist');
         }
       } else {
         const updatedTask: Task = {
@@ -349,25 +572,29 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           projectName: formData.projectName,
         };
 
-        const updatedTasks = localTasks.map((t) =>
-          t.id === editingTask.id ? updatedTask : t,
+        const updatedTasks = (localTasks || []).map((t: Task) =>
+          t.id === taskId ? updatedTask : t,
         );
         await storage.saveTasks(updatedTasks);
-        setLocalTasks(updatedTasks);
-      }
 
-      // Reset form and close modal
-      setFormData({
-        content: '',
-        description: '',
-        priority: 2,
-        dueDate: '',
-        projectName: 'Inbox',
-      });
-      setEditTaskModalVisible(false);
-      setEditingTask(null);
+        // Remove optimistic task and refresh real data
+        setOptimisticTasks(prev => prev.filter(t => t.id !== taskId));
+        setPendingOperations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(taskId);
+          return newSet;
+        });
+        await refetch();
+      }
     } catch (error: any) {
       console.error('Error updating task:', error);
+      // Revert optimistic update: restore original task
+      setOptimisticTasks(prev => prev.map(t => t.id === taskId ? originalTask : t));
+      setPendingOperations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskId);
+        return newSet;
+      });
       Alert.alert('Error', `Failed to update task: ${error.message}`);
     }
   };
@@ -425,20 +652,169 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     return match ? match[0] : null;
   };
 
-  const currentTasks = getCurrentTasks();
+  const processOfflineQueue = async () => {
+    if (isProcessingQueue || offlineQueue.length === 0 || !isOnline) return;
+
+    setIsProcessingQueue(true);
+
+    try {
+      for (const item of offlineQueue) {
+        if (item.type === 'create') {
+          const { task, tempId } = item;
+          if (task.source === 'todoist') {
+            const settings = await storage.getSettings();
+            if (!settings.todoistToken) {
+              throw new Error('Please configure your Todoist token in Settings');
+            }
+            todoistService.setApiToken(settings.todoistToken);
+            const taskData: any = {
+              content: task.content,
+              priority: task.priority,
+              due: task.due,
+              projectName: task.projectName,
+              isCompleted: task.isCompleted,
+              source: 'todoist',
+            };
+            if (task.description) {
+              taskData.description = task.description;
+            }
+            await todoistService.createTask(taskData);
+          }
+          // For local, already saved, so no action needed
+        } else if (item.type === 'toggle') {
+          const { task } = item;
+          if (task.source === 'todoist') {
+            if (!task.isCompleted) {
+              await todoistService.completeTask(task.id);
+            } else {
+              await todoistService.completeTask(task.id); // Assuming complete/uncomplete
+            }
+          }
+          // For local, already toggled, so no action needed
+        } else if (item.type === 'delete') {
+          const { task } = item;
+          if (task.source === 'todoist') {
+            await todoistService.deleteTask(task.id);
+          }
+          // For local, already deleted, so no action needed
+        } else if (item.type === 'update') {
+          const { task } = item;
+          if (task.source === 'todoist') {
+            const updateData: any = {
+              content: task.content,
+              priority: task.priority,
+              due: task.due,
+            };
+            if (task.description) {
+              updateData.description = task.description;
+            }
+            await todoistService.updateTask(task.id, updateData);
+          }
+          // For local, already updated, so no action needed
+        }
+      }
+
+      // Clear the queue and refresh data
+      setOfflineQueue([]);
+      await refetch();
+    } catch (error: any) {
+      console.error('Error processing offline queue:', error);
+      Alert.alert('Error', `Failed to sync offline changes: ${error.message}`);
+    } finally {
+      setIsProcessingQueue(false);
+    }
+  };
+
+  const currentTasks = useMemo(
+    () => getCurrentTasks(),
+    [activeTab, todoistTasks, localTasks, filter, sort],
+  );
+
+  const renderTaskRow = useCallback(
+    ({ item }: { item: Task }) => {
+      return (
+        <GlassCard
+          key={item.id}
+          theme={theme}
+          style={[styles.taskCard, item.isCompleted && styles.completedTask]}
+        >
+          <View style={styles.taskHeader}>
+            <TouchableOpacity
+              onPress={() => toggleTaskCompletion(item)}
+              style={[
+                styles.checkbox,
+                item.isCompleted && { backgroundColor: themeColors.success },
+                {
+                  borderColor: item.isCompleted
+                    ? themeColors.success
+                    : themeColors.border,
+                },
+              ]}
+            >
+              {item.isCompleted && <Text style={styles.checkmark}>✓</Text>}
+            </TouchableOpacity>
+
+            <View style={styles.taskInfo}>
+              <Text
+                style={[
+                  styles.taskContent,
+                  { color: themeColors.text },
+                  item.isCompleted && styles.completedText,
+                ]}
+              >
+                {item.content}
+              </Text>
+              {item.description ? (
+                <Text
+                  style={[
+                    styles.taskDescription,
+                    { color: themeColors.textSecondary },
+                  ]}
+                >
+                  {item.description}
+                </Text>
+              ) : null}
+            </View>
+
+            <View style={styles.taskActions}>
+              <TouchableOpacity
+                onPress={() => editTask(item)}
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: themeColors.primary },
+                ]}
+              >
+                <Text style={styles.actionButtonText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => deleteTask(item)}
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: themeColors.error },
+                ]}
+              >
+                <Text style={styles.actionButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </GlassCard>
+      );
+    },
+    [themeColors, toggleTaskCompletion, editTask, deleteTask],
+  );
+
+  const keyExtractor = useCallback((item: Task) => item.id, []);
 
   if (loading) {
     return (
       <ScreenContainer theme={theme}>
         <AppHeader
-          title="Loading..."
+          title="Loading Tasks..."
           theme={theme}
           onMenuPress={() => setMenuVisible(true)}
         />
         <View style={styles.loadingContainer}>
-          <Text style={[styles.loadingText, { color: themeColors.text }]}>
-            Loading your tasks...
-          </Text>
+          <TaskListSkeleton theme={theme} count={8} />
         </View>
       </ScreenContainer>
     );
@@ -470,31 +846,36 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
               { borderColor: themeColors.primary },
             ]}
           >
-            <Text
-              style={[
-                styles.tabText,
-                {
-                  color: activeTab === 'todoist' ? '#FFFFFF' : themeColors.text,
-                },
-              ]}
-            >
-              📋 Todoist Tasks
-            </Text>
-            {syncingTodoist && (
+            <View style={styles.tabContent}>
               <Text
                 style={[
-                  styles.syncingText,
+                  styles.tabText,
                   {
-                    color:
-                      activeTab === 'todoist'
-                        ? '#FFFFFF'
-                        : themeColors.textMuted,
+                    color: activeTab === 'todoist' ? '#FFFFFF' : themeColors.text,
                   },
                 ]}
               >
-                Syncing...
+                📋 Todoist Tasks
               </Text>
-            )}
+              {syncProgress.isSyncing ? (
+                <View style={styles.syncingContainer}>
+                  <Text style={[styles.connectionIndicator, { color: themeColors.warning }]}>
+                    ⏳
+                  </Text>
+                  <Text style={[styles.syncingText, { color: activeTab === 'todoist' ? '#FFFFFF' : themeColors.textSecondary }]}>
+                    {syncProgress.progress}%
+                  </Text>
+                </View>
+              ) : checkingConnection ? (
+                <Text style={[styles.connectionIndicator, { color: themeColors.warning }]}>
+                  ⏳
+                </Text>
+              ) : todoistConnected !== null ? (
+                <Text style={[styles.connectionIndicator, { color: todoistConnected ? themeColors.success : themeColors.error }]}>
+                  {todoistConnected ? '✓' : '✗'}
+                </Text>
+              ) : null}
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -505,14 +886,19 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
               { borderColor: themeColors.primary },
             ]}
           >
-            <Text
-              style={[
-                styles.tabText,
-                { color: activeTab === 'local' ? '#FFFFFF' : themeColors.text },
-              ]}
-            >
-              🏠 Local Tasks
-            </Text>
+            <View style={styles.tabContent}>
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: activeTab === 'local' ? '#FFFFFF' : themeColors.text },
+                ]}
+              >
+                🏠 Local Tasks
+              </Text>
+              <Text style={[styles.connectionIndicator, { color: activeTab === 'local' ? '#FFFFFF' : themeColors.success }]}>
+                ✓
+              </Text>
+            </View>
           </TouchableOpacity>
         </View>
 
@@ -567,31 +953,15 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                 </View>
               </ScrollView>
             </View>
-
-            <TouchableOpacity
-              onPress={activeTab === 'todoist' ? syncTodoistTasks : loadTasks}
-              style={[
-                styles.refreshButton,
-                { backgroundColor: themeColors.surface },
-              ]}
-              disabled={syncingTodoist}
-            >
-              <Text
-                style={[
-                  styles.refreshButtonText,
-                  { color: themeColors.primary },
-                ]}
-              >
-                {syncingTodoist ? '⟳' : '↻'}
-              </Text>
-            </TouchableOpacity>
           </View>
         </GlassCard>
 
-        {/* Tasks List */}
-        <ScrollView
+        <FlashList<Task>
           style={styles.tasksList}
           contentContainerStyle={styles.tasksContainer}
+          data={currentTasks}
+          keyExtractor={keyExtractor}
+          renderItem={renderTaskRow}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -599,8 +969,20 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
               tintColor={themeColors.primary}
             />
           }
-        >
-          {currentTasks.length === 0 ? (
+          onEndReached={() => {
+            if (hasNextPage && !isFetchingNextPage) {
+              fetchNextPage();
+            }
+          }}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            isFetchingNextPage ? (
+              <View style={styles.loadingFooter}>
+                <TaskListSkeleton theme={theme} count={3} />
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={() => (
             <GlassCard theme={theme} style={styles.emptyCard}>
               <Text style={[styles.emptyTitle, { color: themeColors.text }]}>
                 {activeTab === 'todoist'
@@ -615,170 +997,8 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                   : 'Create your first local task to get started with personal task management.'}
               </Text>
             </GlassCard>
-          ) : (
-            currentTasks.map((task) => (
-              <GlassCard
-                key={task.id}
-                theme={theme}
-                style={[
-                  styles.taskCard,
-                  task.isCompleted && styles.completedTask,
-                ]}
-              >
-                <View style={styles.taskHeader}>
-                  <TouchableOpacity
-                    onPress={() => toggleTaskCompletion(task)}
-                    style={[
-                      styles.checkbox,
-                      task.isCompleted && {
-                        backgroundColor: themeColors.success,
-                      },
-                      {
-                        borderColor: task.isCompleted
-                          ? themeColors.success
-                          : themeColors.border,
-                      },
-                    ]}
-                  >
-                    {task.isCompleted && (
-                      <Text style={styles.checkmark}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-
-                  <View style={styles.taskInfo}>
-                    {(() => {
-                      const contentUrl =
-                        task.source === 'todoist'
-                          ? extractUrl(task.content)
-                          : null;
-                      return contentUrl ? (
-                        <TouchableOpacity
-                          onPress={() => Linking.openURL(contentUrl)}
-                        >
-                          <Text
-                            style={[
-                              styles.taskContent,
-                              { color: themeColors.text },
-                              task.isCompleted && styles.completedText,
-                            ]}
-                          >
-                            {task.content}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <Text
-                          style={[
-                            styles.taskContent,
-                            { color: themeColors.text },
-                            task.isCompleted && styles.completedText,
-                          ]}
-                        >
-                          {task.content}
-                        </Text>
-                      );
-                    })()}
-
-                    {task.description &&
-                      (() => {
-                        const descUrl =
-                          task.source === 'todoist'
-                            ? extractUrl(task.description)
-                            : null;
-                        return descUrl ? (
-                          <TouchableOpacity
-                            onPress={() => Linking.openURL(descUrl)}
-                          >
-                            <Text
-                              style={[
-                                styles.taskDescription,
-                                { color: themeColors.textSecondary },
-                              ]}
-                            >
-                              {task.description}
-                            </Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <Text
-                            style={[
-                              styles.taskDescription,
-                              { color: themeColors.textSecondary },
-                            ]}
-                          >
-                            {task.description}
-                          </Text>
-                        );
-                      })()}
-
-                    <View style={styles.taskMeta}>
-                      <View style={styles.taskMetaRow}>
-                        <View
-                          style={[
-                            styles.priorityBadge,
-                            {
-                              backgroundColor: getPriorityColor(task.priority),
-                            },
-                          ]}
-                        >
-                          <Text style={styles.priorityText}>
-                            {getPriorityLabel(task.priority)}
-                          </Text>
-                        </View>
-
-                        {task.due && (
-                          <Text
-                            style={[
-                              styles.dueDate,
-                              {
-                                color:
-                                  new Date(task.due.date) < new Date() &&
-                                  !task.isCompleted
-                                    ? themeColors.error
-                                    : themeColors.textMuted,
-                              },
-                            ]}
-                          >
-                            {formatDueDate(task.due.date)}
-                          </Text>
-                        )}
-
-                        <Text
-                          style={[
-                            styles.projectName,
-                            { color: themeColors.primary },
-                          ]}
-                        >
-                          {task.projectName || 'Inbox'}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.taskActions}>
-                    <TouchableOpacity
-                      onPress={() => editTask(task)}
-                      style={[
-                        styles.actionButton,
-                        { backgroundColor: themeColors.primary },
-                      ]}
-                    >
-                      <Text style={styles.actionButtonText}>Edit</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => deleteTask(task)}
-                      style={[
-                        styles.actionButton,
-                        { backgroundColor: themeColors.error },
-                      ]}
-                    >
-                      <Text style={styles.actionButtonText}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </GlassCard>
-            ))
           )}
-        </ScrollView>
+        />
       </View>
 
       {/* Add Task Modal */}
@@ -1124,13 +1344,27 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     alignItems: 'center',
   },
+  tabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   tabText: {
     ...typography.bodySmall,
     fontWeight: '600',
+    marginRight: spacing.xs,
+  },
+  connectionIndicator: {
+    ...typography.caption,
+    fontWeight: 'bold',
   },
   syncingText: {
     ...typography.caption,
     marginTop: spacing.xs / 2,
+  },
+  syncingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 
   // Filters
@@ -1184,6 +1418,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     paddingTop: 0,
     paddingBottom: spacing.xl,
+  },
+  loadingFooter: {
+    paddingVertical: spacing.lg,
   },
   emptyCard: {
     alignItems: 'center',

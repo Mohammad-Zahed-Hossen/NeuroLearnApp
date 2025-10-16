@@ -7,7 +7,7 @@
  */
 
 import { Logger } from '../utils/Logger';
-import CognitiveAuraService from '../../services/cognitive/CognitiveAuraCompat';
+import CognitiveAuraService from '../../services/integrations/cognitive/CognitiveAuraCompat';
 import ContextSensorService from '../../services/context/ContextSensorCompat';
 
 export interface CognitiveState {

@@ -66,7 +66,7 @@ class TodoistService {
   private static instance: TodoistService;
   private apiToken: string = '';
   private baseURL = 'https://api.todoist.com/rest/v2';
-  
+
   // Singleton pattern for single-user scenarios
   public static getInstance(): TodoistService {
     if (!TodoistService.instance) {
@@ -139,7 +139,7 @@ class NotionSyncService {
   private static instance: NotionSyncService;
   private client: Client | null = null;
   private workspaceInfo: WorkspaceInfo | null = null;
-  
+
   // Singleton with workspace limitation
   public static getInstance(): NotionSyncService {
     if (!NotionSyncService.instance) {
@@ -294,7 +294,7 @@ const tokens = {
 // Multi-user service architecture needed
 class TodoistService {
   private userTokens: Map<string, TokenData> = new Map();
-  
+
   public static getInstanceForUser(userId: string): TodoistService {
     // User-specific service instances
   }
@@ -404,7 +404,7 @@ const syncTodoistTasks = async () => {
 class TodoistService {
   private static instance: TodoistService;
   private apiToken: string = ''; // Single token only
-  
+
   public static getInstance(): TodoistService {
     // Returns same instance for all users
   }
@@ -425,7 +425,7 @@ class TodoistService {
 // Required multi-user pattern
 class TodoistServiceManager {
   private userServices: Map<string, TodoistService> = new Map();
-  
+
   public getServiceForUser(userId: string): TodoistService {
     if (!this.userServices.has(userId)) {
       this.userServices.set(userId, new TodoistService(userId));
@@ -517,7 +517,7 @@ enum IntegrationErrorType {
 class RateLimitedApiClient {
   private requestQueue: RequestQueue;
   private rateLimiter: RateLimiter;
-  
+
   async makeRequest(request: ApiRequest): Promise<ApiResponse> {
     await this.rateLimiter.waitForSlot();
     return this.executeRequest(request);
@@ -662,7 +662,7 @@ const [loadingStates, setLoadingStates] = useState({
 class ApiCache {
   private cache: Map<string, CacheEntry> = new Map();
   private ttl: number = 5 * 60 * 1000; // 5 minutes
-  
+
   async get(key: string): Promise<any> {
     const entry = this.cache.get(key);
     if (entry && Date.now() - entry.timestamp < this.ttl) {
@@ -678,7 +678,7 @@ class ApiCache {
 // Required background sync
 class BackgroundSyncManager {
   private syncQueue: SyncOperation[] = [];
-  
+
   async scheduleSyncOperation(operation: SyncOperation): Promise<void> {
     this.syncQueue.push(operation);
     this.processSyncQueue();
@@ -708,7 +708,7 @@ class PerformanceMonitor {
   trackApiCall(endpoint: string, duration: number): void {
     // Track API performance metrics
   }
-  
+
   trackUserInteraction(action: string, duration: number): void {
     // Track UI responsiveness
   }
@@ -742,7 +742,7 @@ class TodoistOAuthService {
     await Linking.openURL(authUrl);
     return this.waitForCallback();
   }
-  
+
   async exchangeCodeForToken(code: string): Promise<TokenData> {
     // Exchange authorization code for access token
   }
@@ -823,11 +823,11 @@ interface UserContextType {
 ```typescript
 class UserScopedStorage {
   constructor(private userId: string) {}
-  
+
   async getUserSettings(): Promise<UserSettings> {
     return this.storage.getItem(`user:${this.userId}:settings`);
   }
-  
+
   async getUserTokens(): Promise<UserTokens> {
     return this.secureStorage.getItem(`user:${this.userId}:tokens`);
   }
@@ -840,11 +840,11 @@ class UserScopedStorage {
 ```typescript
 class IntegrationServiceFactory {
   private userServices: Map<string, Map<string, any>> = new Map();
-  
+
   getTodoistService(userId: string): TodoistService {
     return this.getOrCreateService(userId, 'todoist', TodoistService);
   }
-  
+
   getNotionService(userId: string): NotionSyncService {
     return this.getOrCreateService(userId, 'notion', NotionSyncService);
   }
@@ -901,7 +901,7 @@ describe('TodoistService Integration', () => {
   test('should handle rate limiting gracefully', async () => {
     // Test rate limiting scenarios
   });
-  
+
   test('should recover from network failures', async () => {
     // Test network failure recovery
   });

@@ -195,6 +195,29 @@ export class AnalyticsAggregationService {
   private reportCache = new Map<string, { data: HolisticAnalyticsReport; timestamp: number }>();
   private correlationCache = new Map<string, { data: CorrelationAnalysis; timestamp: number }>();
 
+  // Small helpers to centralize safe indexed access and map initialization
+  private getOrInitMapEntry<T>(map: Record<string, T> | Record<number, T>, key: string | number, factory: () => T): T {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const m = map as Record<string, T>;
+    const k = String(key);
+    // Use hasOwnProperty and explicit undefined check so we don't overwrite
+    // legitimate falsy values like 0, false, or empty arrays/objects.
+    if (!Object.prototype.hasOwnProperty.call(m, k) || typeof m[k] === 'undefined') {
+      m[k] = factory();
+    }
+    return m[k];
+  }
+
+  private safeFirst<T>(arr: T[] | undefined | null): T | undefined {
+    if (!arr || arr.length === 0) return undefined;
+    return arr[0];
+  }
+
+  private safeLast<T>(arr: T[] | undefined | null): T | undefined {
+    if (!arr || arr.length === 0) return undefined;
+    return arr[arr.length - 1];
+  }
+
   private constructor() {
     this.crossModule = CrossModuleBridgeService.getInstance();
     this.focusTimer = FocusTimerService.getInstance();
@@ -870,13 +893,12 @@ export class AnalyticsAggregationService {
       flashcards.forEach(card => {
         if (card.reviewHistory && Array.isArray(card.reviewHistory)) {
           card.reviewHistory.forEach((review: any) => {
+            if (!review || !review.date) return; // guard missing review dates
             const date = new Date(review.date).toISOString().split('T')[0];
-            if (!retentionByDate[date]) {
-              retentionByDate[date] = { total: 0, retained: 0 };
-            }
-            retentionByDate[date].total += 1;
+            const r = this.getOrInitMapEntry(retentionByDate, String(date), () => ({ total: 0, retained: 0 }));
+            r.total += 1;
             if (review.correct) {
-              retentionByDate[date].retained += 1;
+              r.retained += 1;
             }
           });
         }
@@ -940,20 +962,33 @@ export class AnalyticsAggregationService {
       if (error || !sessions || sessions.length === 0) return 0;
 
       // Calculate current streak
-      const uniqueDates = Array.from(new Set(
-        sessions.map(session => new Date(session.created_at).toDateString())
-      )).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+      const uniqueDatesRaw = Array.from(new Set(
+        sessions.filter((s: any) => s && s.created_at).map((session: any) => new Date(session.created_at).toDateString())
+      ));
+
+      // Ensure we have a string[] and sort by date descending
+      const uniqueDates = uniqueDatesRaw.filter(Boolean) as string[];
+      uniqueDates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
       let streak = 0;
       const today = new Date().toDateString();
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toDateString();
 
+      // Ensure there's at least one date
+      const firstDate = uniqueDates[0];
+      if (!firstDate) return 0;
+
       // Check if studied today or yesterday to start counting
-      if (uniqueDates[0] === today || uniqueDates[0] === yesterday) {
+      if (firstDate === today || firstDate === yesterday) {
         streak = 1;
         for (let i = 1; i < uniqueDates.length; i++) {
-          const currentDate = new Date(uniqueDates[i - 1]);
-          const previousDate = new Date(uniqueDates[i]);
+          const prevIdx = i - 1;
+          const cur = uniqueDates[prevIdx];
+          const prev = uniqueDates[i];
+          if (!cur || !prev) break;
+
+          const currentDate = new Date(cur);
+          const previousDate = new Date(prev);
           const diffTime = currentDate.getTime() - previousDate.getTime();
           const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
@@ -990,6 +1025,7 @@ export class AnalyticsAggregationService {
       const hourlyPerformance: Record<number, { totalEfficiency: number; count: number }> = {};
 
       sessions.forEach(session => {
+        if (!session || !session.created_at) return;
         const hour = new Date(session.created_at).getHours();
         const efficiency = session.focus_efficiency || 0.5;
 
@@ -1065,12 +1101,11 @@ export class AnalyticsAggregationService {
 
       // Group by date and calculate average cognitive load
       const dailyLoad = sessions.reduce((acc: Record<string, { total: number; count: number }>, session: any) => {
+        if (!session || !session.created_at) return acc;
         const date = new Date(session.created_at).toISOString().split('T')[0];
-        if (!acc[date]) {
-          acc[date] = { total: 0, count: 0 };
-        }
-        acc[date].total += session.cognitive_load || session.focus_efficiency || 0.5;
-        acc[date].count += 1;
+  const entry = this.getOrInitMapEntry(acc, String(date), () => ({ total: 0, count: 0 }));
+        entry.total += session.cognitive_load || session.focus_efficiency || 0.5;
+        entry.count += 1;
         return acc;
       }, {});
 
@@ -1089,6 +1124,7 @@ export class AnalyticsAggregationService {
 
     // Analyze performance by hour of day
     const hourlyPerformance = sessions.reduce((acc, session) => {
+      if (!session || (!session.startTime && !session.created_at)) return acc;
       const hour = new Date(session.startTime || session.created_at).getHours();
       if (!acc[hour]) {
         acc[hour] = { totalEfficiency: 0, count: 0 };
@@ -1227,6 +1263,7 @@ export class AnalyticsAggregationService {
       // Process health data by hour
       if (healthData) {
         healthData.forEach(entry => {
+          if (!entry || !entry.created_at) return;
           const hour = new Date(entry.created_at).getHours();
           const healthScore = (
             (entry.sleep_quality || 0.5) * 0.4 +
@@ -1277,13 +1314,14 @@ export class AnalyticsAggregationService {
       // Take top 3 hours and create 2-hour windows around them
       for (let i = 0; i < Math.min(3, sortedHours.length); i++) {
         const topHour = sortedHours[i];
+        if (!topHour) continue;
         const start = topHour.hour;
         const end = (start + 2) % 24; // 2-hour window
 
         // Determine window type based on health vs focus dominance
         let type = 'balanced';
-        if (topHour.health > topHour.focus + 0.2) type = 'health-optimal';
-        else if (topHour.focus > topHour.health + 0.2) type = 'focus-optimal';
+        if ((topHour.health ?? 0) > (topHour.focus ?? 0) + 0.2) type = 'health-optimal';
+        else if ((topHour.focus ?? 0) > (topHour.health ?? 0) + 0.2) type = 'focus-optimal';
 
         optimalWindows.push({ start, end, type });
       }
@@ -1331,35 +1369,40 @@ export class AnalyticsAggregationService {
             Math.min((entry.exercise_frequency || 0) / 7, 1) * 0.2
           );
 
-          if (!dailyHealth[date]) {
-            dailyHealth[date] = { health: 0, count: 0 };
-          }
-          dailyHealth[date].health += healthScore;
-          dailyHealth[date].count += 1;
+          const dh = this.getOrInitMapEntry(dailyHealth, String(date), () => ({ health: 0, count: 0 }));
+          dh.health += healthScore;
+          dh.count += 1;
         });
       }
 
       // Process cognitive data
       if (focusData) {
         focusData.forEach(session => {
+          if (!session || !session.created_at) return;
           const date = new Date(session.created_at).toISOString().split('T')[0];
           const cognitiveScore = session.focus_efficiency || (1 - (session.cognitive_load || 0.5));
 
-          if (!dailyCognitive[date]) {
-            dailyCognitive[date] = { cognitive: 0, count: 0 };
-          }
-          dailyCognitive[date].cognitive += cognitiveScore;
-          dailyCognitive[date].count += 1;
+          const dc = this.getOrInitMapEntry(dailyCognitive, String(date), () => ({ cognitive: 0, count: 0 }));
+          dc.cognitive += cognitiveScore;
+          dc.count += 1;
         });
       }
 
       // Calculate correlation between health and cognitive performance
-      const commonDates = Object.keys(dailyHealth).filter(date => dailyCognitive[date]);
+  const commonDates = Object.keys(dailyHealth).filter(date => Boolean(dailyCognitive[date]));
 
-      if (commonDates.length < 3) return 0; // Need minimum data points
+  if (!commonDates || commonDates.length < 3) return 0; // Need minimum data points
 
-      const healthValues = commonDates.map(date => dailyHealth[date].health / dailyHealth[date].count);
-      const cognitiveValues = commonDates.map(date => dailyCognitive[date].cognitive / dailyCognitive[date].count);
+      const healthValues = commonDates.map(date => {
+        const h = dailyHealth[date];
+        if (!h) return 0;
+        return (h.health ?? 0) / Math.max((h.count ?? 1), 1);
+      });
+      const cognitiveValues = commonDates.map(date => {
+        const c = dailyCognitive[date];
+        if (!c) return 0;
+        return (c.cognitive ?? 0) / Math.max((c.count ?? 1), 1);
+      });
 
       // Simple Pearson correlation calculation
       const n = healthValues.length;
@@ -1367,7 +1410,12 @@ export class AnalyticsAggregationService {
       const sumCognitive = cognitiveValues.reduce((a, b) => a + b, 0);
       const sumHealthSq = healthValues.reduce((a, b) => a + b * b, 0);
       const sumCognitiveSq = cognitiveValues.reduce((a, b) => a + b * b, 0);
-      const sumHealthCognitive = healthValues.reduce((a, b, i) => a + b * cognitiveValues[i], 0);
+      let sumHealthCognitive = 0;
+      for (let i = 0; i < healthValues.length; i++) {
+        const h = healthValues[i] ?? 0;
+        const c = cognitiveValues[i] ?? 0;
+        sumHealthCognitive += h * c;
+      }
 
       const numerator = n * sumHealthCognitive - sumHealth * sumCognitive;
       const denominator = Math.sqrt((n * sumHealthSq - sumHealth * sumHealth) * (n * sumCognitiveSq - sumCognitive * sumCognitive));
@@ -1436,27 +1484,31 @@ export class AnalyticsAggregationService {
         .gte('created_at', ninetyDaysAgo.toISOString())
         .order('created_at', { ascending: true });
 
-      if (error || !savingsData || savingsData.length < 2) return 0;
+  if (error || !savingsData || savingsData.length < 2) return 0;
 
-      // Calculate growth rate using compound annual growth rate (CAGR)
-      const firstBalance = savingsData[0].savings_balance || 0;
-      const lastBalance = savingsData[savingsData.length - 1].savings_balance || 0;
+  // Calculate growth rate using compound annual growth rate (CAGR)
+  const first = this.safeFirst(savingsData as any[]);
+  const last = this.safeLast(savingsData as any[]);
+  const firstBalance = (first?.savings_balance) ?? 0;
+  const lastBalance = (last?.savings_balance) ?? 0;
 
-      if (firstBalance <= 0) return 0;
+  if (firstBalance <= 0) return 0;
 
-      const daysDiff = (new Date(savingsData[savingsData.length - 1].created_at).getTime() -
-                       new Date(savingsData[0].created_at).getTime()) / (1000 * 60 * 60 * 24);
+  const firstDate = first?.created_at;
+  const lastDate = last?.created_at;
+  if (!firstDate || !lastDate) return 0;
+  const daysDiff = (new Date(lastDate).getTime() - new Date(firstDate).getTime()) / (1000 * 60 * 60 * 24);
 
-      if (daysDiff <= 0) return 0;
+  if (daysDiff <= 0) return 0;
 
-      // Calculate daily growth rate
-      const growthRate = Math.pow(lastBalance / firstBalance, 1 / daysDiff) - 1;
+  // Calculate daily growth rate
+  const growthRate = Math.pow(lastBalance / firstBalance, 1 / daysDiff) - 1;
 
-      // Annualize the growth rate (assuming 365 days per year)
-      const annualizedRate = Math.pow(1 + growthRate, 365) - 1;
+  // Annualize the growth rate (assuming 365 days per year)
+  const annualizedRate = Math.pow(1 + growthRate, 365) - 1;
 
-      // Return as percentage (0-1 scale, can be negative for losses)
-      return Math.max(-1, Math.min(1, annualizedRate));
+  // Return as percentage (0-1 scale, can be negative for losses)
+  return Math.max(-1, Math.min(1, annualizedRate));
     } catch (error) {
       console.error('Error calculating savings growth rate:', error);
       return 0;
@@ -1492,32 +1544,32 @@ export class AnalyticsAggregationService {
       // Process financial stress data
       if (financialData) {
         financialData.forEach(entry => {
+          if (!entry || !entry.created_at) return;
           const date = new Date(entry.created_at).toISOString().split('T')[0];
+          if (!date) return;
           const stressScore = (
             (entry.budget_pressure || 0.5) * 0.4 +
             (entry.spending_anxiety || 0.5) * 0.4 +
             (entry.debt_burden || 0.5) * 0.2
           );
 
-          if (!dailyFinancialStress[date]) {
-            dailyFinancialStress[date] = { stress: 0, count: 0 };
-          }
-          dailyFinancialStress[date].stress += stressScore;
-          dailyFinancialStress[date].count += 1;
+          const finEntry = this.getOrInitMapEntry(dailyFinancialStress, date, () => ({ stress: 0, count: 0 }));
+          finEntry.stress += stressScore;
+          finEntry.count += 1;
         });
       }
 
       // Process cognitive load data
       if (focusData) {
         focusData.forEach(session => {
+          if (!session || !session.created_at) return;
           const date = new Date(session.created_at).toISOString().split('T')[0];
+          if (!date) return;
           const loadScore = session.cognitive_load || (1 - (session.focus_efficiency || 0.5));
 
-          if (!dailyCognitiveLoad[date]) {
-            dailyCognitiveLoad[date] = { load: 0, count: 0 };
-          }
-          dailyCognitiveLoad[date].load += loadScore;
-          dailyCognitiveLoad[date].count += 1;
+          const cogEntry = this.getOrInitMapEntry(dailyCognitiveLoad, date, () => ({ load: 0, count: 0 }));
+          cogEntry.load += loadScore;
+          cogEntry.count += 1;
         });
       }
 
@@ -1526,8 +1578,14 @@ export class AnalyticsAggregationService {
 
       if (commonDates.length < 3) return 0; // Need minimum data points
 
-      const stressValues = commonDates.map(date => dailyFinancialStress[date].stress / dailyFinancialStress[date].count);
-      const loadValues = commonDates.map(date => dailyCognitiveLoad[date].load / dailyCognitiveLoad[date].count);
+      const stressValues: number[] = [];
+      const loadValues: number[] = [];
+      for (const date of commonDates) {
+        const s = dailyFinancialStress[date];
+        const l = dailyCognitiveLoad[date];
+        stressValues.push((s && typeof s.stress === 'number') ? (s.stress / Math.max(s.count || 1, 1)) : 0);
+        loadValues.push((l && typeof l.load === 'number') ? (l.load / Math.max(l.count || 1, 1)) : 0);
+      }
 
       // Simple Pearson correlation calculation
       const n = stressValues.length;
@@ -1535,7 +1593,12 @@ export class AnalyticsAggregationService {
       const sumLoad = loadValues.reduce((a, b) => a + b, 0);
       const sumStressSq = stressValues.reduce((a, b) => a + b * b, 0);
       const sumLoadSq = loadValues.reduce((a, b) => a + b * b, 0);
-      const sumStressLoad = stressValues.reduce((a, b, i) => a + b * loadValues[i], 0);
+      let sumStressLoad = 0;
+      for (let i = 0; i < stressValues.length; i++) {
+        const sVal = stressValues[i] ?? 0;
+        const lVal = (i < loadValues.length) ? (loadValues[i] ?? 0) : 0;
+        sumStressLoad += sVal * lVal;
+      }
 
       const numerator = n * sumStressLoad - sumStress * sumLoad;
       const denominator = Math.sqrt((n * sumStressSq - sumStress * sumStress) * (n * sumLoadSq - sumLoad * sumLoad));
@@ -1643,13 +1706,17 @@ export class AnalyticsAggregationService {
       if (error || !debtData || debtData.length < 2) return 0;
 
       // Calculate debt reduction rate
-      const firstDebt = debtData[0].debt_balance || 0;
-      const lastDebt = debtData[debtData.length - 1].debt_balance || 0;
+  const firstDebtEntry = this.safeFirst(debtData as any[]);
+  const lastDebtEntry = this.safeLast(debtData as any[]);
+  const firstDebt = (firstDebtEntry?.debt_balance) ?? 0;
+  const lastDebt = (lastDebtEntry?.debt_balance) ?? 0;
 
       if (firstDebt <= 0) return 0; // No debt to reduce
 
-      const daysDiff = (new Date(debtData[debtData.length - 1].created_at).getTime() -
-                       new Date(debtData[0].created_at).getTime()) / (1000 * 60 * 60 * 24);
+  const firstDebtDate = firstDebtEntry?.created_at;
+  const lastDebtDate = lastDebtEntry?.created_at;
+  if (!firstDebtDate || !lastDebtDate) return 0;
+  const daysDiff = (new Date(lastDebtDate).getTime() - new Date(firstDebtDate).getTime()) / (1000 * 60 * 60 * 24);
 
       if (daysDiff <= 0) return 0;
 
@@ -1691,7 +1758,9 @@ export class AnalyticsAggregationService {
       const dailyWellness: Record<string, { scores: number[]; count: number }> = {};
 
       financialData.forEach(entry => {
+        if (!entry || !entry.created_at) return;
         const date = new Date(entry.created_at).toISOString().split('T')[0];
+        if (!date) return;
 
         // Calculate wellness score based on multiple factors
         const budgetPressure = entry.budget_pressure || 0.5;
@@ -1711,18 +1780,16 @@ export class AnalyticsAggregationService {
           debtScore * 0.2                    // Lower debt is better
         );
 
-        if (!dailyWellness[date]) {
-          dailyWellness[date] = { scores: [], count: 0 };
-        }
-        dailyWellness[date].scores.push(wellnessScore);
-        dailyWellness[date].count += 1;
+        const w = this.getOrInitMapEntry(dailyWellness, date, () => ({ scores: [], count: 0 }));
+        w.scores.push(wellnessScore);
+        w.count += 1;
       });
 
       // Return daily averages
       return Object.entries(dailyWellness)
         .map(([date, data]) => ({
           date,
-          score: data.scores.reduce((sum, score) => sum + score, 0) / data.scores.length,
+          score: data.scores.length > 0 ? data.scores.reduce((sum, score) => sum + score, 0) / data.scores.length : 0,
         }))
         .sort((a, b) => a.date.localeCompare(b.date));
     } catch (error) {
@@ -1753,16 +1820,16 @@ export class AnalyticsAggregationService {
       const weatherImpact: Record<string, { efficiency: number[]; count: number }> = {};
 
       focusSessions.forEach(session => {
+        if (!session || !session.created_at) return;
         // Simulate weather based on date (in real implementation, this would be from weather API)
         const date = new Date(session.created_at);
         const dayOfMonth = date.getDate();
         const condition = weatherConditions[dayOfMonth % weatherConditions.length];
+        if (!condition) return;
 
-        if (!weatherImpact[condition]) {
-          weatherImpact[condition] = { efficiency: [], count: 0 };
-        }
-        weatherImpact[condition].efficiency.push(session.focus_efficiency || 0.5);
-        weatherImpact[condition].count += 1;
+        const entry = this.getOrInitMapEntry(weatherImpact, String(condition), () => ({ efficiency: [], count: 0 }));
+        entry.efficiency.push(session.focus_efficiency || 0.5);
+        entry.count += 1;
       });
 
       // Calculate average impact for each weather condition
@@ -1941,7 +2008,7 @@ export class AnalyticsAggregationService {
 
       sortedHours.forEach((hourData, index) => {
         const timeString = `${hourData.hour.toString().padStart(2, '0')}:00`;
-        const activity = activities[index % activities.length];
+  const activity = String(activities[index % activities.length] || 'General Task');
         const confidence = Math.round(hourData.score * 100);
 
         optimalSchedule.push({
