@@ -1,6 +1,6 @@
 {
   "name": "neurolearnapp",
-  "version": "1.0.0",
+  "eas-build-pre-install": "bash ./eas-build-pre-install.sh",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
