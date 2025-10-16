@@ -2,7 +2,7 @@
 
 # dependencies
 node_modules/
-
+package-lock
 # Expo
 .expo/
 dist/
@@ -68,3 +68,8 @@ d/
 *.temp
 .cache/
 .env
+credentials.json
+
+
+# Files
+test.md
