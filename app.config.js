@@ -39,9 +39,7 @@ export default {
       favicon: './assets/favicon.png',
     },
     // Include the expo-dev-client plugin so development client builds work on EAS
-    plugins: [
-      'expo-dev-client'
-    ],
+    plugins: ['expo-dev-client'],
     extra: {
       SUPABASE_URL: process.env.SUPABASE_URL,
       SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
