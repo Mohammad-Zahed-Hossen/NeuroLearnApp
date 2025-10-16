@@ -174,6 +174,9 @@ export class HybridStorageService {
 
   // Hard limit on context snapshots to prevent database bloat
   private readonly MAX_CONTEXT_SNAPSHOTS = 100;
+  // Track when a contextHash was last marked synced to avoid repeated writes
+  private lastMarkedSynced: Map<string, number> = new Map();
+  private readonly MARK_SYNC_MIN_INTERVAL_MS = 5 * 1000; // 5s minimum between marking same hash
 
   private async checkConnectivity(): Promise<void> {
     try {
@@ -2695,6 +2698,16 @@ export class HybridStorageService {
 
   private async markContextSnapshotsSynced(contextHashes: string[]): Promise<void> {
     try {
+      if (!Array.isArray(contextHashes) || contextHashes.length === 0) return;
+      const now = Date.now();
+      // Only process hashes that haven't been marked very recently
+      const toProcess = contextHashes.filter((h) => {
+        const last = this.lastMarkedSynced.get(h) || 0;
+        if (now - last < this.MARK_SYNC_MIN_INTERVAL_MS) return false;
+        this.lastMarkedSynced.set(h, now);
+        return true;
+      });
+      if (toProcess.length === 0) return;
       await database.write(async () => {
         const col = database.collections.get('context_snapshots');
           let all: any[] = [];
@@ -2717,12 +2730,11 @@ export class HybridStorageService {
           const toUpdate = all.filter((rec: any) => {
             const raw = rec._raw ?? rec;
             const ch = raw ? (raw.contextHash ?? raw.context_hash ?? (rec.contextHash || null)) : (rec.contextHash || rec.context_hash || null);
-            return ch && contextHashes.includes(ch);
+            return ch && toProcess.includes(ch);
           });
-          // Diagnostic: log candidates for update to help debug fallback DB paths
+          // Log only summary info to avoid noisy per-record debug spam
           try {
-            console.debug('markContextSnapshotsSynced: candidates count', toUpdate.length);
-            console.debug('markContextSnapshotsSynced: contextHashes', contextHashes);
+            console.debug('markContextSnapshotsSynced: candidates count', toUpdate.length, 'requested', toProcess.length);
           } catch (e) {}
 
           const promises = toUpdate.map(async (rec: any) => {
@@ -2737,6 +2749,7 @@ export class HybridStorageService {
                     r.synced_at = Date.now();
                     r.updated_at = Date.now();
                   });
+                  // minor log
                   console.debug('markContextSnapshotsSynced: updated by id', id);
                   return;
                 } catch (e) {

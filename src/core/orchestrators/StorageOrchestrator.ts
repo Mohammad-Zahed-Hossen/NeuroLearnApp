@@ -105,6 +105,12 @@ export class StorageOrchestrator {
   private cacheMisses = 0;
   private operationQueue: Array<() => Promise<void>> = [];
   private isProcessingQueue = false;
+  // Pending debounced writes to avoid write storms
+  private pendingWrites: Map<string, { timer: NodeJS.Timeout; value: any; storage: any }> = new Map();
+  // Track keys we've warned about missing setItem to avoid spam
+  private missingSetItemWarned: Set<string> = new Set();
+  // Debounce interval for coalescing rapid setItem calls (ms)
+  private writeDebounceMs = 250;
 
   constructor(
     eventSystem: EventSystem,
@@ -360,6 +366,9 @@ export class StorageOrchestrator {
 
       // Process remaining operations
       await this.processOperationQueue();
+
+      // Flush any pending debounced writes before final sync/shutdown
+      await this.flushAllPendingWrites();
 
       // Final sync
       await this.sync();
@@ -706,16 +715,78 @@ export class StorageOrchestrator {
   // Safe wrappers to guard optional methods on storage implementations
   private async safeSetItem(storage: any, key: string, value: any): Promise<void> {
     try {
-      if (storage && typeof storage.setItem === 'function') {
-        await storage.setItem(key, value);
-      } else if (storage && typeof storage.saveMemoryPalaces === 'function') {
-        // Compat: some hybrid storage implementations expose domain-specific methods
-        await storage.saveMemoryPalaces(value);
-      } else {
+      if (!storage) return;
+
+      // If storage exposes a domain-specific immediate API, prefer calling it directly
+      if (typeof storage.saveMemoryPalaces === 'function') {
+        try {
+          await storage.saveMemoryPalaces(value);
+          return;
+        } catch (e) {
+          // fallback to debounced setItem below
+        }
+      }
+
+      if (typeof storage.setItem === 'function') {
+        // Debounce/coalesce frequent writes to the same key to avoid write storms
+        const existing = this.pendingWrites.get(key);
+        if (existing) {
+          clearTimeout(existing.timer);
+        }
+
+        const timer = setTimeout(async () => {
+          try {
+            await storage.setItem(key, this.pendingWrites.get(key)?.value);
+          } catch (err) {
+            this.logger.warn(`safeSetItem failed for key=${key}`, err);
+          } finally {
+            this.pendingWrites.delete(key);
+          }
+        }, this.writeDebounceMs) as unknown as NodeJS.Timeout;
+
+        this.pendingWrites.set(key, { timer, value, storage });
+        return;
+      }
+
+      // Warn once per key when storage doesn't support setItem
+      if (!this.missingSetItemWarned.has(key)) {
+        this.missingSetItemWarned.add(key);
         this.logger.warn(`safeSetItem: target storage missing setItem for key=${key}`);
+
+        // clear the warning marker after a minute so we can log again if needed later
+        setTimeout(() => this.missingSetItemWarned.delete(key), 60 * 1000);
       }
     } catch (error) {
       this.logger.warn(`safeSetItem failed for key=${key}`, error);
+    }
+  }
+
+  // Flush a single pending write immediately
+  private async flushPendingWrite(key: string): Promise<void> {
+    const entry = this.pendingWrites.get(key);
+    if (!entry) return;
+
+    clearTimeout(entry.timer);
+    try {
+      if (entry.storage && typeof entry.storage.setItem === 'function') {
+        await entry.storage.setItem(key, entry.value);
+      }
+    } catch (err) {
+      this.logger.warn(`flushPendingWrite failed for key=${key}`, err);
+    } finally {
+      this.pendingWrites.delete(key);
+    }
+  }
+
+  // Flush all pending writes (used on shutdown or before heavy operations)
+  private async flushAllPendingWrites(): Promise<void> {
+    const keys = Array.from(this.pendingWrites.keys());
+    for (const key of keys) {
+      try {
+        await this.flushPendingWrite(key);
+      } catch (e) {
+        // ignore per-key flush errors but continue
+      }
     }
   }
 

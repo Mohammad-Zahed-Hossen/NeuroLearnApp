@@ -127,26 +127,31 @@ export const FloatingElementsOrchestrator: React.FC<
   // Wrapped setters with logs to help trace programmatic calls from other components
   const setMiniPlayerActiveWrapped = (active: boolean) => {
     try {
-      // eslint-disable-next-line no-console
-      console.log('[FloatingElementsOrchestrator] setMiniPlayerActive', active);
+      // Throttled debug: avoid logging every toggle in production
+      if (__DEV__)
+        console.log(
+          '[FloatingElementsOrchestrator] setMiniPlayerActive',
+          active,
+        );
     } catch {}
-    setMiniPlayerActive(active);
+    // Guard against redundant updates
+    setMiniPlayerActive((prev) => (prev === active ? prev : active));
   };
 
   const setShowAIChatWrapped = (open: boolean) => {
     try {
-      // eslint-disable-next-line no-console
-      console.log('[FloatingElementsOrchestrator] setShowAIChat', open);
+      if (__DEV__)
+        console.log('[FloatingElementsOrchestrator] setShowAIChat', open);
     } catch {}
-    setShowAIChat(open);
+    setShowAIChat((prev) => (prev === open ? prev : open));
   };
 
   const setUnreadMessagesWrapped = (has: boolean) => {
     try {
-      // eslint-disable-next-line no-console
-      console.log('[FloatingElementsOrchestrator] setUnreadMessages', has);
+      if (__DEV__)
+        console.log('[FloatingElementsOrchestrator] setUnreadMessages', has);
     } catch {}
-    setUnreadMessages(has);
+    setUnreadMessages((prev) => (prev === has ? prev : has));
   };
 
   // Map aura context to cognitive load
@@ -389,23 +394,28 @@ export const FloatingElementsOrchestrator: React.FC<
     return () => {
       const renderTime = performance.now() - renderStartTime.current;
       performanceMonitor.collectMetrics();
-      console.log(
-        `[FloatingElementsOrchestrator] Render time: ${renderTime.toFixed(
-          2,
-        )}ms`,
-      );
+      if (__DEV__) {
+        console.log(
+          `[FloatingElementsOrchestrator] Render time: ${renderTime.toFixed(
+            2,
+          )}ms`,
+        );
+      }
     };
   });
 
   // Debug visibility traces (helpful to see computed visibility changes)
   useEffect(() => {
-    try {
-      // eslint-disable-next-line no-console
-      console.log(
-        '[FloatingElementsOrchestrator] visibility',
-        keyboardAdjustedVisibility,
-      );
-    } catch {}
+    // Only log visibility changes in development to avoid spamming
+    if (__DEV__) {
+      try {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[FloatingElementsOrchestrator] visibility',
+          keyboardAdjustedVisibility,
+        );
+      } catch {}
+    }
   }, [keyboardAdjustedVisibility]);
 
   return (

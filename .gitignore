@@ -58,6 +58,7 @@ __mocks__/
 # Build scripts and utilities
 scripts/
 docs
+error
 
 # Duplicate/backup folders
 d/
