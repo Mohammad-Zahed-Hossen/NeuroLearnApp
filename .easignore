@@ -1,0 +1,56 @@
+# .easignore — files and folders to exclude from the EAS project archive
+# Reduce upload size and speed up fingerprinting and builds.
+
+# Git / CI
+.git
+.github
+.gitignore
+
+# Editor / IDE
+.vscode
+.idea
+
+# Local temp, caches, OS files
+tmp/
+$Temp/
+*.log
+*.DS_Store
+
+# Node modules (EAS handles dependencies during build)
+node_modules
+
+# Local build artifacts
+android/build
+android/app/build
+ios/build
+ios/Pods
+build
+
+# Expo cache and artifacts
+.expo
+.expo-shared
+
+# Large documentation / reports not required for build
+docs/
+docs/**
+
+# Keystores and sensitive binaries (should be stored in Expo credentials or secrets)
+**/*.keystore
+**/*.jks
+**/*.p12
+
+# Database dumps and backups
+*.sql
+*.sqlite
+
+# Archives and backups
+*.zip
+*.tgz
+*.bak
+
+# Other local-only directories
+p/
+
+# If you have required large assets, add explicit allow rules or remove from this file
+# Example to ensure a specific asset file is included (uncomment and adjust):
+# !assets/needed-image.png
