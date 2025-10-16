@@ -6,7 +6,7 @@
     "fix-android-dup": "node ./scripts/gradle-fix.js",
     "prebuild-android": "npx expo prebuild && node ./scripts/gradle-fix.js",
     "android-build": "cd android && .\\gradlew.bat clean assembleDebug",
-  "eas-build-pre-install": "bash ./eas-build-pre-install.sh",
+    "eas-build-pre-install": "bash ./eas-build-pre-install.sh",
     "build:ci": "npm run prebuild-android && cd android && ./gradlew assembleRelease",
     "verify-setup": "node scripts/verify-setup.js",
     "dev:full": "npm run setup-env && expo start",
