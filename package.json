@@ -27,7 +27,10 @@
     "generate-audio-guide": "node scripts/generate-audio-files.js",
     "validate-audio-assets": "node scripts/validate-audio-assets.js",
     "check-soundscapes": "node scripts/validate-audio-assets.js",
-    "dev:teardown": "npx ts-node src/dev/devTeardown.ts"
+    "dev:teardown": "npx ts-node src/dev/devTeardown.ts",
+    "dev:client": "node scripts/dev-client.js",
+    "dev:client:build": "node scripts/dev-client.js --build",
+    "dev:client:run": "node scripts/dev-client.js --run"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

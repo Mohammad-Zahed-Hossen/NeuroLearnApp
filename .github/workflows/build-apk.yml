@@ -24,6 +24,17 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Check EXPO_TOKEN presence (debug only)
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "❌ EXPO_TOKEN is NOT available to the workflow"
+            exit 1
+          else
+            echo "✅ EXPO_TOKEN is available (masked)"
+          fi
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
       - name: Build Debug APK with EAS
         run: eas build --platform android --profile development --non-interactive
         env:

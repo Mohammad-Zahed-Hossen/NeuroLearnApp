@@ -219,6 +219,10 @@ npm run generate-audio-guide
 1. Ensure modern browser (Chrome 90+, Firefox 88+, Safari 14+)
 2. Some features may be limited on web (camera, native audio)
 3. Run: `npm run web`
+### ⚙️ Building and Running the Dev Client
+Use the unified Node script:
+```bash
+npm run dev:client
 
 ## 🔐 Security Notes
 

@@ -1,4 +1,12 @@
-import React, { useState, useEffect } from 'react';
+/**
+ * @file DashboardScreen.tsx
+ * @description This file defines the main dashboard screen for the NeuroLearn app.
+ * It provides a central hub for users to view their learning progress, cognitive health,
+ * and performance metrics. The screen features a dynamic and interactive UI with
+ * glass morphism effects, AI-driven recommendations, and quick access to key features.
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -33,46 +41,95 @@ import {
 import PerformanceMonitor from '../utils/PerformanceMonitor';
 import { perf } from '../utils/perfMarks';
 import EngineIntegrationTest from '../utils/EngineIntegrationTest';
+import { createDashboardStyles } from './DashboardStyles';
 
+/**
+ * @interface DashboardScreenProps
+ * @description Props for the DashboardScreen component.
+ */
 interface DashboardScreenProps {
+  /** The current theme of the application (e.g., 'light' or 'dark'). */
   theme: ThemeType;
+  /** Function to handle navigation to other screens. */
   onNavigate: (screen: string) => void;
+  /** Optional flag to indicate if this is the main hub screen. */
   isHubScreen?: boolean;
 }
 
+/**
+ * @interface DashboardStats
+ * @description Defines the structure for all statistical data displayed on the dashboard.
+ */
 interface DashboardStats {
+  /** Number of flashcards due for review. */
   dueCards: number;
+  /** Number of logic nodes due for review. */
   logicNodesDue: number;
+  /** Count of critical logic nodes that need attention. */
   criticalLogicCount: number;
+  /** Number of cards at risk of being forgotten. */
   atRiskCards: number;
+  /** Number of currently active tasks. */
   activeTasks: number;
+  /** Current daily study streak. */
   studyStreak: number;
+  /** Total focus time for the day in minutes. */
   todayFocusTime: number;
+  /** Calculated cognitive load index. */
   cognitiveLoad: number;
+  /** Overall retention rate percentage. */
   retentionRate: number;
+  /** Progress towards weekly goals as a percentage. */
   weeklyProgress: number;
+  /** AI-recommended optimal session size. */
   optimalSessionSize: number;
+  /** Current focus session streak. */
   focusStreak: number;
+  /** Average user rating for focus sessions. */
   averageFocusRating: number;
+  /** Average number of distractions per focus session. */
   distractionsPerSession: number;
 }
 
+/**
+ * @interface Metric
+ * @description Represents a single metric item to be displayed within a group.
+ */
 interface Metric {
+  /** Icon representing the metric. */
   icon: string;
+  /** The value of the metric. */
   value: string | number;
+  /** The label describing the metric. */
   label: string;
+  /** Optional color for the metric value. */
   color?: string;
 }
 
+/**
+ * @interface MetricGroup
+ * @description Defines a group of related metrics, like "Learning Progress".
+ */
 interface MetricGroup {
+  /** Unique identifier for the group. */
   id: string;
+  /** The title of the metric group. */
   title: string;
+  /** Icon representing the group. */
   icon: string;
+  /** A short subtitle summarizing the group's status. */
   subtitle: string;
+  /** An array of individual metrics in this group. */
   metrics: Metric[];
 }
 
 // Helper functions for metric groups
+
+/**
+ * Generates the metric group for "Learning Progress".
+ * @param {DashboardStats} stats - The dashboard's statistical data.
+ * @returns {MetricGroup} The learning progress metric group object.
+ */
 const getLearningProgressGroup = (stats: DashboardStats): MetricGroup => {
   const hasData =
     stats.dueCards > 0 ||
@@ -106,6 +163,11 @@ const getLearningProgressGroup = (stats: DashboardStats): MetricGroup => {
   };
 };
 
+/**
+ * Generates the metric group for "Cognitive Health".
+ * @param {DashboardStats} stats - The dashboard's statistical data.
+ * @returns {MetricGroup} The cognitive health metric group object.
+ */
 const getCognitiveHealthGroup = (stats: DashboardStats): MetricGroup => {
   const hasData =
     stats.focusStreak > 0 ||
@@ -145,6 +207,11 @@ const getCognitiveHealthGroup = (stats: DashboardStats): MetricGroup => {
   };
 };
 
+/**
+ * Generates the metric group for "Performance".
+ * @param {DashboardStats} stats - The dashboard's statistical data.
+ * @returns {MetricGroup} The performance metric group object.
+ */
 const getPerformanceGroup = (stats: DashboardStats): MetricGroup => {
   const hasData =
     stats.studyStreak > 0 ||
@@ -184,34 +251,47 @@ const getPerformanceGroup = (stats: DashboardStats): MetricGroup => {
   };
 };
 
+/**
+ * The main dashboard screen component.
+ * Displays key metrics, AI recommendations, and quick actions.
+ * @param {DashboardScreenProps} props - The component props.
+ * @returns {React.ReactElement} The rendered dashboard screen.
+ */
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   theme,
   onNavigate,
 }) => {
+  // Ref for performance measurement start mark
   const mountMarkRef = React.useRef<string | null>(null);
+
+  // State for controlling UI visibility
   const [menuVisible, setMenuVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
 
-  // Use optimized selectors for dashboard data
+  // Use optimized selectors for reactive dashboard data
   const dashboardData = useDashboardData();
-  const auraContext = useAuraContext();
+  const auraContext = useAuraContext(); // Currently unused, but available for context-aware features
   const cognitiveLoad = useCognitiveLoad();
 
-  // Performance monitor instance
+  // Singleton instance for performance monitoring
   const performanceMonitor = PerformanceMonitor.getInstance();
 
-  // Local state for loading and refreshing
+  // Local state for loading and pull-to-refresh
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Animated value for fade-in animation
   const fadeAnim = useState(new Animated.Value(0))[0];
 
+  // Memoized theme-dependent styles and colors
   const themeColors = colors[theme];
+  const styles = useMemo(() => createDashboardStyles(theme), [theme]);
 
-  // Load dashboard data on mount and animate header
+  // Effect for initial data load and animation
   useEffect(() => {
     mountMarkRef.current = perf.startMark('DashboardScreen');
-    setLoading(false); // Assume data is reactive via optimized selectors
+    setLoading(false); // Data is assumed to be reactively loaded by hooks
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 600,
@@ -219,24 +299,31 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }).start();
   }, [fadeAnim]);
 
+  // Effect to measure component ready time
   useEffect(() => {
-    // measure ready when loading flips to false
     if (!loading && mountMarkRef.current) {
       try {
         perf.measureReady('DashboardScreen', mountMarkRef.current);
-      } catch (e) {}
+      } catch (e) {
+        console.error("Performance measurement failed", e);
+      }
       mountMarkRef.current = null;
     }
   }, [loading]);
 
+  /**
+   * Handles the pull-to-refresh action.
+   * This can be extended to trigger a manual data refresh if needed.
+   */
   const onRefresh = async () => {
     setRefreshing(true);
-    // Trigger any refresh logic if needed
+    // In a real scenario, you might trigger a data refetch here
+    // e.g., await dashboardData.refetch();
     setRefreshing(false);
   };
 
-  // Compose stats from optimized selectors
-  const stats: DashboardStats = {
+  // Memoized composition of stats from various data hooks
+  const stats: DashboardStats = useMemo(() => ({
     dueCards: dashboardData.dueCards || 0,
     logicNodesDue: dashboardData.logicNodesDue || 0,
     criticalLogicCount: dashboardData.criticalLogicCount || 0,
@@ -251,8 +338,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     focusStreak: dashboardData.focusStreak || 0,
     averageFocusRating: dashboardData.averageFocusRating || 3,
     distractionsPerSession: dashboardData.distractionsPerSession || 0,
-  };
+  }), [dashboardData, cognitiveLoad]);
 
+  // Configuration for the quick settings modal
   const quickSettings = [
     {
       icon: '🌙',
@@ -304,6 +392,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     },
   ];
 
+  /**
+   * Determines the color for the cognitive load indicator based on its value.
+   * @param {number} load - The cognitive load value.
+   * @returns {string} A color string from the theme.
+   */
   const getCognitiveLoadColor = (load: number): string => {
     if (load > 1.5) return themeColors.error;
     if (load > 1.2) return themeColors.warning;
@@ -311,6 +404,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return themeColors.primary;
   };
 
+  /**
+   * Provides user-friendly advice based on the cognitive load value.
+   * @param {number} load - The cognitive load value.
+   * @returns {string} A string containing actionable advice.
+   */
   const getCognitiveLoadAdvice = (load: number): string => {
     if (load > 1.5)
       return 'High mental fatigue detected. Take a 15-minute break.';
@@ -319,6 +417,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return 'Perfect cognitive state for focused learning.';
   };
 
+  /**
+   * Generates a smart recommendation based on the user's current stats.
+   * @returns {string} A prioritized, actionable recommendation.
+   */
   const getSmartRecommendation = (): string => {
     if (stats.dueCards > 20) {
       return `High card backlog. Focus on ${stats.optimalSessionSize} cards per session to avoid overload.`;
@@ -335,12 +437,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return 'System optimized. Continue with current learning schedule.';
   };
 
-  const metricGroups: MetricGroup[] = [
+  // Memoized array of metric groups to display on the dashboard
+  const metricGroups: MetricGroup[] = useMemo(() => [
     getLearningProgressGroup(stats),
     getCognitiveHealthGroup(stats),
     getPerformanceGroup(stats),
-  ];
+  ], [stats]);
 
+  // Display a loading state while initial data is being prepared
   if (loading) {
     return (
       <ScreenContainer theme={theme}>
@@ -358,6 +462,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     );
   }
 
+  // Main component render
   return (
     <ScreenContainer theme={theme}>
       <AppHeader
@@ -385,7 +490,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Cognitive Load Status */}
+        {/* Cognitive Load Status Card */}
         <GlassCard theme={theme} style={styles.cognitiveCard}>
           <View style={styles.cognitiveHeader}>
             <View style={styles.cognitiveTextContainer}>
@@ -425,7 +530,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         {/* AI Check-in Card */}
         <AICheckinCard theme={theme} />
 
-        {/* Metric Group Cards */}
+        {/* Metric Group Cards Grid */}
         <View style={styles.groupGrid}>
           {metricGroups.map((group) => (
             <TouchableOpacity
@@ -452,7 +557,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           ))}
         </View>
 
-        {/* Smart Recommendations */}
+        {/* Smart Recommendations Card */}
         <GlassCard theme={theme} style={styles.recommendationCard}>
           <Text style={[styles.cardTitle, { color: themeColors.text }]}>
             🎯 AI Learning Coach
@@ -479,7 +584,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
         </GlassCard>
 
-        {/* Quick Actions */}
+        {/* Quick Actions Card */}
         <GlassCard theme={theme} style={styles.actionsCard}>
           <Text style={[styles.cardTitle, { color: themeColors.text }]}>
             ⚡ Quick Start
@@ -526,7 +631,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             />
           </View>
 
-          {/* Engine Test Button (Development Only) */}
+          {/* Engine Test Button (For Development Builds Only) */}
           {__DEV__ && (
             <View style={styles.testSection}>
               <Button
@@ -552,7 +657,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           )}
         </GlassCard>
 
-        {/* Performance Summary */}
+        {/* Weekly Performance Summary Card */}
         <GlassCard theme={theme} style={styles.performanceCard}>
           <Text style={[styles.cardTitle, { color: themeColors.text }]}>
             📈 Weekly Performance
@@ -640,21 +745,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   );
 };
 
-// Settings Modal Component
+/**
+ * @interface SettingsModalProps
+ * @description Props for the SettingsModal component.
+ */
 interface SettingsModalProps {
+  /** Controls the visibility of the modal. */
   visible: boolean;
+  /** Function to call when the modal is closed. */
   onClose: () => void;
+  /** The current theme. */
   theme: ThemeType;
+  /** Array of quick setting actions to display. */
   quickSettings: Array<{ icon: string; label: string; action: () => void }>;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({
+/**
+ * A memoized component for displaying a quick settings modal.
+ * @param {SettingsModalProps} props - The component props.
+ * @returns {React.ReactElement} The rendered settings modal.
+ */
+const SettingsModal: React.FC<SettingsModalProps> = React.memo(({
   visible,
   onClose,
   theme,
   quickSettings,
 }) => {
   const themeColors = colors[theme];
+  const styles = createDashboardStyles(theme);
 
   return (
     <Modal
@@ -706,18 +824,31 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       </View>
     </Modal>
   );
-};
+});
 
-// Metrics Modal Component
+/**
+ * @interface MetricsModalProps
+ * @description Props for the MetricsModal component.
+ */
 interface MetricsModalProps {
+  /** Controls the visibility of the modal. */
   visible: boolean;
+  /** Function to call when the modal is closed. */
   onClose: () => void;
+  /** The current theme. */
   theme: ThemeType;
+  /** The ID of the currently selected metric group to display. */
   selectedGroup: string | null;
+  /** The dashboard's statistical data. */
   stats: DashboardStats;
 }
 
-const MetricsModal: React.FC<MetricsModalProps> = ({
+/**
+ * A memoized component for displaying a detailed view of a metric group in a modal.
+ * @param {MetricsModalProps} props - The component props.
+ * @returns {React.ReactElement | null} The rendered metrics modal or null.
+ */
+const MetricsModal: React.FC<MetricsModalProps> = React.memo(({
   visible,
   onClose,
   theme,
@@ -725,6 +856,7 @@ const MetricsModal: React.FC<MetricsModalProps> = ({
   stats,
 }) => {
   const themeColors = colors[theme];
+  const styles = createDashboardStyles(theme);
 
   // Dynamic metric groups configuration (same as in main component)
   const metricGroups: MetricGroup[] = [
@@ -844,323 +976,4 @@ const MetricsModal: React.FC<MetricsModalProps> = ({
       </View>
     </Modal>
   );
-};
-
-const styles = StyleSheet.create({
-  // Settings Modal Styles
-  settingsOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.95)',
-  },
-  settingsBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  settingsCard: {
-    width: '85%',
-    maxWidth: 480,
-    margin: 20,
-    // backgroundColor: themeColors.surface + 'EE',
-  },
-  settingsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  settingsTitle: {
-    ...typography.h3,
-    fontWeight: '600',
-  },
-  closeSettings: {
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeIcon: {
-    fontSize: 24,
-    fontWeight: '300',
-  },
-  settingsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  settingItem: {
-    width: '48%',
-    alignItems: 'center',
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  settingIcon: {
-    fontSize: 24,
-    marginBottom: spacing.xs,
-  },
-  settingLabel: {
-    ...typography.bodySmall,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-
-  // Existing Dashboard Styles
-  content: {
-    flex: 1,
-    paddingTop: 60, // Space for floating nav bar
-  },
-  container: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xl * 4,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 100,
-  },
-  loadingText: {
-    ...typography.body,
-  },
-  cognitiveCard: {
-    marginBottom: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  cognitiveHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cognitiveTextContainer: {
-    flex: 1,
-    marginRight: spacing.md,
-  },
-  cardTitle: {
-    ...typography.h4,
-    marginBottom: spacing.xs,
-  },
-  cognitiveAdvice: {
-    ...typography.bodySmall,
-  },
-  loadIndicator: {
-    alignItems: 'center',
-  },
-  loadValue: {
-    ...typography.h3,
-    fontWeight: 'bold',
-    marginBottom: spacing.xs,
-  },
-  loadDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  sectionHeader: {
-    ...typography.h4,
-    fontWeight: '600',
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
-  },
-  metricCard: {
-    width: '48%',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-    paddingVertical: spacing.lg,
-  },
-  metricIcon: {
-    fontSize: 24,
-    marginBottom: spacing.sm,
-  },
-  metricValue: {
-    ...typography.h2,
-    fontWeight: 'bold',
-    marginBottom: spacing.xs,
-  },
-  metricLabel: {
-    ...typography.bodySmall,
-    fontWeight: '600',
-  },
-  recommendationCard: {
-    marginBottom: spacing.lg,
-  },
-  recommendationText: {
-    ...typography.body,
-    lineHeight: 22,
-    marginBottom: spacing.md,
-  },
-  sessionInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-  },
-  sessionInfoText: {
-    ...typography.caption,
-  },
-  actionsCard: {
-    marginBottom: spacing.lg,
-  },
-  actionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  actionButton: {
-    width: '48%',
-    marginBottom: spacing.sm,
-  },
-  performanceCard: {
-    marginBottom: spacing.lg,
-  },
-  performanceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: spacing.lg,
-  },
-  performanceItem: {
-    alignItems: 'center',
-  },
-  performanceValue: {
-    ...typography.h3,
-    fontWeight: 'bold',
-    marginBottom: spacing.xs,
-  },
-  performanceLabel: {
-    ...typography.caption,
-  },
-  progressBar: {
-    height: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-
-  // Group Card Styles
-  groupGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
-  },
-  groupCard: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: 16,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  groupCardTouchable: {
-    width: '31%',
-    height: 160, // Fixed height for uniform cards
-    marginBottom: spacing.md,
-  },
-  groupIcon: {
-    fontSize: 28,
-    marginBottom: spacing.sm,
-  },
-  groupTitle: {
-    ...typography.body,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: spacing.xs,
-  },
-  groupSubtitle: {
-    ...typography.caption,
-    textAlign: 'center',
-    opacity: 0.8,
-  },
-
-  // Metrics Modal Styles
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.95)',
-  },
-  modalBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  modalCard: {
-    width: '85%',
-    maxWidth: 480,
-    margin: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  modalTitle: {
-    ...typography.h3,
-    fontWeight: '600',
-  },
-  closeModal: {
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalMetricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  modalMetricCard: {
-    width: '48%',
-    alignItems: 'center',
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  modalMetricIcon: {
-    fontSize: 24,
-    marginBottom: spacing.sm,
-  },
-  modalMetricValue: {
-    ...typography.h2,
-    fontWeight: 'bold',
-    marginBottom: spacing.xs,
-  },
-  modalMetricLabel: {
-    ...typography.bodySmall,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-
-  // Test Section Styles (Development Only)
-  testSection: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  testButton: {
-    width: '100%',
-  },
 });
