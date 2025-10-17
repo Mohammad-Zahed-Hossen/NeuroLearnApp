@@ -68,7 +68,7 @@ d/
 .cache/
 .env
 credentials.json
-
+*backup.js
 
 # Files
 test.md

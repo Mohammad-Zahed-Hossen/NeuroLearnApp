@@ -241,7 +241,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
   const glowPulse = useSharedValue(1);
   const loadingProgress = useSharedValue(0);
   const modalScale = useSharedValue(0);
-  const resolvedUserIdRef = useRef<string | null>(userId || null);
+  const [resolvedUserId, setResolvedUserId] = useState<string | null>(userId || null);
 
   // Services
   const analyticsService = useRef(
@@ -269,10 +269,10 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
     isFetching,
     refetch,
   } = useOptimizedQuery<TransformedAnalyticsReport | null>({
-    queryKey: ['holistic-analytics', resolvedUserIdRef.current, forceUpdate],
+    queryKey: ['holistic-analytics', resolvedUserId, forceUpdate],
     queryFn: async () => {
       const uid =
-        resolvedUserIdRef.current ||
+        resolvedUserId ||
         (await (async () => {
           try {
             const supa = SupabaseService.getInstance();
@@ -289,7 +289,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
 
       return await analyticsService.generateHolisticReport(uid, !!forceUpdate);
     },
-    enabled: !!resolvedUserIdRef.current,
+    enabled: !!resolvedUserId,
     staleTime: 15 * 60 * 1000, // Increased to 15 minutes for aggressive caching
     gcTime: 30 * 60 * 1000, // Increased to 30 minutes
     refetchOnWindowFocus: false,
@@ -399,12 +399,12 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
     mountMarkRef.current = perf.startMark('HolisticAnalyticsScreen');
 
     (async () => {
-      if (!resolvedUserIdRef.current) {
+      if (!resolvedUserId) {
         try {
           const supa = SupabaseService.getInstance();
           const user = await supa.getCurrentUser();
           const uid = user?.id ?? null;
-          resolvedUserIdRef.current = uid;
+          setResolvedUserId(uid);
         } catch (e) {
           // Not authenticated or unable to resolve - we'll surface later
           console.warn('Could not resolve current user id on init', e);
@@ -430,19 +430,18 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
   useEffect(() => {
     const updateCognitiveState = async () => {
       try {
-        const uid =
-          resolvedUserIdRef.current ||
-          (await (async () => {
-            try {
-              const supa = SupabaseService.getInstance();
-              const uObj = await supa.getCurrentUser();
-              const u = uObj?.id;
-              resolvedUserIdRef.current = u ?? null;
-              return u;
-            } catch (_) {
-              return undefined;
-            }
-          })());
+        let uid = resolvedUserId;
+
+        if (!uid) {
+          try {
+            const supa = SupabaseService.getInstance();
+            const uObj = await supa.getCurrentUser();
+            uid = uObj?.id ?? null;
+            setResolvedUserId(uid);
+          } catch (_) {
+            uid = null;
+          }
+        }
 
         const cognitiveLoad = uid
           ? (await (cognitiveAura as any).calculateCompositeCognitiveLoad?.(
@@ -467,7 +466,7 @@ export const HolisticAnalyticsScreen: React.FC<Props> = ({
 
     const interval = setInterval(updateCognitiveState, 30000); // Check every 30 seconds
     return () => clearInterval(interval);
-  }, [cognitiveState]);
+  }, [cognitiveState, resolvedUserId]);
 
   const adaptUIToCognitiveState = async (state: typeof cognitiveState) => {
     const adaptiveColorScheme = { ...ANALYTICS_COLORS };
