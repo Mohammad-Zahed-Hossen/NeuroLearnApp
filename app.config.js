@@ -1,6 +1,14 @@
-import 'dotenv/config';
+// Load .env in local/dev environments if dotenv is available. During EAS pre-install
+// the project's dependencies may not yet be installed, so require('dotenv') could
+// throw. Wrap it in try/catch to make it optional.
+try {
+  // eslint-disable-next-line global-require, import/no-extraneous-dependencies
+  require('dotenv').config();
+} catch (e) {
+  // dotenv is optional here — environment variables may be provided by EAS.
+}
 
-export default {
+module.exports = {
   expo: {
     name: 'NeuroLearn',
     slug: 'NeuroLearn',
