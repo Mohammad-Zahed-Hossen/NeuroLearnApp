@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_apk_build:
+        description: "Set to true to run the production APK build and upload the artifact"
+        required: false
+        default: "false"
 
 jobs:
   build:
@@ -35,13 +40,26 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      # Disabled to conserve EAS build quota (re-enable when needed)
       - name: Build Debug APK with EAS
+        if: ${{ false }}
         run: eas build --platform android --profile development --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Build Release APK with EAS
-        run: eas build --platform android --profile production --non-interactive
+      # Conditional production APK build (run only when workflow_dispatch input run_apk_build is true)
+      - name: Build Production APK (on-demand)
+        if: ${{ github.event.inputs.run_apk_build == 'true' }}
+        run: eas build --platform android --profile production-apk --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: EAS auth check
+        run: |
+          echo "=== eas --version ==="
+          eas --version || true
+          echo "=== eas whoami (auth check) ==="
+          eas whoami || true
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
@@ -52,9 +70,11 @@ jobs:
             sudo apt-get update && sudo apt-get install -y jq
           fi
 
-          eas build:list --platform android --status finished --limit 2 --json > builds.json
-          DEBUG_BUILD_URL=$(jq -r '.[0].artifacts.buildUrl // empty' builds.json)
-          RELEASE_BUILD_URL=$(jq -r '.[1].artifacts.buildUrl // empty' builds.json)
+          # `--json` requires `--non-interactive` in EAS CLI
+          eas build:list --platform android --status finished --limit 5 --json --non-interactive > builds.json
+          # Prefer selecting by buildProfile or distribution rather than array index
+          RELEASE_BUILD_URL=$(jq -r '.[] | select(.buildProfile=="production" or .distribution=="STORE") | .artifacts.buildUrl // empty' builds.json)
+          DEBUG_BUILD_URL=$(jq -r '.[] | select(.buildProfile=="development" or .distribution=="INTERNAL") | .artifacts.buildUrl // empty' builds.json)
           if [ -n "$DEBUG_BUILD_URL" ]; then
             curl -L -o debug.apk "$DEBUG_BUILD_URL"
           fi
@@ -71,3 +91,40 @@ jobs:
           path: |
             debug.apk
             release.apk
+
+      # The following steps create a GitHub Release and upload the production APK
+      # only when the workflow was manually triggered with run_apk_build == 'true'.
+      - name: Check for produced APK
+        id: check_apk
+        if: ${{ github.event.inputs.run_apk_build == 'true' }}
+        run: |
+          if [ -f release.apk ]; then
+            echo "has_apk=true" >> "$GITHUB_OUTPUT"
+            echo "Found release.apk"
+          else
+            echo "has_apk=false" >> "$GITHUB_OUTPUT"
+            echo "No release.apk found, skipping release creation"
+          fi
+
+      - name: Create GitHub Release (production APK)
+        id: create_release
+        if: ${{ github.event.inputs.run_apk_build == 'true' && steps.check_apk.outputs.has_apk == 'true' }}
+        uses: actions/create-release@v1
+        with:
+          tag_name: apk-${{ github.run_id }}
+          release_name: NeuroLearn-production-apk-${{ github.run_id }}
+          body: |
+            Production APK built by workflow run ${{ github.run_id }} (commit ${{ github.sha }}).
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload APK to GitHub Release
+        if: ${{ github.event.inputs.run_apk_build == 'true' && steps.check_apk.outputs.has_apk == 'true' }}
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release.apk
+          asset_name: NeuroLearn-production.apk
+          asset_content_type: application/vnd.android.package-archive
