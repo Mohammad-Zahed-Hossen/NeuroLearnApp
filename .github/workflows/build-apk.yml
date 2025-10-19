@@ -47,6 +47,11 @@ jobs:
 
       - name: Download APKs
         run: |
+          # Ensure jq is available (ubuntu runners usually have it, but install if missing)
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+
           eas build:list --platform android --status finished --limit 2 --json > builds.json
           DEBUG_BUILD_URL=$(jq -r '.[0].artifacts.buildUrl // empty' builds.json)
           RELEASE_BUILD_URL=$(jq -r '.[1].artifacts.buildUrl // empty' builds.json)
@@ -56,6 +61,8 @@ jobs:
           if [ -n "$RELEASE_BUILD_URL" ]; then
             curl -L -o release.apk "$RELEASE_BUILD_URL"
           fi
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
