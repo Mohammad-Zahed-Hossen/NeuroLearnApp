@@ -245,10 +245,7 @@ npm run generate-audio-guide
 
 ### ⚙️ Building and Running the Dev Client
 
-Use the unified Node script:
-
-```bash
-npm run dev:client
+See scripts/README-dev-client.md for detailed instructions on running the development client and the helper script `npm run dev:client`.
 
 ## 🔐 Security Notes
 
@@ -263,7 +260,7 @@ npm run dev:client
 - [React Native Documentation](https://reactnative.dev/docs/getting-started)
 - [Supabase Documentation](https://supabase.com/docs)
 - [NeuroLearn App Documentation](./docs/)
- - Shareable APK instructions: ./docs/SHAREABLE_APK.md
+- Shareable APK instructions: ./docs/SHAREABLE_APK.md
 
 ## 🆘 Support
 
@@ -291,4 +288,3 @@ After installation, verify:
 **Installation completed!** 🎉
 
 The NeuroLearn app should now be running with all features enabled. Explore the cognitive training tools, neural mind mapping, and adaptive soundscapes to enhance your learning experience.
-```

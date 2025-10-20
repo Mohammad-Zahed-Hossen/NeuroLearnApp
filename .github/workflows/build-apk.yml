@@ -13,8 +13,24 @@ on:
         description: "(alias) Set to true to run the production APK build and upload the artifact"
         required: false
         default: ""
+      force_apk:
+        description: "If true, use the release-apk-force profile (explicit APK) instead of release-apk"
+        required: false
+        default: "false"
       dry_run:
         description: "If true, perform a lightweight validation of Expo/EAS config without starting a build"
+        required: false
+        default: "false"
+      run_all_builds:
+        description: "If true, run development, release-apk, and production (AAB) builds in one workflow run"
+        required: false
+        default: "false"
+      run_development_build:
+        description: "If true, run the development APK build (development profile)"
+        required: false
+        default: "false"
+      run_production_build:
+        description: "If true, run the production build (app-bundle AAB)"
         required: false
         default: "false"
 
@@ -59,8 +75,14 @@ jobs:
 
       # Disabled to conserve EAS build quota (re-enable when needed)
       - name: Build Debug APK with EAS
-        if: ${{ false }}
-        run: eas build --platform android --profile development --non-interactive
+        # Run when explicitly requested (development build) or when run_all_builds is true
+        if: ${{ github.event.inputs.run_all_builds == 'true' || github.event.inputs.run_development_build == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Starting EAS development build (development profile)..."
+          eas build --platform android --profile development --non-interactive --json > dev_build_result.json || true
+          echo "Development build result (dev_build_result.json):"
+          cat dev_build_result.json || true
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
@@ -99,8 +121,14 @@ jobs:
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update && sudo apt-get install -y jq
           fi
+          # Choose profile (allow 'force_apk' to explicitly select a force-profile that requests APK)
+          PROFILE="release-apk"
+          if [ "${{ github.event.inputs.force_apk }}" = "true" ]; then
+            PROFILE="release-apk-force"
+          fi
+          echo "Using EAS profile: $PROFILE"
           # Start build and capture JSON output (don't fail the step immediately; we'll inspect status)
-          eas build --platform android --profile release-apk --non-interactive --json > build_result.json || true
+          eas build --platform android --profile "$PROFILE" --non-interactive --json > build_result.json || true
 
           BUILD_ID=$(jq -r '.id // .buildId // empty' build_result.json | tr -d '\r')
           echo "Build result captured. BUILD_ID='$BUILD_ID'"
@@ -148,6 +176,20 @@ jobs:
           echo "artifact_url=$ARTIFACT_URL" >> "$GITHUB_OUTPUT"
           echo "artifact_ext=$ARTIFACT_EXT" >> "$GITHUB_OUTPUT"
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          # Print build_result.json for debugging (helps determine artifact type returned by EAS)
+          echo "--- build_result.json ---"
+          cat build_result.json || true
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Production AAB (Play Store)
+        if: ${{ github.event.inputs.run_all_builds == 'true' || github.event.inputs.run_production_build == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Starting EAS production build (app-bundle profile) for Play Store..."
+          eas build --platform android --profile production --non-interactive --json > prod_build_result.json || true
+          echo "Production build result (prod_build_result.json):"
+          cat prod_build_result.json || true
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 

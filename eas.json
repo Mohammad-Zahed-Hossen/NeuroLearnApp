@@ -35,6 +35,16 @@
         "NODE_ENV": "production",
         "EAS_SKIP_AUTO_FINGERPRINT": "1"
       }
+    },
+    "release-apk-force": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "NODE_ENV": "production",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1"
+      }
     }
   },
   "submit": {
