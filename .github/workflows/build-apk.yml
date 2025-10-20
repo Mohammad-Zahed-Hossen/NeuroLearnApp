@@ -8,6 +8,10 @@ on:
       run_apk_build:
         description: "Set to true to run the production APK build and upload the artifact"
         required: false
+        default: "true"
+      dry_run:
+        description: "If true, perform a lightweight validation of Expo/EAS config without starting a build"
+        required: false
         default: "false"
 
 jobs:
@@ -20,11 +24,20 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Use Node 18 for better Expo/EAS compatibility
+          node-version: 18
 
       - name: Install EAS CLI
         # The correct npm package published for EAS CLI is `eas-cli` (not @expo/eas-cli)
         run: npm install -g eas-cli
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
@@ -48,9 +61,87 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       # Conditional production APK build (run only when workflow_dispatch input run_apk_build is true)
+      - name: "Dry-run: validate expo/eas configuration"
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Running dry-run validation (no EAS build will be started)..."
+          # Ensure jq is available for eas.json checks
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          echo "Checking Expo auth (eas whoami)..."
+          eas whoami || { echo "EXPO_TOKEN invalid or eas whoami failed"; exit 1; }
+          echo "Running expo prebuild (no install) to validate app config..."
+          npx expo prebuild --platform android --no-install --non-interactive
+          echo "Checking eas.json for production-apk profile..."
+          if jq -e '(.build // .) | has("production-apk")' eas.json >/dev/null 2>&1; then
+            echo "Found production-apk profile in eas.json"
+          else
+            echo "ERROR: No production-apk profile found in eas.json. Please add a profile named 'production-apk' or update the workflow to match your profile name."
+            exit 1
+          fi
+          echo "Dry-run validation succeeded. No build was started."
+
       - name: Build Production APK (on-demand)
-        if: ${{ github.event.inputs.run_apk_build == 'true' }}
-        run: eas build --platform android --profile production-apk --non-interactive
+        id: production_build
+        if: ${{ github.event.inputs.run_apk_build == 'true' && github.event.inputs.dry_run != 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Starting EAS production-apk build (non-interactive)..."
+          # Ensure jq is available for JSON parsing
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          # Start build and capture JSON output (don't fail the step immediately; we'll inspect status)
+          eas build --platform android --profile production-apk --non-interactive --json > build_result.json || true
+
+          BUILD_ID=$(jq -r '.id // .buildId // empty' build_result.json | tr -d '\r')
+          echo "Build result captured. BUILD_ID='$BUILD_ID'"
+
+          if [ -z "$BUILD_ID" ]; then
+            echo "No build id returned from eas build. Dumping build_result.json for debugging:"
+            cat build_result.json
+            exit 1
+          fi
+
+          # Poll for build status until finished (or failed) with a reasonable timeout
+          attempts=0
+          max_attempts=60
+          sleep_seconds=10
+          ARTIFACT_URL=""
+          while [ $attempts -lt $max_attempts ]; do
+            attempts=$((attempts+1))
+            echo "Checking build status for $BUILD_ID (attempt $attempts/$max_attempts)..."
+            eas build:list --platform android --limit 50 --json --non-interactive > builds_poll.json || true
+            STATUS=$(jq -r --arg id "$BUILD_ID" '.[] | select(.id == $id) | .status // empty' builds_poll.json | tr -d '\r')
+            echo "Status: '$STATUS'"
+            if [ "$STATUS" = "finished" ]; then
+              ARTIFACT_URL=$(jq -r --arg id "$BUILD_ID" '.[] | select(.id == $id) | .artifacts.buildUrl // empty' builds_poll.json | head -n1 | tr -d '\r')
+              echo "Found artifact URL: $ARTIFACT_URL"
+              break
+            elif [ "$STATUS" = "errored" ] || [ "$STATUS" = "failed" ]; then
+              echo "Build $BUILD_ID failed. Dumping builds_poll.json for debugging."
+              cat builds_poll.json
+              exit 1
+            else
+              echo "Build not finished yet (status: $STATUS). Sleeping $sleep_seconds seconds..."
+              sleep $sleep_seconds
+            fi
+          done
+
+          if [ -z "$ARTIFACT_URL" ]; then
+            echo "Timed out waiting for build $BUILD_ID to finish. Dumping builds_poll.json"
+            cat builds_poll.json
+            exit 1
+          fi
+
+          # Determine extension
+          ARTIFACT_EXT=$(echo "$ARTIFACT_URL" | awk -F. '{print tolower($NF)}' | tr -d '\r')
+
+          echo "artifact_url=$ARTIFACT_URL" >> "$GITHUB_OUTPUT"
+          echo "artifact_ext=$ARTIFACT_EXT" >> "$GITHUB_OUTPUT"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
@@ -64,51 +155,165 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Download APKs
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           # Ensure jq is available (ubuntu runners usually have it, but install if missing)
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update && sudo apt-get install -y jq
           fi
 
-          # `--json` requires `--non-interactive` in EAS CLI
-          eas build:list --platform android --status finished --limit 5 --json --non-interactive > builds.json
-          # Prefer selecting by buildProfile or distribution rather than array index
-          RELEASE_BUILD_URL=$(jq -r '.[] | select(.buildProfile=="production" or .distribution=="STORE") | .artifacts.buildUrl // empty' builds.json)
-          DEBUG_BUILD_URL=$(jq -r '.[] | select(.buildProfile=="development" or .distribution=="INTERNAL") | .artifacts.buildUrl // empty' builds.json)
-          if [ -n "$DEBUG_BUILD_URL" ]; then
-            curl -L -o debug.apk "$DEBUG_BUILD_URL"
-          fi
-          if [ -n "$RELEASE_BUILD_URL" ]; then
-            curl -L -o release.apk "$RELEASE_BUILD_URL"
+          # Prefer artifact from the build step's output (if we started a build in this run)
+          PRODUCTION_ARTIFACT_URL="${{ steps.production_build.outputs.artifact_url }}"
+          PRODUCTION_ARTIFACT_EXT="${{ steps.production_build.outputs.artifact_ext }}"
+
+          # helper to validate URL looks sane (starts with http:// or https://)
+          valid_url() {
+            case "$1" in
+              http://*|https://*) return 0;;
+              *) return 1;;
+            esac
+          }
+
+          # helper to download with retries (3 attempts, exponential backoff)
+          download_with_retries() {
+            url="$1"
+            out="$2"
+            attempts=0
+            max_attempts=3
+            delay=3
+            while [ $attempts -lt $max_attempts ]; do
+              attempts=$((attempts+1))
+              echo "Attempt $attempts to download $url -> $out"
+              if curl -L --fail -o "$out" "$url"; then
+                echo "Downloaded $out"
+                return 0
+              else
+                echo "Download attempt $attempts failed for $url"
+                if [ $attempts -lt $max_attempts ]; then
+                  echo "Sleeping $delay seconds before retry..."
+                  sleep $delay
+                  delay=$((delay * 2))
+                fi
+              fi
+            done
+            return 1
+          }
+
+          if [ -n "$PRODUCTION_ARTIFACT_URL" ]; then
+            echo "Using produced artifact URL from build step: $PRODUCTION_ARTIFACT_URL"
+            if ! valid_url "$PRODUCTION_ARTIFACT_URL"; then
+              echo "Captured artifact URL is invalid: $PRODUCTION_ARTIFACT_URL"
+              exit 1
+            fi
+            if [ "$PRODUCTION_ARTIFACT_EXT" = "aab" ]; then
+              download_with_retries "$PRODUCTION_ARTIFACT_URL" release.aab || exit 1
+            else
+              download_with_retries "$PRODUCTION_ARTIFACT_URL" release.apk || exit 1
+            fi
+          else
+            echo "No artifact URL from this run's build step; falling back to listing recent builds"
+            # `--json` requires `--non-interactive` in EAS CLI
+            eas build:list --platform android --status finished --limit 5 --json --non-interactive > builds.json
+            # Prefer selecting by buildProfile or distribution rather than array index
+            # Select the first matching URL (jq may return multiple matches). Strip CRs to avoid malformed-URL errors.
+            RELEASE_BUILD_URL=$(jq -r '.[] | select(.buildProfile=="production" or .distribution=="STORE") | .artifacts.buildUrl // empty' builds.json | head -n1 | tr -d '\r')
+            DEBUG_BUILD_URL=$(jq -r '.[] | select(.buildProfile=="development" or .distribution=="INTERNAL") | .artifacts.buildUrl // empty' builds.json | head -n1 | tr -d '\r')
+
+            echo "DEBUG_BUILD_URL='$DEBUG_BUILD_URL'"
+            echo "RELEASE_BUILD_URL='$RELEASE_BUILD_URL'"
+
+            # Download debug artifact if present and valid
+            if [ -n "$DEBUG_BUILD_URL" ]; then
+              if valid_url "$DEBUG_BUILD_URL"; then
+                download_with_retries "$DEBUG_BUILD_URL" debug.apk || echo "Failed to download debug.apk"
+              else
+                echo "DEBUG_BUILD_URL is present but invalid: '$DEBUG_BUILD_URL'"
+              fi
+            else
+              echo "No DEBUG_BUILD_URL found - skipping debug download"
+            fi
+
+            # Download release artifact if present and valid
+            if [ -n "$RELEASE_BUILD_URL" ]; then
+              if valid_url "$RELEASE_BUILD_URL"; then
+                # Detect artifact extension so we don't incorrectly name AABs as APKs
+                RELEASE_EXT=$(echo "$RELEASE_BUILD_URL" | awk -F. '{print tolower($NF)}' | tr -d '\r')
+                if [ "$RELEASE_EXT" = "aab" ]; then
+                  download_with_retries "$RELEASE_BUILD_URL" release.aab || echo "Failed to download release.aab"
+                else
+                  download_with_retries "$RELEASE_BUILD_URL" release.apk || echo "Failed to download release.apk"
+                fi
+              else
+                echo "RELEASE_BUILD_URL is present but invalid: '$RELEASE_BUILD_URL'"
+                echo "Dumping builds.json for debugging..."
+                cat builds.json
+              fi
+            else
+              echo "No RELEASE_BUILD_URL found - skipping release download"
+              echo "Dumping builds.json for debugging..."
+              cat builds.json
+            fi
           fi
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Upload APKs
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: NeuroLearn-APKs
           path: |
             debug.apk
-            release.apk
+            release.*
+
+      - name: Upload EAS build logs
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eas-build-logs
+          path: |
+            build_result.json
+            builds_poll.json
+            builds.json
+
+      - name: Add EAS build summary to job
+        if: ${{ always() }}
+        run: |
+          SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-/github/workflow/summary}"
+          echo "## EAS Build Summary" >> "$SUMMARY_FILE"
+          echo "" >> "$SUMMARY_FILE"
+          echo "- Build ID: ${{ steps.production_build.outputs.build_id }}" >> "$SUMMARY_FILE"
+          echo "- Artifact URL: ${{ steps.production_build.outputs.artifact_url }}" >> "$SUMMARY_FILE"
+          echo "- Artifact ext: ${{ steps.production_build.outputs.artifact_ext }}" >> "$SUMMARY_FILE"
+          echo "" >> "$SUMMARY_FILE"
+          echo "Artifacts uploaded: eas-build-logs, NeuroLearn-APKs" >> "$SUMMARY_FILE"
 
       # The following steps create a GitHub Release and upload the production APK
       # only when the workflow was manually triggered with run_apk_build == 'true'.
       - name: Check for produced APK
         id: check_apk
-        if: ${{ github.event.inputs.run_apk_build == 'true' }}
+        if: ${{ github.event.inputs.run_apk_build == 'true' && github.event.inputs.dry_run != 'true' }}
         run: |
           if [ -f release.apk ]; then
             echo "has_apk=true" >> "$GITHUB_OUTPUT"
+            echo "artifact_path=release.apk" >> "$GITHUB_OUTPUT"
+            echo "artifact_ext=apk" >> "$GITHUB_OUTPUT"
             echo "Found release.apk"
+          elif [ -f release.aab ]; then
+            echo "has_apk=true" >> "$GITHUB_OUTPUT"
+            echo "artifact_path=release.aab" >> "$GITHUB_OUTPUT"
+            echo "artifact_ext=aab" >> "$GITHUB_OUTPUT"
+            echo "Found release.aab"
           else
             echo "has_apk=false" >> "$GITHUB_OUTPUT"
-            echo "No release.apk found, skipping release creation"
+            echo "artifact_path=" >> "$GITHUB_OUTPUT"
+            echo "artifact_ext=" >> "$GITHUB_OUTPUT"
+            echo "No release artifact found, skipping release creation"
           fi
 
       - name: Create GitHub Release (production APK)
         id: create_release
-        if: ${{ github.event.inputs.run_apk_build == 'true' && steps.check_apk.outputs.has_apk == 'true' }}
+        if: ${{ github.event.inputs.run_apk_build == 'true' && github.event.inputs.dry_run != 'true' && steps.check_apk.outputs.has_apk == 'true' }}
         uses: actions/create-release@v1
         with:
           tag_name: apk-${{ github.run_id }}
@@ -121,10 +326,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload APK to GitHub Release
-        if: ${{ github.event.inputs.run_apk_build == 'true' && steps.check_apk.outputs.has_apk == 'true' }}
+        if: ${{ github.event.inputs.run_apk_build == 'true' && github.event.inputs.dry_run != 'true' && steps.check_apk.outputs.has_apk == 'true' }}
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./release.apk
-          asset_name: NeuroLearn-production.apk
-          asset_content_type: application/vnd.android.package-archive
+          asset_path: ${{ steps.check_apk.outputs.artifact_path }}
+          asset_name: NeuroLearn-production.${{ steps.check_apk.outputs.artifact_ext }}
+          # AABs are binary archives as well; using a generic binary content type is acceptable for both
+          asset_content_type: application/octet-stream
