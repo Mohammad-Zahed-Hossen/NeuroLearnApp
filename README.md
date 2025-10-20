@@ -5,12 +5,14 @@
 Before installing NeuroLearn, ensure you have the following:
 
 ### System Requirements
+
 - **Node.js**: v18.0.0 or higher
 - **npm**: v9.0.0 or higher (comes with Node.js)
 - **Expo CLI**: Latest version
 - **Git**: For cloning the repository
 
 ### Development Environment
+
 - **iOS Development**: Xcode 14+ (macOS only)
 - **Android Development**: Android Studio with SDK 33+
 - **Web Development**: Modern web browser
@@ -18,17 +20,20 @@ Before installing NeuroLearn, ensure you have the following:
 ## 🚀 Quick Start Installation
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/your-username/neurolearn-app.git
 cd neurolearn-app
 ```
 
 ### 2. Install Dependencies
+
 ```bash
 npm install
 ```
 
 ### 3. Environment Setup
+
 ```bash
 # Run the automated setup script
 npm run setup-env
@@ -38,6 +43,7 @@ cp .env.example .env
 ```
 
 ### 4. Supabase Setup (Optional but Recommended)
+
 ```bash
 # Deploy Supabase functions
 npm run setup-backend
@@ -47,11 +53,13 @@ npm run setup-backend
 ```
 
 ### 5. Start Development Server
+
 ```bash
 npm start
 ```
 
 ### 6. Run on Device/Emulator
+
 ```bash
 # iOS Simulator
 npm run ios
@@ -103,6 +111,7 @@ npm run generate-audio-files
 ### Build Configuration
 
 #### Android Build
+
 ```bash
 # Prebuild and fix Gradle issues
 npm run prebuild-android
@@ -115,6 +124,7 @@ npm run build:ci
 ```
 
 #### iOS Build
+
 ```bash
 # Prebuild
 npx expo prebuild --platform ios
@@ -124,6 +134,7 @@ eas build --platform ios
 ```
 
 #### Web Build
+
 ```bash
 # Build for web
 npx expo export --platform web
@@ -132,16 +143,19 @@ npx expo export --platform web
 ## 🧪 Testing
 
 ### Run Tests
+
 ```bash
 npm test
 ```
 
 ### Audio Validation
+
 ```bash
 npm run check-soundscapes
 ```
 
 ### Pre-build Checks
+
 ```bash
 npm run prebuild-check
 ```
@@ -151,6 +165,7 @@ npm run prebuild-check
 ### Common Issues
 
 #### 1. Metro Bundler Issues
+
 ```bash
 # Clear cache
 npx expo start --clear
@@ -160,6 +175,7 @@ npx react-native start --reset-cache
 ```
 
 #### 2. Android Build Issues
+
 ```bash
 # Fix Gradle duplicates
 npm run fix-android-dup
@@ -169,6 +185,7 @@ cd android && ./gradlew clean
 ```
 
 #### 3. Audio Loading Issues
+
 ```bash
 # Validate audio assets
 npm run validate-audio
@@ -178,6 +195,7 @@ npm run generate-audio-guide
 ```
 
 #### 4. Supabase Connection Issues
+
 - Verify environment variables are set correctly
 - Check Supabase project is active
 - Ensure Row Level Security is configured
@@ -185,11 +203,13 @@ npm run generate-audio-guide
 ### Performance Issues
 
 #### Large Mind Maps
+
 - The app automatically optimizes for large graphs
 - Enable performance mode in settings
 - Consider reducing node count for better performance
 
 #### Memory Usage
+
 - Close unused screens
 - Restart app periodically
 - Monitor memory usage in development
@@ -197,12 +217,14 @@ npm run generate-audio-guide
 ## 📱 Device-Specific Setup
 
 ### iOS Setup
+
 1. Install Xcode from App Store
 2. Accept Xcode license: `sudo xcodebuild -license accept`
 3. Install iOS Simulator
 4. Run: `npm run ios`
 
 ### Android Setup
+
 1. Install Android Studio
 2. Set up Android SDK (API 33+)
 3. Configure environment variables:
@@ -216,11 +238,15 @@ npm run generate-audio-guide
 4. Run: `npm run android`
 
 ### Web Setup
+
 1. Ensure modern browser (Chrome 90+, Firefox 88+, Safari 14+)
 2. Some features may be limited on web (camera, native audio)
 3. Run: `npm run web`
+
 ### ⚙️ Building and Running the Dev Client
+
 Use the unified Node script:
+
 ```bash
 npm run dev:client
 
@@ -237,6 +263,7 @@ npm run dev:client
 - [React Native Documentation](https://reactnative.dev/docs/getting-started)
 - [Supabase Documentation](https://supabase.com/docs)
 - [NeuroLearn App Documentation](./docs/)
+ - Shareable APK instructions: ./docs/SHAREABLE_APK.md
 
 ## 🆘 Support
 
@@ -264,3 +291,4 @@ After installation, verify:
 **Installation completed!** 🎉
 
 The NeuroLearn app should now be running with all features enabled. Explore the cognitive training tools, neural mind mapping, and adaptive soundscapes to enhance your learning experience.
+```
