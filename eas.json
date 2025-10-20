@@ -25,11 +25,15 @@
         "buildType": "app-bundle"
       }
     },
-    "production-apk": {
+    "release-apk": {
       "channel": "production",
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "NODE_ENV": "production",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1"
       }
     }
   },
